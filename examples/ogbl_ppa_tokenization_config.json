@@ -1,0 +1,118 @@
+{
+  "name_or_path": "ogbl_ppa",
+  "dataset": "ogbl-ppa",
+  "attr_world_identifier": "ogbl-ppa",
+  "task_type": "pretrain",
+  "vocab_file": "vocab",
+  "sampling": {
+    "node_ego": {
+      "depth_neighbors": [
+        [1, 4]
+      ],
+      "replace": false,
+      "valid": 0
+    },
+    "node_random": {
+      "sampled_nodes": 127,
+      "valid": 0
+    },
+    "edge_ego": {
+      "depth_neighbors": [
+        [1, 14]
+      ],
+      "replace": false,
+      "neg_ratio": 1,
+      "percent": 100,
+      "valid": 1
+    }
+  },
+  "semantics": {
+    "attr_assignment": "random",
+    "node": {
+      "discrete": "x",
+      "continuous": null,
+      "ignored_val": null
+    },
+    "edge": {
+      "discrete": null,
+      "continuous": null,
+      "ignored_val": null
+    },
+    "graph": {
+      "discrete": null,
+      "continuous": null,
+      "ignored_val": null
+    },
+    "common": {
+      "reserved_token": [
+        "semantics_0",
+        "semantics_1",
+        "semantics_2",
+        "semantics_3",
+        "semantics_4",
+        "semantics_5",
+        "semantics_6",
+        "semantics_7",
+        "semantics_8",
+        "semantics_9"
+      ],
+      "numbers": [
+        "<e>",
+        "<.>",
+        "<->",
+        "<0>",
+        "<1>",
+        "<2>",
+        "<3>",
+        "<4>",
+        "<5>",
+        "<6>",
+        "<7>",
+        "<8>",
+        "<9>"
+      ]
+    }
+  },
+  "structure": {
+    "node": {
+      "bos_token": "0",
+      "eos_token": "<eos>",
+      "node_scope": 128,
+      "scope_base": 128
+    },
+    "edge": {
+      "remove_edge_type_token": true,
+
+      "in_token": "<edge_in>",
+      "out_token":"<edge_out>",
+      "bi_token": "<edge_bi>",
+      "jump_token": "<edge_jump>"
+    },
+    "graph": {
+      "summary_token": "<gsum>"
+    },
+    "common": {
+      "icl_token": "<icl>",
+      "sep_token": "<sep>",
+      "reserved_token": [
+        "structure_0",
+        "structure_1",
+        "structure_2",
+        "structure_3",
+        "structure_4",
+        "structure_5",
+        "structure_6",
+        "structure_7",
+        "structure_8",
+        "structure_9"
+      ]
+    }
+  },
+  "tokenizer_class": "GSTTokenizer",
+  "auto_map": {
+    "AutoTokenizer": [
+      "tokenization_gst.GSTTokenizer",
+      null
+      ]
+  }
+}
