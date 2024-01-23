@@ -3,7 +3,7 @@
 #     OdpsTableIterableTokenizedDataset,
 #     get_odps_writer,
 # )  # put this import on top to avoid `common_io` import error
-# comment out above for external users NOT using Alibaba-Cloud serveices
+# comment out above for external users NOT using Alibaba-Cloud services
 from .dataset_map import (
     ShaDowKHopSeqMapDataset,
     ShaDowKHopSeqFromEdgesMapDataset,

@@ -9,7 +9,7 @@ from torch import Tensor
 from torch_geometric.data import Data
 from torch_geometric.typing import WITH_TORCH_SPARSE, SparseTensor
 
-import common_io
+# import common_io
 
 
 class ShaDowKHopSeqIterDataset(torch.utils.data.IterableDataset):

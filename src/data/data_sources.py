@@ -21,10 +21,11 @@ from .dataset_map import (
     GraphsMapDataset,
     EnsembleGraphsMapDataset,
 )
-from .dataset_iterable import (
-    OdpsTableIterableDataset,
-    OdpsTableIterableTokenizedDataset,
-)
+
+# from .dataset_iterable import (
+#     OdpsTableIterableDataset,
+#     OdpsTableIterableTokenizedDataset,
+# )
 
 
 _dataset = control_flow.Register()
@@ -48,12 +49,72 @@ def read_merge_molecule_datasets(data_dir):
 
 
 @_dataset("reddit_threads")
-def _read_reddit_threads(data_dir, sampling_config, *, pretrain_mode=False, **kwargs):
+def _read_reddit_threads(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test: bool = False,
+    **kwargs,
+):
     dataset_name = "reddit_threads"
-    dataset = TUDataset(
-        root=data_dir, name=dataset_name, pre_transform=tokenizer_utils.add_paths
-    )
-    return dataset, dataset
+    print(f"\nLoading dataset {dataset_name} ...")
+    dataset = TUDataset(root=data_dir, name=dataset_name)
+    print(f"\ndataset._data -> {dataset._data}")
+    # pre_transform=tokenizer_utils.add_paths
+    # dataset._data -> Data(edge_index=[2, 10094032], y=[203088], num_nodes=4859280)
+    # dataset[0] -> Data(edge_index=[2, 20], y=[1], num_nodes=11)
+    # data_dir: e.g., "../data/TUDataset"
+    if return_valid_test:
+        seed = 42
+        # deterministically shuffle based on seed
+        g = torch.Generator()
+        g.manual_seed(seed)
+        indices = torch.randperm(len(dataset), generator=g)
+        train_max_idx = int(len(dataset) * 0.8)
+        valid_max_idx = int(len(dataset) * 0.9)
+
+        train_idx = indices[:train_max_idx]
+        valid_idx = indices[train_max_idx:valid_max_idx]
+        test_idx = indices[valid_max_idx:]
+
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=train_idx,
+            provide_sampler=True,
+        )
+        valid_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=valid_idx,
+            provide_sampler=True,
+        )
+        test_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=test_idx,
+            provide_sampler=True,
+        )
+        # train/valid/test
+        # 162470/20309/20309
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            dataset,
+        )
+    else:
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=torch.arange(len(dataset)),
+            provide_sampler=True,
+        )
+        return train_dataset, dataset
 
 
 @_dataset("molecule")
@@ -147,6 +208,8 @@ def _read_pcqm4mv2(
     print("\nLoading dataset PCQM4Mv2 ...")
     # data_dir: e.g., "../data/OGB"
     if return_valid_test:
+        # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
+        # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3])
         dataset = PygPCQM4Mv2Dataset(root=data_dir, smiles2graph=smiles2graph)
         # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
         ls_idx = obtain_special_molecules(dataset)
@@ -197,9 +260,9 @@ def _read_pcqm4mv2(
             dataset,
         )
     else:
-        dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
-        # # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3])
-        # dataset = PygPCQM4Mv2Dataset(root=data_dir, smiles2graph=smiles2graph)
+        # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
+        # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3])
+        dataset = PygPCQM4Mv2Dataset(root=data_dir, smiles2graph=smiles2graph)
         # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
         ls_idx = obtain_special_molecules(dataset)
         print(f"In pre-train mode, set all valid data's y to nan!")
@@ -270,7 +333,8 @@ def add_valid_to_train(
     new_test_idx = valid_idx[indices_test].clone()
     print(
         f"ADD valid samples into train!!!\ntrain_idx: {len(train_idx)} -> {len(new_train_idx)}\nvalid_idx: {len(valid_idx)} -> {len(new_valid_idx)}\n"
-        f"use {len(new_test_idx)} Valid samples in Training as the test data to check the difference between valid (unseen) and test (seen)"
+        f"use {len(new_test_idx)} Valid samples in Training as the test data to check the difference between valid (unseen) and test (seen)\n"
+        f"top 10 new valid idx:\n{new_valid_idx[:10]}"
     )
     return new_train_idx, new_valid_idx, new_test_idx
 
