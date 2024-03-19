@@ -12,7 +12,9 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
   1. v0.2.0 released.
   2. Implement `permute_nodes` for graph-level map-style dataset, in order to increase variations of Eulerian paths,
      and result in better and robust results.
-  3. refactor codes.
+  3. Add `StackedGSTTokenizer` so that semantics (i.e., node/edge attrs) tokens can be stacked together with structural 
+     tokens, and the length of sequence would be reduced a lot.
+  4. refactor codes.
 
 ***01/23/2024***
   1. v0.1.1, fix bugs of common-io package.
