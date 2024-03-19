@@ -20,6 +20,14 @@ def set_up_shuffle_and_sampler(dataset, sampler):
     return shuffle, sampler, num_samples
 
 
+def distribute_sampler(sampler, world_size, rank):
+    vec = np.array(sorted(sampler))
+    idx = [i for i in range(len(sampler)) if i % world_size == rank]
+    sampler = vec[idx].tolist()
+    random.shuffle(sampler)
+    return sampler
+
+
 def distribute_sampler_with_rnd_seed(sample_idx, world_size, rank, seed):
     # deterministically shuffle based on epoch and seed
     g = torch.Generator()
@@ -30,9 +38,49 @@ def distribute_sampler_with_rnd_seed(sample_idx, world_size, rank, seed):
     indices = indices[rank:total_size:world_size]
     new_idx = sample_idx[indices].tolist()
     print(
-        f"[world size {world_size}][rank {rank}][seed {seed}] raw-idx {len(sample_idx)}, new-idx {len(new_idx)}, new-idx top 10:\n{new_idx[:10]}"
+        f"[distribute_sampler_with_rnd_seed][world size {world_size}][rank {rank}][seed {seed}] raw-idx {len(sample_idx)}, new-idx {len(new_idx)}, new-idx top 10:\n{new_idx[:10]}"
     )
     return new_idx
+
+
+def obtain_deterministic_sampler(
+    sample_idx: torch.Tensor, seed: int, cnt_samples: int = 10000
+):
+    # deterministically shuffle based on epoch and seed
+    g = torch.Generator()
+    g.manual_seed(seed)
+    indices = torch.randperm(len(sample_idx), generator=g)
+    indices = indices[:cnt_samples]
+    new_idx = sample_idx[indices].tolist()
+    print(
+        f"[obtain_deterministic_sampler][seed {seed}] raw-idx {len(sample_idx)}, new-idx {len(new_idx)}, new-idx top 10:\n{new_idx[:10]}"
+    )
+    return new_idx
+
+
+def obtain_deterministic_sampler_by_ratio(
+    sample_idx: torch.Tensor, seed: int, train: float = 0.8, valid: float = 0.1
+):
+    assert train + valid <= 1
+    # deterministically shuffle based on epoch and seed
+    g = torch.Generator()
+    g.manual_seed(seed)
+    indices = torch.randperm(len(sample_idx), generator=g)
+    cnt_train = int(len(sample_idx) * train)
+    cnt_valid = int(len(sample_idx) * valid)
+
+    indices_train = indices[:cnt_train]
+    indices_valid = indices[cnt_train : cnt_train + cnt_valid]
+    indices_test = indices[cnt_train + cnt_valid :]
+
+    idx_train = sample_idx[indices_train].tolist()
+    idx_valid = sample_idx[indices_valid].tolist()
+    idx_test = sample_idx[indices_test].tolist()
+
+    print(
+        f"[obtain_deterministic_sampler][seed {seed}] raw-idx {len(sample_idx)}, idx_train {len(idx_train)}, idx_valid {len(idx_valid)}, idx_test {len(idx_test)}"
+    )
+    return idx_train, idx_valid, idx_test
 
 
 # Define a `worker_init_fn` that configures each iterable-dataset copy differently

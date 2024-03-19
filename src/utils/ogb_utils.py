@@ -75,7 +75,7 @@ def _eval_pcqm4mv2(input_dict: Dict[str, Tensor]):
 def format_ogb_output_for_csv(eval_res, rnd: int = 6):
     if isinstance(eval_res, Dict):
         return ",".join(
-            [":".join([str(k), str(round(v, rnd))]) for k, v in eval_res.items()]
+            [",".join([str(k), str(round(v, rnd))]) for k, v in eval_res.items()]
         )
     else:
         return eval_res

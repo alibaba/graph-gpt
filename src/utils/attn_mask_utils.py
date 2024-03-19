@@ -1,5 +1,9 @@
 from typing import Optional, Union, Tuple, List
 import torch
+from packaging import version
+
+parsed_torch_version_base = version.parse(version.parse(torch.__version__).base_version)
+is_torch_greater_or_equal_than_1_13 = parsed_torch_version_base >= version.parse("1.13")
 
 
 # refer to: `transformers/modeling_attn_mask_utils.py::_prepare_4d_causal_attention_mask`
@@ -11,6 +15,7 @@ def _prepare_4d_causal_bi_attention_mask(
     input_shape: Union[torch.Size, Tuple, List],
     inputs_embeds: torch.Tensor,
     past_key_values_length: int,
+    boundary_mask_idx: Optional[torch.Tensor] = None,
 ):
     """
     Creates a causal & bi mixed 4D mask of shape `(batch_size, 1, query_length, key_value_length)` from a 2D mask of shape
@@ -58,6 +63,12 @@ def _prepare_4d_causal_bi_attention_mask(
     # 2&3. merge causal & bi mask
     uni_bi_mask = expanded_mask | tri_tf[None, :, :]  # [bsz, len, len] of True/False
 
+    # 2&3. mask boundary
+    if boundary_mask_idx is not None:
+        s_idx = boundary_mask_idx
+        uni_bi_mask[s_idx[:, 0], s_idx[:, 1], s_idx[:, 2]] = False
+        # TODO: find more elegant way to mask boundary
+
     # 4. un-mask some entries in mask
     mask = mask.masked_fill_(uni_bi_mask, 0)
     mask = mask.to(dtype)
@@ -71,3 +82,43 @@ def _prepare_4d_causal_bi_attention_mask(
     # C). merge to get final 4-D mask
     mask = mask.masked_fill(expanded_mask, torch.finfo(dtype).min)
     return mask
+
+
+def get_masked_boundary_idx(
+    attention_mask: torch.LongTensor, attention_mask_bi: torch.LongTensor, tgt_len: int
+):
+    idx_boundary = attention_mask.sum(-1) - attention_mask_bi.sum(-1) - 1
+    # [bsz]
+    ls = []
+    for i, idx in enumerate(idx_boundary.tolist()):
+        ls_tmp = [(i, ele, idx) for ele in range(idx + 1, tgt_len)]
+        ls.extend(ls_tmp)
+    s_idx = torch.tensor(ls, dtype=torch.int64)
+    return s_idx
+
+
+# refer to: `transformers/modeling_attn_mask_utils.py::_prepare_4d_attention_mask`
+# @ transformers==4.36.2
+def _prepare_4d_attention_mask(
+    attention_mask: Optional[torch.Tensor],
+    input_shape: Union[torch.Size, Tuple, List],
+    inputs_embeds: torch.Tensor,
+    past_key_values_length: int,
+):
+    """
+    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
+    """
+    dtype = inputs_embeds.dtype
+    bsz, tgt_len = input_shape
+    src_len = tgt_len
+    tgt_len = tgt_len if tgt_len is not None else src_len
+
+    expanded_mask = (
+        attention_mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+    )
+
+    inverted_mask = 1.0 - expanded_mask
+
+    return inverted_mask.masked_fill(
+        inverted_mask.to(torch.bool), torch.finfo(dtype).min
+    )

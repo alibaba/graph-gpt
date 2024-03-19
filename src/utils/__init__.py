@@ -1,6 +1,4 @@
-from .tokenizer_utils import (
-    get_edge_index,
-    get_edge_type,
+from .nx_utils import (
     connect_graph,
     graph2path,
     graph2path_test,
@@ -8,6 +6,8 @@ from .tokenizer_utils import (
     shorten_path,
     get_paths,
     add_paths,
+)
+from .tokenizer_utils import (
     prepare_inputs_for_task,
     TASK_TYPES,
 )
@@ -24,8 +24,6 @@ from .loader_utils import set_up_shuffle_and_sampler, worker_init_fn_seed
 from .dataset_utils import EdgeBalancedClusterData
 
 __all__ = [
-    "get_edge_index",
-    "get_edge_type",
     "connect_graph",
     "graph2path",
     "graph2path_test",

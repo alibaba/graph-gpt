@@ -35,8 +35,11 @@ def _get_vocab_of_attr(
 def _get_vocab(ls_arr, ignored_val: str = None):
     if len(ls_arr) > 0:
         semantics_arr = np.vstack(ls_arr)
-        vocab = np.unique(semantics_arr, axis=0).astype(str)
-        vocab = ["#".join(ele) for ele in vocab if ele[-1] != str(ignored_val)]
+        raw_vocab = np.unique(semantics_arr, axis=0).astype(str)
+        vocab = ["#".join(ele) for ele in raw_vocab if ele[-1] != str(ignored_val)]
+        raw_vocab = np.unique(raw_vocab[:, :-1], axis=0)  # remove last col of val
+        vocab_default = ["#".join(ele) for ele in raw_vocab]
+        vocab = vocab_default + vocab
     else:
         vocab = []
     return vocab

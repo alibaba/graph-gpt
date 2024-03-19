@@ -11,6 +11,7 @@ def print_params(**kwargs):
         content = (
             f"Training Graph-GPT model with params:\n"
             f"output_dir: {kwargs['output_dir']}\n"
+            f"raw_pretrain_cpt: {kwargs.get('raw_pretrain_cpt', None)}\n"
             f"pretrain_cpt: {kwargs.get('pretrain_cpt', None)}\n"
             f"data_dir: {kwargs['data_dir']}\n"
             f"dataset_name: {kwargs['dataset_name']}\n"
@@ -22,6 +23,7 @@ def print_params(**kwargs):
             f"world_size: {kwargs.get('world_size', None)}\n"
             f"attr_assignment: {kwargs.get('attr_assignment', '')}\n"
             f"attr_shuffle: {kwargs.get('attr_shuffle', '')}\n"
+            f"attr_mask_ratio: {kwargs.get('attr_mask_ratio', '')}\n"
             f"ignored_off: {kwargs.get('ignored_off', '')}\n"
             f"add_eos: {kwargs.get('add_eos', True)}\n"
             f"total_tokens: {kwargs.get('total_tokens', None)}\n"
@@ -44,6 +46,7 @@ def print_params(**kwargs):
             f"k_samplers: {kwargs.get('k_samplers', None)}\n"
             f"use_ddp: {kwargs.get('use_ddp', False)}\n"
             f"gradient_accumulation_steps: {kwargs.get('gradient_accumulation_steps', None)}\n"
+            f"model_type: {kwargs.get('model_type', 'graphgpt')}\n"
             f"model_config: {kwargs.get('model_config', '')}\n"
             f"vocab_size: {kwargs['vocab_size']}\n"
             f"hidden_size: {kwargs['hidden_size']}\n"
@@ -56,7 +59,12 @@ def print_params(**kwargs):
             f"tie_word_embeddings: {kwargs.get('tie_word_embeddings', False)}\n"
             f"add_cls_token: {kwargs.get('add_cls_token', False)}\n"
             f"problem_type: {kwargs.get('problem_type', None)}\n"
+            f"causal_attention: {kwargs.get('causal_attention', '')}\n"
             f"loss_type: {kwargs.get('loss_type', None)}\n"
+            f"ntp_ratio: {kwargs.get('ntp_ratio', None)}\n"
+            f"task_ratio: {kwargs.get('task_ratio', None)}\n"
+            f"uni_loss_ratio: {kwargs.get('uni_loss_ratio', None)}\n"
+            f"bi_loss_ratio: {kwargs.get('bi_loss_ratio', None)}\n"
             f"num_labels: {kwargs.get('num_labels', None)}\n"
             f"mlp: {kwargs.get('mlp', None)}\n"
             f"dropout: {kwargs.get('dropout', 0)}\n"
@@ -66,6 +74,8 @@ def print_params(**kwargs):
             f"outputs: {kwargs.get('outputs', None)}\n"
             f"samples_per_saving: {kwargs.get('samples_per_saving', None)}\n"
             f"steps_per_saving: {kwargs.get('steps_per_saving', None)}\n"
+            f"do_valid: {kwargs.get('do_valid', None)}\n"
+            f"do_test: {kwargs.get('do_test', None)}\n"
             f"eval_only: {kwargs.get('eval_only', None)}\n"
             f"seed: {kwargs.get('seed', None)}\n"
             f"gpu: {kwargs.get('gpu_name', None)}\n"
@@ -137,7 +147,10 @@ def inspect_tokenization_results(
     dataset: Union[Dataset, IterableDataset], gtokenizer, idx: int = None
 ):
     if isinstance(dataset, IterableDataset):
-        return
+        data = next(iter(dataset))
+        if isinstance(data, tuple):
+            _, data = data
+        # return
     else:
         idx = 0 if idx is None else idx
         idx = dataset.sampler[idx] if hasattr(dataset, "sampler") else idx

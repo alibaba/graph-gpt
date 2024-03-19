@@ -6,6 +6,19 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 >
 > Qifang Zhao, Weidong Ren, Tianyu Li, Xiaoxiao Xu, Hong Liu
 
+## Update:
+
+***03/19/2024***
+  1. v0.2.0 released.
+  2. Implement `permute_nodes` for graph-level map-style dataset, in order to increase variations of Eulerian paths,
+     and result in better and robust results.
+  3. refactor codes.
+
+***01/23/2024***
+  1. v0.1.1, fix bugs of common-io package.
+
+***01/03/2024***
+  1. Initial release of codes.
 
 ## Overview:
 ![Alt text](pic/architect.png?raw=true "Model Overview")

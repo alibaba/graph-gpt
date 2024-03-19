@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from dataclasses import dataclass
 from typing import Any, Optional, List, Dict, Union, Tuple
 from torch_geometric.data import Data
@@ -60,6 +61,10 @@ class DataCollatorForGSTCausal:
     pad_to_multiple_of: Optional[int] = None
     label_pad_token_id: int = -100
     return_tensors: str = "pt"
+    mask_boundary: bool = False
+    global_steps: Optional[int] = None
+    total_num_steps: Optional[int] = None
+    num_workers: Optional[int] = None
 
     def __call__(
         self, graphs: List[Union[Tuple[int, Data], Dict]], return_tensors=None
@@ -71,10 +76,20 @@ class DataCollatorForGSTCausal:
             dict_.update({"idx": index})
             return dict_
 
+        if (self.global_steps is not None) and (self.total_num_steps is not None):
+            worker_id = torch.utils.data.get_worker_info().id
+            self.tokenizer.attr_mask_ratio = (
+                1 - (self.global_steps + worker_id) / self.total_num_steps
+            )
+            print(
+                f"[worker_id {worker_id}] attr_mask_ratio: {self.tokenizer.attr_mask_ratio}, global_steps: {self.global_steps + worker_id}"
+            ) if (self.global_steps + worker_id) % 100 == 0 else None
+            self.global_steps += self.num_workers
+
         features = (
             [_add_idx_to_dict(self.tokenizer(graph), idx) for idx, graph in graphs]
             if isinstance(graphs[0], Tuple)
-            else graphs
+            else [_add_idx_to_dict(self.tokenizer(graph), 0) for graph in graphs]
         )
         features = self.tokenizer.pad(
             features,
@@ -82,7 +97,9 @@ class DataCollatorForGSTCausal:
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=return_tensors,
+            mask_boundary=self.mask_boundary,
         )
+        # print(f"[worker_id {worker_id}] attr_mask_ratio: {self.tokenizer.attr_mask_ratio}, global_steps: {self.global_steps+worker_id}, features ele shape: {features['input_ids'].shape}")
         # TODO: implement decoding input_ids
         return features
 

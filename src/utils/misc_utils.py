@@ -7,11 +7,14 @@ import pandas as pd
 from typing import List
 from tqdm import tqdm
 import deepspeed
+import torch
+import torch.distributed as dist
+from torch.utils.data import IterableDataset
 
 
 def delete_old_ckp(dir_ckp):
     if os.path.exists(dir_ckp):
-        shutil.rmtree(dir_ckp)
+        shutil.rmtree(dir_ckp, ignore_errors=True)
 
 
 def get_latest_ckp(pretrain_cpt):
@@ -40,15 +43,16 @@ def save_ckp(output_dir, model, epoch, use_ddp):
     if use_ddp:
         assert isinstance(model, deepspeed.DeepSpeedEngine)
         model_dir = os.path.join(output_dir, f"epoch_{epoch}")
+        model_dir_dp = os.path.join(model_dir, f"global_step{model.global_steps}")
         # below to avoid FileExistsError when saving ckp in Nebula
         if rank != 0:
-            while not os.path.exists(model_dir):
-                print(f"waiting for model dir {model_dir} to be created!")
+            while not os.path.exists(model_dir_dp):
+                print(f"waiting for model dir {model_dir_dp} to be created!")
                 time.sleep(3)
             time.sleep(3)
         else:
-            os.makedirs(model_dir, exist_ok=True)
-        print(f"Model dir {model_dir} created, continue ...")
+            os.makedirs(model_dir_dp, exist_ok=True)
+        print(f"Model dir {model_dir}\n{model_dir_dp}\ncreated, continue ...")
         # a). save model ckp, including optimizer stats. all processes must call this method
         model.save_checkpoint(model_dir)
         print(f"Model saved in {model_dir} using deepspeed API.")
@@ -144,22 +148,26 @@ def load_all(
     return ls_log, ls_result, ls_loss
 
 
-def distribute_sampler(sampler, world_size, rank):
-    vec = np.array(sorted(sampler))
-    idx = [i for i in range(len(sampler)) if i % world_size == rank]
-    sampler = vec[idx].tolist()
-    random.shuffle(sampler)
-    return sampler
-
-
-def estimate_tokens_per_sample(gtokenizer, dataset, sampler, mpe):
-    num_samples = 10000
-    num_samples = min(num_samples, len(sampler))
-    sampler = random.sample(sampler, num_samples)
-    ls_seq = [len(gtokenizer.tokenize(dataset[idx][-1])[0]) for idx in tqdm(sampler)]
-    avg_len = np.minimum(np.array(ls_seq), mpe).mean().round(-1)
+def estimate_tokens_per_sample(gtokenizer, dataset, sampler, mpe, world_size):
+    num_samples = 10000 // world_size
+    if not isinstance(dataset, IterableDataset):
+        num_samples = min(num_samples, len(sampler))
+        sampler = random.sample(sampler, num_samples)
+        ls_seq = [
+            len(gtokenizer.tokenize(dataset[idx][-1])[0]) for idx in tqdm(sampler)
+        ]
+    else:
+        ls_seq = []
+        print(f"Estimating tokens_per_sample ...")
+        for i, ele in enumerate(iter(dataset)):
+            if i >= num_samples:
+                break
+            ls_seq.append(len(gtokenizer.tokenize(ele[-1])[0]))
+    seq_sum = torch.tensor(np.sum(np.minimum(np.array(ls_seq), mpe))).cuda()
+    dist.all_reduce(seq_sum)
+    avg_len = round(seq_sum.item() / (world_size * num_samples), -1)
     print(
-        f"Estimated tokens per sample {avg_len} with {num_samples} samples and mpe {mpe}"
+        f"Estimated tokens per sample {avg_len} with {world_size*num_samples} samples and mpe {mpe}"
     )
     return avg_len
 

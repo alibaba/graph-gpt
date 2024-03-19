@@ -15,7 +15,7 @@ from torch_geometric.utils import negative_sampling, add_self_loops
 from torch_geometric.loader.cluster import ClusterData
 
 from ..utils import control_flow
-from ..utils import dataset_utils
+from ..utils import dataset_utils, nx_utils
 
 
 _map_dataset = control_flow.Register()
@@ -839,6 +839,8 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         data: The torch-geometric `InMemoryDataset`.
         sampling_config: dummy
         sample_idx (Tensor):
+        permute_nodes (bool): whether to permute node index. This serve as a kind of data argumentation for graph-gpt,
+            especially for structural learning
         provide_sampler (bool):
         with_prob (bool): whether to generate samples based on the number of Eulerian paths
         ensemble_paths (bool): tried, seems useless in improving results; on the other hand, it proves that
@@ -851,6 +853,7 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         sampling_config: Optional[Dict],
         *,
         sample_idx: Optional[Tensor] = None,
+        permute_nodes: bool = True,
         provide_sampler: bool = False,
         with_prob: bool = False,
         ensemble_paths: bool = False,
@@ -860,6 +863,14 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         self.data = data._data
         self.slice_dict = data.slices
         self.num_graphs = len(data)
+        self.permute_nodes = permute_nodes
+        self.g = None
+        # cannot pickle 'torch._C.Generator' object, so self.g has to None
+        if self.permute_nodes:
+            print(
+                "[Warning] permute_nodes enabled! edge_attr remains the same; edge_index/x will be affected!\n"
+                * 5
+            )
         # 1. set-up sampler
         self.ensemble_paths = ensemble_paths
         if self.ensemble_paths:
@@ -934,8 +945,11 @@ class GraphsMapDataset(torch.utils.data.Dataset):
             slice_dict=self.slice_dict,
             decrement=False,
         )
+        if self.permute_nodes:
+            graph, _ = nx_utils.permute_nodes(graph, self.g)
         graph.idx = idx
         if self.ensemble_paths:
+            # TODO: permute nodes may affect this, investigate it!
             graph.root_n_id = node_idx
         return idx, graph
 

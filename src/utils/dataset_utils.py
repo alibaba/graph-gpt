@@ -8,6 +8,7 @@ import tarfile
 import time
 from typing import List, Optional
 import numpy as np
+import networkx as nx
 import pandas as pd
 import torch
 from torch import Tensor
@@ -15,7 +16,7 @@ from tqdm import tqdm
 
 import torch_geometric.typing
 from torch_geometric.typing import pyg_lib
-from torch_geometric.utils import sort_edge_index
+from torch_geometric.utils import sort_edge_index, to_networkx
 from torch_geometric.utils.sparse import index2ptr
 from torch_geometric.loader.cluster import ClusterData
 from torch_geometric.data import InMemoryDataset, Data
@@ -124,7 +125,9 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
             self.folder, transform, pre_transform
         )
 
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        fn_processed = self.processed_paths[0]
+        print(f"Loading data from {fn_processed}")
+        self.data, self.slices = torch.load(fn_processed)
 
     @property
     def raw_file_names(self):
@@ -132,7 +135,7 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return "geometric_data_processed_3d.pt"
+        return "geometric_data_processed_3dm_v2.pt"
 
     def download(self):
         if int(os.environ.get("RANK", 0)) == 0:
@@ -712,18 +715,266 @@ def obtain_graph_wgts(dataset: InMemoryDataset, idx: torch.Tensor):
     return torch.tensor(graph_wgts, dtype=torch.float64)
 
 
+class OneIDSmallDataset(InMemoryDataset):
+    def __init__(self, root="dataset", transform=None, pre_transform=None):
+        self.original_root = root
+        self.folder = osp.join(root, "one-id-small")
+        self.data_ver = "v9"
+        dict_edge_attr_dim = {
+            "v2": 2,
+            "v3": 5,
+            "v4": 6,
+            "v5": 5,
+            "v6": 5,
+            "v7": 2,
+            "v8": 2,
+            "v9": 6,
+        }
+        self.edge_attr_dim = dict_edge_attr_dim[self.data_ver]
+
+        super(OneIDSmallDataset, self).__init__(self.folder, transform, pre_transform)
+        fn_processed = self.processed_paths[0]
+        print(f"Loading data from {fn_processed}")
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+    @property
+    def raw_file_names(self):
+        return "data.csv.gz"
+
+    @property
+    def processed_file_names(self):
+        return f"data_2m_{self.data_ver}.pt"
+
+    @property
+    def split_idx_file_name(self):
+        return f"split_dict_{self.data_ver}.pt"
+
+    def download(self):
+        pass
+
+    def process(self):
+        # data_df = pd.read_csv(osp.join(self.raw_dir, self.raw_file_names))
+        # 1. initialize env: in odps
+        from odps.types import Record
+        import base64
+        from odps.inter import enter
+
+        # from odps.inter import setup
+        # # [setup room](https://pyodps.readthedocs.io/zh_CN/latest/interactive.html#cl)
+        # setup(''
+        #       , ''
+        #       , 'tcif_uuic_dev'
+        #       , endpoint='http://service-corp.odps.aliyun-inc.com/api'
+        #       , room='tcif_uuic_dev')
+        # ossutil cp -r /mnt/workspace/kgg/qf/ggpt/data/OneID/one-id-small/processed/data.pt oss://dt-relation/dev/qifang/dataset/OneID/one-id-small/processed/
+        def convert_odps_data(dp: Record):
+            dp_val = dp.values
+            x = torch.tensor(
+                np.frombuffer(base64.b64decode(dp_val[2]), dtype=np.int64).reshape(
+                    [-1, 1]
+                )
+            )
+            edge_index = torch.tensor(
+                np.frombuffer(base64.b64decode(dp_val[0]), dtype=np.int64).reshape(
+                    [2, -1]
+                )
+            )
+            edge_attr = torch.tensor(
+                np.frombuffer(base64.b64decode(dp_val[1]), dtype=np.int64)
+                .reshape([self.edge_attr_dim, -1])
+                .T
+            )
+            a2d = torch.tensor(
+                np.frombuffer(base64.b64decode(dp_val[4]), dtype=np.int64)
+                .reshape([2, -1])
+                .T
+            )
+            graph = Data(
+                x=x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                a2d=a2d,
+                num_nodes=len(x),
+                key_type=torch.LongTensor([int(dp_val[7])]),
+            )
+            return graph, dp_val[8]
+
+        if "o" not in globals():
+            room = enter(room="tcif_uuic_dev")
+            odps = o = room.odps
+        tab_name = "uuic_taobao_a2d_with_d2d_group_graph_samples_20240121_v9"
+        print(f"Converting odps table {tab_name} into graphs...")
+        t = o.get_table(tab_name)
+
+        # 2. process data
+        split_dict = {"train": [], "valid": [], "test": []}
+        data_list = []
+        with t.open_reader() as reader:
+            count = reader.count
+            print(f"precessing {count} records ...")
+            for i, record in tqdm(enumerate(reader[:count])):
+                data, dtype = convert_odps_data(record)
+                data_list.append(data)
+                split_dict[dtype].append(i)
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        print("Saving split dict ...")
+        split_dict = {k: torch.tensor(v) for k, v in split_dict.items()}
+        torch.save(split_dict, osp.join(self.root, self.split_idx_file_name))
+
+        print("Collating ...")
+        data, slices = self.collate(data_list)
+
+        print("Saving data ...")
+        torch.save((data, slices), self.processed_paths[0])
+
+    def get_idx_split(self):
+        fn = osp.join(self.root, self.split_idx_file_name)
+        print(f"loading idx split from {fn}")
+        split_dict = torch.load(fn)
+        return split_dict
+
+
+class StructureDataset(InMemoryDataset):
+    def __init__(self, root="dataset", transform=None, pre_transform=None):
+        self.original_root = root
+        self.folder = osp.join(root, "struct_cogn")
+        self.data_ver = "v5"
+        super(StructureDataset, self).__init__(self.folder, transform, pre_transform)
+        fn_processed = self.processed_paths[0]
+        print(f"Loading data from {fn_processed}")
+        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.idx_split_dict = None
+
+    @property
+    def raw_file_names(self):
+        return "data.csv.gz"
+
+    @property
+    def processed_file_names(self):
+        return f"data_{self.data_ver}.pt"
+
+    @property
+    def split_idx_file_name(self):
+        return f"split_dict_{self.data_ver}.pt"
+
+    def download(self):
+        pass
+
+    def process(self):
+        # data_df = pd.read_csv(osp.join(self.raw_dir, self.raw_file_names))
+        from torch_geometric.datasets import TUDataset
+
+        # 1. initialize env: in odps
+        from odps.types import Record
+        import base64
+        from odps.inter import enter
+
+        # from odps.inter import setup
+        # # [setup room](https://pyodps.readthedocs.io/zh_CN/latest/interactive.html#cl)
+        # setup(''
+        #       , ''
+        #       , 'tcif_uuic_dev'
+        #       , endpoint='http://service-corp.odps.aliyun-inc.com/api'
+        #       , room='tcif_uuic_dev')
+        # ossutil cp -r /mnt/workspace/kgg/qf/ggpt/data/OneID/one-id-small/processed/data.pt oss://dt-relation/dev/qifang/dataset/OneID/one-id-small/processed/
+        def convert_odps_data(dp: Record):
+            dp_val = dp.values
+            edge_index = torch.tensor(
+                np.frombuffer(base64.b64decode(dp_val[0]), dtype=np.int64).reshape(
+                    [2, -1]
+                )
+            )
+            graph = Data(
+                edge_index=edge_index, num_nodes=torch.max(edge_index).item() + 1
+            )
+            # G = to_networkx(graph, to_undirected="upper").to_undirected()
+            # graph.g = sum(nx.triangles(G).values()) // 3
+            return graph, dp_val[2]
+
+        if "o" not in globals():
+            room = enter(room="tcif_uuic_dev")
+            odps = o = room.odps
+        tab_name = "tmp_ggpt_graph_cnts_convert_v5"
+        print(f"Converting odps table {tab_name} into graphs...")
+        t = o.get_table(tab_name)
+
+        # 2. process data
+        split_dict = {}
+        data_list = []
+        with t.open_reader() as reader:
+            count = reader.count
+            print(f"precessing {count} records ...")
+            for i, record in tqdm(enumerate(reader[:count])):
+                data, dtype = convert_odps_data(record)
+                data_list.append(data)
+                if not dtype in split_dict:
+                    split_dict[dtype] = []
+                split_dict[dtype].append(i)
+
+        srt = count
+        tu_dataset = TUDataset(root="../../data/TUDataset", name="reddit_threads")
+        split_dict["reddit_threads"] = []
+        for i, dp in tqdm(enumerate(tu_dataset, srt)):
+            graph = Data(edge_index=dp.edge_index, num_nodes=dp.num_nodes)
+            # G = to_networkx(graph, to_undirected="upper").to_undirected()
+            # graph.g = sum(nx.triangles(G).values()) // 3
+            data_list.append(graph)
+            split_dict["reddit_threads"].append(i)
+
+        srt = count + len(tu_dataset)
+        tu_dataset = TUDataset(root="../../data/TUDataset", name="TRIANGLES")
+        split_dict["triangles"] = []
+        for i, dp in tqdm(enumerate(tu_dataset, srt)):
+            graph = Data(edge_index=dp.edge_index, num_nodes=dp.x.shape[0])
+            # G = to_networkx(graph, to_undirected="upper").to_undirected()
+            # graph.g = sum(nx.triangles(G).values()) // 3
+            data_list.append(graph)
+            split_dict["triangles"].append(i)
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        print("Saving split dict ...")
+        split_dict = {k: torch.tensor(v) for k, v in split_dict.items()}
+        torch.save(split_dict, osp.join(self.root, self.split_idx_file_name))
+
+        print("Collating ...")
+        data, slices = self.collate(data_list)
+
+        print("Saving data ...")
+        torch.save((data, slices), self.processed_paths[0])
+
+    def get_idx_split(self):
+        if self.idx_split_dict is None:
+            fn = osp.join(self.root, self.split_idx_file_name)
+            print(f"loading idx split from {fn}")
+            self.idx_split_dict = torch.load(fn)
+        return self.idx_split_dict
+
+
 if __name__ == "__main__":
     # import pyanitools as pya
     from ogb.lsc import PygPCQM4Mv2Dataset
 
-    dataset = PygPCQM4Mv2Dataset(root="../../data/OGB")
-    dataset = PygPCQM4Mv2PosDataset(root="../../data/OGB")
+    dataset = StructureDataset(root="../../data/Struct")
+    # dataset = OneIDSmallDataset(root="../../data/OneID")
+    # dataset = PygPCQM4Mv2Dataset(root="../../data/OGB")
+    # dataset = PygPCQM4Mv2PosDataset(root="../../data/OGB")
     # dataset = PygCEPDBDataset(root="../../data/OGB")
     # dataset = PygANI1Dataset(root="../../data/OGB")
     # dataset = PygZINCDataset(root="../../data/OGB", subset=11)
     print(dataset)
-    print(dataset._data.edge_index)
-    print(dataset._data.edge_index.shape)
-    print(dataset._data.x.shape)
+    data_ = dataset._data
+    print(data_)
+    print(data_.edge_index)
+    print(data_.edge_index.shape)
+    print(data_.x)
+    print(data_.x.shape if data_.x else None)
+    print(data_.edge_attr)
+    print(data_.edge_attr.shape if data_.edge_attr else None)
     print(dataset[100])
+    print(dataset[100].edge_index)
     print(dataset[100].y if hasattr(dataset[100], "y") else "NO y")
