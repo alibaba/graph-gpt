@@ -292,7 +292,7 @@ def train(
     )
     tensor_shape = len(valid_sampler) // world_size
     valid_tensor_shape_list = [tensor_shape] * world_size
-    valid_sampler = misc_utils.distribute_sampler(valid_sampler, world_size, rank)[
+    valid_sampler = loader_utils.distribute_sampler(valid_sampler, world_size, rank)[
         :tensor_shape
     ]
     valid_sampler_for_eval = random.sample(
@@ -310,7 +310,7 @@ def train(
     )
     tensor_shape = len(test_sampler) // world_size
     test_tensor_shape_list = [tensor_shape] * world_size
-    test_sampler = misc_utils.distribute_sampler(test_sampler, world_size, rank)[
+    test_sampler = loader_utils.distribute_sampler(test_sampler, world_size, rank)[
         :tensor_shape
     ]
     test_sampler_for_eval = random.sample(

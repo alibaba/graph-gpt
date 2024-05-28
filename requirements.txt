@@ -3,13 +3,6 @@
 # problems like this:: some worker got stuck at the deepspeed initialization stage, while others are not
 # tensorboard
 fire==0.5.0
-# regex==2023.10.3
-# 4.31 and 0.10.1 to re-produce lf's results
-# transformers==4.31.0
-# deepspeed==0.10.1
-# triton==2.0.0.post1
-# torcheval==0.0.6
-# torchmetrics==1.0.3
 deepspeed==0.11.1
 triton==2.1.0
 torcheval==0.0.7
@@ -19,39 +12,11 @@ ogb==1.3.6
 rdkit==2023.3.3
 networkx[default]==3.1
 urllib3==1.26.18
-# In nebula, pyodps-int 0.11.5 requires urllib3<2.0,>=1.26.0, but you have urllib3 1.25.11 which is incompatible.
-# below is for consistent of package versions
-# safetensors==0.3.3
-# safetensors==0.4.0
-
-# below for CPU; comment to re-produce lf's results
-# pyg_lib-0.2.0+pt112cpu-cp38-cp38-linux_x86_64.whl
-# torch_cluster-1.6.0+pt112cpu-cp38-cp38-linux_x86_64.whl
-# torch_scatter-2.1.0+pt112cpu-cp38-cp38-linux_x86_64.whl
-# torch_sparse-0.6.16+pt112cpu-cp38-cp38-linux_x86_64.whl
-# torch_spline_conv-1.2.1+pt112cpu-cp38-cp38-linux_x86_64.whl
+sentencepiece
 
 # below for Nebula, CPU
 # FlashAttention is only supported on CUDA 11.6 and above
-transformers==4.34.0
+transformers==4.38.2
 # flash-attn
 # transformers
-# pyg_lib-0.3.1+pt113cpu-cp38-cp38-linux_x86_64.whl
-# torch_cluster-1.6.1+pt113cpu-cp38-cp38-linux_x86_64.whl
-# torch_scatter-2.1.1+pt113cpu-cp38-cp38-linux_x86_64.whl
-# torch_sparse-0.6.17+pt113cpu-cp38-cp38-linux_x86_64.whl
-# torch_spline_conv-1.2.2+pt113cpu-cp38-cp38-linux_x86_64.whl
 
-# --find-links https://data.pyg.org/whl/torch-1.12.0+cpu.html
-# below 1.13.1 for nebula platform
-# --find-links https://data.pyg.org/whl/torch-1.13.1%2Bcpu.html
-# torch-scatter
-# torch-sparse
-
-# torch-scatter & torch-sparse already exists in PAI GPU machine, maybe no need to install!
-# below for GPU
-# pyg_lib-0.2.0+pt112cu113-cp38-cp38-linux_x86_64.whl
-# torch_cluster-1.6.0+pt112cu113-cp38-cp38-linux_x86_64.whl
-# torch_scatter-2.1.0+pt112cu113-cp38-cp38-linux_x86_64.whl
-# torch_sparse-0.6.16+pt112cu113-cp38-cp38-linux_x86_64.whl
-# torch_spline_conv-1.2.1+pt112cu113-cp38-cp38-linux_x86_64.whl
