@@ -22,6 +22,41 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 ***01/03/2024***
   1. Initial release of codes.
 
+## Future Directions
+
+### Scaling law: what’s the scaling limit of GraphGPT models?
+
+- As we know, GPT trained with text data can scale to hundreds of billions of parameters, and keep improving its capability.
+- Text data can provide trillions of tokens, and has very high complexity, and it possess lots of knowledge, including social and natural knowledge. 
+- In contrast, graph data without node/edge attributes contains only structure information, which is quite limited compared to text data. Most hidden information （e.g, degrees, count of substructures and etc.） behind the structure can be calculated exactly using packages like networkx. Therefore, information from graph structure might not be able to support the scaling of model size till billions of parameters.
+    - Our preliminary experiments with various large-scale graph datasets show that we can scale GraphGPT up to 400M+ parameters with improving performance. But we cannot improve the results further. It could be due to our insufficient experiments. But it is possible that the inherent limitations of graph data caused this.
+- Large graph datasets (either one big graph or huge amounts of small graphs) with node/edge attributes might be able to provide enough information for us to train a big GraphGPT model. Even so, one graph dataset may not be enough, and we may need to collect various graph datasets to train one GraphGPT.
+    - The problem here is how to define a universal tokenizer for edge/node attributes from various graph datasets.
+
+### High quality graph data: What are high quality graph data for training a GraphGPT for general tasks?
+
+- For example, if we want to train one model for all kinds of molecule understanding and generation tasks, what kind of data shall we use?
+    - From our preliminary investigation, we add ZINC (4.6M) and CEPDB (2.3M) to pre-train, has observed no gains when fine-tuning PCQM4M-v2 for the homo-lumo gap prediction task. The possible reasons could be as follows:
+        - #structure# The graph patterns behind the molecule graph is relatively simple. 
+            - Graph patterns like chains or 5/6-node rings are very common.
+            - On average 2 edges per node, meaning that atoms have 2 bonds on average.
+        - #semantics# The chemical rules for constructing organic small molecules are simple: the carbon atom has 4 bonds, the nitrogen atom has 3 bonds, the oxygen atom has 2 bonds and the hydrogen atom has 1 bond, and so on. Simply speaking, as long as we have the atoms’ bond counts satisfied, we can generate any molecules. 
+        - The rules from both structure and semantics are so simple that even a medium model can learn from the medium-size dataset. So adding extra data does not help. We pre-train small/medium/base/large models using 3.7M molecule data, and their loss are very close, indicating limited gains from enlarging model sizes in the pre-train stage.
+- Second, if we want to train one model for any types of graph structure understanding tasks, what kind of data shall we use?
+    - Shall we use true graph data from social networks, citation networks and etc, or just use synthetic graph data, such as random Erdos-Renyi graphs?
+    - Our preliminary experiments show that using random graphs to pre-train GraphGPT is helpful for the model to understand graph structures, but it is unstable. We suspect that it is related to the distributions of the graph structures in the pre-train and fine-tune stages. For example, it they have similar number of edges per node, similar number of nodes, then the pre-train & fine-tune paradigm works well.
+    - #Universality# So, how to train a GraphGPT model to understand any graph structure universally?
+- This goes back to previous questions about scaling law: what are the proper and high quality graph data to keep scaling up GraphGPT so that it can do various graph tasks well?
+
+### Few-shot: Can GraphGPT gain few-shot capability?
+
+- If possible, how to design the training data to enable GraphGPT to learn it?
+- From our preliminary experiments with the PCQM4M-v2 dataset, no few shot learning ability is observed! But it does not mean it cannot. It could be due to the following reasons:
+    - The model is not  large enough. We use base model with ~100M params.
+    - The training data is not enough. We only use 3.7M molecules, which provides only limited tokens for training.
+    - The format of training data is not suitable for the model to gain few-shot capability.
+
+
 ## Overview:
 ![Alt text](pic/architect.png?raw=true "Model Overview")
 
