@@ -3,6 +3,7 @@ import random
 
 import torch
 from typing import List
+from datetime import datetime
 from pprint import pformat
 from tqdm import tqdm
 from torch_geometric.datasets import TUDataset
@@ -22,10 +23,13 @@ from .dataset_map import (
     EnsembleGraphsMapDataset,
 )
 
-# from .dataset_iterable import (
-#     OdpsTableIterableDataset,
-#     OdpsTableIterableTokenizedDataset,
-# )
+from .dataset_iterable import (
+    GraphsIterableDataset,
+    OdpsTableIterableDataset,
+    OdpsTableIterableTokenizedDataset,
+    OdpsIterableDatasetMTP,
+    OdpsTableIterableDatasetOneID,
+)
 
 
 _dataset = control_flow.Register()
@@ -48,6 +52,256 @@ def read_merge_molecule_datasets(data_dir):
     return [data]
 
 
+# @_dataset("structure")
+def _read_structure(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test: bool = False,
+    with_prob: bool = False,
+    **kwargs,
+):
+    dataset_name = "structure"
+    print(f"\n[{datetime.now()}] Loading dataset {dataset_name} from {data_dir} ...")
+    dataset = dataset_utils.StructureDataset(root=data_dir)
+    print(f"\n[{datetime.now()}] dataset._data -> {dataset._data}")
+    # dataset._data -> Data(edge_index=[2, 350555694], num_nodes=81957816)
+    # dataset[0] -> Data(edge_index=[2, 598], num_nodes=)
+    # data_dir: e.g., "../data/Struct"
+    if hasattr(dataset._data, "g"):
+        dataset._data.g = dataset._data.g.reshape((-1, 1))
+    split_idx = dataset.get_idx_split()
+    split_idx_stats = {k: len(v) for k, v in split_idx.items()}
+    print(f"[{datetime.now()}]\n{pformat(split_idx_stats)}")
+    dataset.idx_split_dict = {
+        "train": torch.arange(len(dataset))[:-400000],
+        "valid": torch.arange(len(dataset))[-400000:-200000],
+    }
+    permute_nodes = True
+    if return_valid_test:
+        # seed = 42
+        # # deterministically shuffle based on seed
+        # g = torch.Generator()
+        # g.manual_seed(seed)
+        # indices = torch.randperm(len(dataset), generator=g)
+        # train_max_idx = int(len(dataset) * 0.8)
+        # valid_max_idx = int(len(dataset) * 0.9)
+        #
+        # train_idx = indices[:train_max_idx]
+        # valid_idx = indices[train_max_idx:valid_max_idx][:100000]
+        # test_idx = indices[valid_max_idx:][:100000]
+        train_idx = split_idx["train"]
+        valid_idx = split_idx["valid"][:100000]
+        test_idx = split_idx["valid"][-100000:]
+
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=train_idx,
+            provide_sampler=True,
+            with_prob=with_prob,
+        )
+        valid_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=valid_idx,
+            provide_sampler=True,
+        )
+        test_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=test_idx,
+            provide_sampler=True,
+        )
+        # train/valid/test
+        # xx/xx/xx
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            dataset,
+        )
+    else:
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=torch.arange(len(dataset)),
+            permute_nodes=permute_nodes,
+            # sample_idx=split_idx["train"],
+            provide_sampler=True,
+            with_prob=with_prob,
+        )
+        return train_dataset, dataset
+
+
+@_dataset("structure")
+def _read_random_graph_structure(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test: bool = False,
+    with_prob: bool = False,
+    **kwargs,
+):
+    print(f"\n[{datetime.now()}] Generating dataset randomly ...")
+    dataset = GraphsIterableDataset(
+        num_nodes_low=10,
+        num_nodes_high=101,
+        edges_per_node=4,
+    )
+    return dataset, dataset
+
+
+@_dataset("oneid")
+def _read_oneid(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test: bool = False,
+    **kwargs,
+):
+    dataset_name = "oneid"
+    print(f"\nLoading dataset {dataset_name} ...")
+    dataset = dataset_utils.OneIDSmallDataset(root=data_dir)
+    print(f"\ndataset._data -> {dataset._data}")
+    # dataset._data -> Data(x=[2240695, 1], edge_index=[2, 10174256], edge_attr=[10174256, 2], a2d=[185203, 2])
+    # dataset[0] -> Data(x=[143, 1], edge_index=[2, 598], edge_attr=[598, 2], a2d=[4, 2])
+    # data_dir: e.g., "../data/OneID"
+    split_idx = dataset.get_idx_split()
+    if return_valid_test:
+        # seed = 42
+        # # deterministically shuffle based on seed
+        # g = torch.Generator()
+        # g.manual_seed(seed)
+        # indices = torch.randperm(len(dataset), generator=g)
+        # train_max_idx = int(len(dataset) * 0.8)
+        # valid_max_idx = int(len(dataset) * 0.9)
+        #
+        # train_idx = indices[:train_max_idx]
+        # valid_idx = indices[train_max_idx:valid_max_idx][:100000]
+        # test_idx = indices[valid_max_idx:][:100000]
+        train_idx = split_idx["train"]
+        valid_idx = split_idx["valid"][:100000]
+        test_idx = split_idx["valid"][-100000:]
+
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=train_idx,
+            provide_sampler=True,
+        )
+        valid_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=valid_idx,
+            provide_sampler=True,
+        )
+        test_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=test_idx,
+            provide_sampler=True,
+        )
+        # train/valid/test
+        # xx/xx/xx
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            dataset,
+        )
+    else:
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=torch.arange(len(dataset)),
+            # sample_idx=split_idx["train"],
+            provide_sampler=True,
+        )
+        return train_dataset, dataset
+
+
+@_dataset("triangles")
+def _read_triangles(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test: bool = False,
+    **kwargs,
+):
+    dataset_name = "TRIANGLES"
+    print(f"\nLoading dataset {dataset_name} from {data_dir} ...")
+    dataset = TUDataset(root=data_dir, name=dataset_name)
+    print(f"\ndataset._data -> {dataset._data}")
+    # dataset._data -> Data(x=[938438, 0], edge_index=[2, 2947024], y=[45000])
+    # dataset[0] -> Data(edge_index=[2, 56], x=[23, 0], y=[1])
+    # max num nodes: 100
+    # data_dir: e.g., "../data/TUDataset"
+    dataset._data.y = dataset._data.y.to(dtype=torch.int64) - 1
+    # dataset._data.x = torch.zeros((dataset._data.x.shape[0], 1), dtype=torch.int64)
+    permute_nodes = True
+    if return_valid_test:
+        indices = torch.arange(len(dataset))
+
+        train_idx = indices[:30000]
+        # valid_idx = indices[30000:35000]
+        valid_idx = indices[35000:40000]
+        # https://github.com/luis-mueller/probing-graph-transformers/blob/main/configs/StructuralAwareness/triangle/triangle-graphormer-t1.yaml
+        test_idx = indices[40000:45000]
+        # https://github.com/luis-mueller/probing-graph-transformers/blob/main/configs/StructuralAwareness/triangle/triangle-graphormer-t2.yaml
+        # max-epochs = 1000; warmup-epochs = 50; base_lr = 1e-3
+
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=train_idx,
+            permute_nodes=permute_nodes,
+            provide_sampler=True,
+        )
+        valid_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=valid_idx,
+            permute_nodes=True,
+            provide_sampler=True,
+        )
+        test_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=test_idx,
+            permute_nodes=True,
+            provide_sampler=True,
+        )
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            dataset,
+        )
+    else:
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=torch.arange(len(dataset)),
+            permute_nodes=permute_nodes,
+            provide_sampler=True,
+        )
+        return train_dataset, dataset
+
+
 @_dataset("reddit_threads")
 def _read_reddit_threads(
     data_dir,
@@ -58,7 +312,7 @@ def _read_reddit_threads(
     **kwargs,
 ):
     dataset_name = "reddit_threads"
-    print(f"\nLoading dataset {dataset_name} ...")
+    print(f"\nLoading dataset {dataset_name} from {data_dir} ...")
     dataset = TUDataset(root=data_dir, name=dataset_name)
     print(f"\ndataset._data -> {dataset._data}")
     # pre_transform=tokenizer_utils.add_paths
@@ -207,11 +461,27 @@ def _read_pcqm4mv2(
 ):
     print("\nLoading dataset PCQM4Mv2 ...")
     # data_dir: e.g., "../data/OGB"
+    # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
+    # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3])
+    dataset = PygPCQM4Mv2Dataset(root=data_dir, smiles2graph=smiles2graph)
+    # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
+    # dataset = dataset_utils.PygPCQM4Mv2ExtraDataset(root=data_dir)
+    # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 12], y=[3746620])
+    print(f"\ndataset._data -> {dataset._data}")
+
+    if isinstance(dataset, dataset_utils.PygPCQM4Mv2ExtraDataset):
+        dataset._data.x = dataset._data.x[:, [0, 4, 5, 9, 10, 11]]
+        dataset._data.edge_attr = dataset._data.edge_attr[:, [1]]
+        print(f"\ndataset._data -> {dataset._data}")
+
+    # dataset._data.y = dataset._data.y - dataset._data.y[dataset.get_idx_split()["train"]].median()
+    # median is the minimum of y if minimizing MAE
+    # https://dsc-courses.github.io/dsc40a-2022-fa/resources/lecture/lec02_mahdi.pdf
+
+    permute_nodes = True
     if return_valid_test:
-        # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
-        # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3])
-        dataset = PygPCQM4Mv2Dataset(root=data_dir, smiles2graph=smiles2graph)
-        # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
+        add_cepdb = False
+        add_zinc = False
         ls_idx = obtain_special_molecules(dataset)
         split_idx = dataset.get_idx_split()
         train_idx = remove_special_molecules(split_idx["train"], ls_idx)
@@ -223,17 +493,55 @@ def _read_pcqm4mv2(
         else:
             mid_idx = len(valid_idx) // 2
             test_idx = valid_idx[mid_idx:]
-        # specific_valid_idx = _load_idx_from_file(dataset.root, "lf_idx")
-        # train_idx, valid_idx, test_idx = add_specific_valid_to_train(train_idx, valid_idx, specific_valid_idx)
-        # test_idx = remove_special_molecules(split_idx["valid"], ls_idx)
-        # TODO: remove above 3 lines
+            print(
+                f"Using all valid data as valid: {len(valid_idx)}, and last half of valid data as test: {len(test_idx)}!"
+            )
         train_dataset = GraphsMapDataset(
             dataset,
             None,
             sample_idx=train_idx,
+            permute_nodes=permute_nodes,
             provide_sampler=True,
             with_prob=with_prob,
         )
+        if add_cepdb:
+            print("\nLoading dataset CEPDB ...")
+            # data_dir: e.g., "../data/OGB"
+            dataset_cepdb = dataset_utils.PygCEPDBDataset(root=data_dir)
+            # "mass", "pce", "voc", "jsc", "e_homo_alpha", "e_gap_alpha", "e_lumo_alpha"
+            # "voc", "e_homo_alpha", "e_gap_alpha", "e_lumo_alpha" 's values are of same scale
+            # y: [5], y2: [2,5], y4: [2,4,5,6]
+            dataset_cepdb._data.y = torch.nan_to_num(
+                dataset_cepdb._data.y[:, [5]], nan=0.0
+            )
+            print(f"\ndataset._data -> {dataset_cepdb._data}")
+            cepdb_dataset = GraphsMapDataset(
+                dataset_cepdb,
+                None,
+                sample_idx=torch.arange(len(dataset_cepdb)),
+                provide_sampler=True,
+                with_prob=with_prob,
+            )
+            train_dataset = EnsembleGraphsMapDataset([train_dataset, cepdb_dataset])
+        if add_zinc:
+            print("\nLoading dataset ZINC ...")
+            # data_dir: e.g., "../data/OGB"
+            dataset_zinc = dataset_utils.PygZINCDataset(root=data_dir)
+            # "MWT", "LogP", "Desolv_apolar", "Desolv_polar", "HBD", "HBA", "tPSA", "Charge", "NRB"
+            # "Desolv_apolar" values are of same scale as homo-lumo, Desolv_polar is 10 times
+            dataset_zinc._data.y = torch.nan_to_num(
+                dataset_zinc._data.y[:, [2]], nan=0.0
+            )
+            print(f"\ndataset._data -> {dataset_zinc._data}")
+            zinc_dataset = GraphsMapDataset(
+                dataset_zinc,
+                None,
+                sample_idx=torch.arange(len(dataset_zinc)),
+                provide_sampler=True,
+                with_prob=with_prob,
+            )
+            train_dataset = EnsembleGraphsMapDataset([train_dataset, zinc_dataset])
+
         valid_dataset = GraphsMapDataset(
             dataset,
             None,
@@ -260,22 +568,28 @@ def _read_pcqm4mv2(
             dataset,
         )
     else:
-        # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
-        # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3])
-        dataset = PygPCQM4Mv2Dataset(root=data_dir, smiles2graph=smiles2graph)
-        # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
         ls_idx = obtain_special_molecules(dataset)
         print(f"In pre-train mode, set all valid data's y to nan!")
         valid_idx = dataset.get_idx_split()["valid"]
         y = dataset._data.y.clone()
         y[valid_idx] = float("nan")
+        # y[torch.arange(len(dataset))] = float("nan")
         print(f"Before setting, y has {torch.isnan(dataset._data.y).sum()} NANs")
         dataset._data.y = y.reshape([-1, 1]).round(decimals=3)
         print(f"After setting, y has {torch.isnan(dataset._data.y).sum()} NANs")
+        try:
+            pretrain_idx = _load_idx_from_file(dataset.root, "dedup_idx")
+            print(
+                f"Using dedup_idx with {len(pretrain_idx)} molecules instead of original {len(dataset)} molecules!"
+            )
+        except Exception as inst:
+            print(inst)
+            pretrain_idx = remove_special_molecules(torch.arange(len(dataset)), ls_idx)
         train_dataset = GraphsMapDataset(
             dataset,
             None,
-            sample_idx=remove_special_molecules(torch.arange(len(dataset)), ls_idx),
+            sample_idx=pretrain_idx,
+            permute_nodes=permute_nodes,
             provide_sampler=True,
             with_prob=with_prob,
         )
@@ -284,7 +598,8 @@ def _read_pcqm4mv2(
 
 def _load_idx_from_file(root_dir, fn):
     fn = os.path.join(root_dir, fn)
-    with open(fn, "r+") as fp:
+    print(f"load idx from {fn} ...")
+    with open(fn, "r") as fp:
         ls_idx = fp.readlines()
     ls_idx = [int(each.strip()) for each in ls_idx]
     print(f"load idx from {fn} with 1st 10 idx:\n{ls_idx[:10]}")
@@ -323,11 +638,15 @@ def add_valid_to_train(
     # deterministically shuffle based on seed
     g = torch.Generator()
     g.manual_seed(seed)
-    indices = torch.randperm(len(valid_idx), generator=g).tolist()
+    indices = torch.randperm(len(valid_idx), generator=g)
     indices_train = indices[:-num_remained]
     indices_valid = indices[-num_remained:]
     # use valid samples in training as the test data to check the difference between valid (unseen) and test (seen)
-    indices_test = indices[:num_remained]
+    cnt_test = min(num_remained, len(valid_idx) - num_remained)
+    indices_test = indices[:cnt_test]
+    extra_train = len(indices_train)  # 200000
+    ls_indices_train = [indices_train] * (extra_train // len(indices_train) + 1)
+    indices_train = torch.cat(ls_indices_train, dim=-1)[:extra_train]
     new_train_idx = torch.cat([train_idx, valid_idx[indices_train]], dim=-1)
     new_valid_idx = valid_idx[indices_valid].clone()
     new_test_idx = valid_idx[indices_test].clone()
@@ -449,8 +768,20 @@ def _read_cepdb(
     # data_dir: e.g., "../data/OGB"
     assert not return_valid_test
     dataset = dataset_utils.PygCEPDBDataset(root=data_dir)
+    print(f"\ndataset._data -> {dataset._data}")
     # dataset._data -> Data(edge_index=[2, 154636230], edge_attr=[154636230, 3], x=[64047540, 9], y=[2313028, 1])
-    dataset._data.y = dataset._data.y.clone().reshape([-1, 1])  # .round(decimals=3)
+    if len(dataset._data.y.shape) >= 2:
+        assert dataset._data.y.shape[1] == 7
+        # "mass", "pce", "voc", "jsc", "e_homo_alpha", "e_gap_alpha", "e_lumo_alpha"
+        enlarge_rate = torch.tensor(
+            [[1, 10, 100, 1, 100, 100, 100]], dtype=torch.float32
+        )
+        dataset._data.y = torch.nan_to_num(
+            (dataset._data.y * enlarge_rate).round(decimals=0), nan=0.0
+        ).to(torch.int64)
+    else:
+        dataset._data.y = dataset._data.y.clone().reshape([-1, 1]).round(decimals=3)
+    dataset._data.y = None  # tmp for pre-training
     train_dataset = GraphsMapDataset(
         dataset,
         None,
@@ -478,7 +809,9 @@ def _read_zinc(
     # data_dir: e.g., "../data/OGB"
     assert not return_valid_test
     dataset = dataset_utils.PygZINCDataset(root=data_dir, subset=subset)
+    print(f"\ndataset._data -> {dataset._data}")
     # dataset._data -> Data(edge_index=[2, 209405292], edge_attr=[209405292, 3], x=[97741772, 9])
+    dataset._data.y = None  # tmp for pre-training
     train_dataset = GraphsMapDataset(
         dataset,
         None,
@@ -708,6 +1041,29 @@ def _read_ogbl_ddi(
         return dataset, [
             graph
         ]  # TODO: use an elegant method to convert back to a dataset obj
+
+
+@_dataset("odps_oneid")
+def _read_odps_oneid_data(table, return_valid_test: bool = False, **kwargs):
+    slice_id = int(os.environ.get("RANK", 0))
+    slice_count = int(os.environ.get("WORLD_SIZE", 1))
+
+    ls_tables = table.split(",")
+    if return_valid_test:
+        train_table, valid_table = ls_tables
+        train_dataset = OdpsTableIterableDatasetOneID(
+            train_table, slice_id, slice_count
+        )
+        valid_dataset = OdpsTableIterableDatasetOneID(
+            valid_table, slice_id, slice_count
+        )
+        return train_dataset, valid_dataset, valid_dataset, train_dataset
+    else:
+        train_table = ls_tables[0]
+        train_dataset = OdpsTableIterableDatasetOneID(
+            train_table, slice_id, slice_count
+        )
+        return train_dataset, train_dataset
 
 
 @_dataset("odps")

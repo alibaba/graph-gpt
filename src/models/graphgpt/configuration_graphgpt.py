@@ -60,11 +60,18 @@ class GraphGPTConfig(LlamaConfig):
         use_cache=True,
         pad_token_id=0,
         tie_word_embeddings=False,
+        pooling_method="last",
+        causal_attention: bool = True,
         # For transformer backbone's dropout -> embed layer, attn & attn residue, mlp layer
         embd_pdrop: float = 0,
         attn_pdrop: float = 0,
         resid_pdrop: float = 0,
         mlp_pdrop: float = 0,
+        # For graphGPT input features stack
+        stacked_feat: int = 1,
+        stacked_feat_agg_method: str = "sum",
+        # For pre-train task
+        next_n_token: int = 1,
         # For downstream tasks
         cls_token_id=None,
         mlp: Optional[List[int]] = None,
@@ -73,14 +80,19 @@ class GraphGPTConfig(LlamaConfig):
         num_neg: Optional[int] = None,
         **kwargs,
     ):
+        self.next_n_token = next_n_token
         # 1. For dropout in transformer backbone
         self.embd_pdrop = embd_pdrop
         self.attn_pdrop = attn_pdrop
         self.resid_pdrop = resid_pdrop
         self.mlp_pdrop = mlp_pdrop
+        self.stacked_feat = stacked_feat
+        self.stacked_feat_agg_method = stacked_feat_agg_method
         # 2. For downstream tasks
         self.cls_token_id = cls_token_id
         self.mlp = [] if mlp is None else list(mlp)
+        assert pooling_method in {"last", "sum", "mean"}
+        self.pooling_method = pooling_method
         self.dropout = dropout
         self.loss_type = loss_type
         self.num_neg = num_neg

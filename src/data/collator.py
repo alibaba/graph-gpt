@@ -55,6 +55,7 @@ class DataCollatorForGSTCausal:
     """
 
     tokenizer: GSTTokenizer
+    is_training: Optional[bool] = None
     model: Optional[Any] = None
     padding: bool = True
     max_length: Optional[int] = None
@@ -87,9 +88,15 @@ class DataCollatorForGSTCausal:
             self.global_steps += self.num_workers
 
         features = (
-            [_add_idx_to_dict(self.tokenizer(graph), idx) for idx, graph in graphs]
+            [
+                _add_idx_to_dict(self.tokenizer(graph, self.is_training), idx)
+                for idx, graph in graphs
+            ]
             if isinstance(graphs[0], Tuple)
-            else [_add_idx_to_dict(self.tokenizer(graph), 0) for graph in graphs]
+            else [
+                _add_idx_to_dict(self.tokenizer(graph, self.is_training), 0)
+                for graph in graphs
+            ]
         )
         features = self.tokenizer.pad(
             features,

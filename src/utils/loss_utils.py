@@ -88,11 +88,14 @@ def _ds_warmup(
     params_dict: Dict,
     *,
     warmup_max_lr: float = 3e-4,
+    warmup_min_lr: float = 0,
     warmup_num_steps: int = 2000,
     **kwargs,
 ):
     params_dict["warmup_max_lr"] = warmup_max_lr
+    params_dict["warmup_min_lr"] = warmup_min_lr
     params_dict["warmup_num_steps"] = warmup_num_steps
+    params_dict.pop("total_num_steps", None)
     return params_dict
 
 

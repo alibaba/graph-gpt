@@ -3,9 +3,11 @@ import random
 import math
 import numpy as np
 from typing import Dict, List, Callable, Tuple, Optional, Union, Iterable, Set
+import sentencepiece as spm
 
 import torch
 from torch_geometric.data import Data
+from torch.utils.data import IterableDataset, Dataset
 from ..utils import (
     nx_utils,
     instruct_tuning_utils,
@@ -47,12 +49,13 @@ class GSTTokenizer(object):
         self.padding_side = padding_side
         self.add_eos = add_eos
         self.vocab_map = self.load_vocab()
-        self.vocab_size = max(self.vocab_map.values()) + 1
+        self.vocab_size = self.get_vocab_size()
         self.label_pad_token_id = -100
         self.pad_token_id = 0
         self.task_type = self.config["task_type"].lower()
         assert self.task_type in TASK_TYPES, f"{self.task_type} is not implemented!"
         self.eos_idx = None
+        self.semantics2tokens_mapping = get_semantics_raw_node_edge2attr_mapping
         # below for pack target token sequence with randomly sampled token sequence
         self.mpe = None
         self.dataset = None
@@ -61,6 +64,12 @@ class GSTTokenizer(object):
         self.random_ratio = 1
         self.label_to_be_padded = self.get_label_token_id_to_be_padded()
         self.attr_mask_ratio = self.config["semantics"].get("attr_mask_ratio", 0)
+        # cyclic mpe
+        self.cmpe = 100000
+        self.cyclic_mpe = False
+        self.node_idx_tokens = None
+        self.node_idx_token_ids = None
+        self.all_token_ids = None
 
     def load_vocab(self):
         fn = os.path.join(
@@ -68,14 +77,33 @@ class GSTTokenizer(object):
         )
         return load_vocab(fn)
 
+    def get_vocab_size(self):
+        return max(self.vocab_map.values()) + 1
+
+    def get_all_vocab_ids(self):
+        if self.all_token_ids is None:
+            self.all_token_ids = tuple(range(self.get_vocab_size()))
+        return self.all_token_ids
+
     def build_vocab(self):
         pass
+
+    def get_label_pad_token(self):
+        return "<label_pad>"
 
     def get_bos_token(self):
         return self.config["structure"]["node"]["bos_token"]
 
     def get_eos_token(self):
         return self.config["structure"]["node"]["eos_token"]
+
+    def get_new_node_token(self):
+        return self.config["structure"]["node"].get(
+            "new_node_token", self.get_label_pad_token()
+        )
+
+    def get_jump_token(self):
+        return self.config["structure"]["edge"]["jump_token"]
 
     def get_gsum_token(self):
         return self.config["structure"]["graph"]["summary_token"]
@@ -86,6 +114,9 @@ class GSTTokenizer(object):
     def get_sep_token(self):
         return self.config["structure"]["common"]["sep_token"]
 
+    def get_common_structure(self):
+        return self.config["structure"]["common"].get("reserved_token", [])
+
     def get_common_semantics(self):
         return self.config["semantics"]["common"].get("reserved_token", [])
 
@@ -95,8 +126,29 @@ class GSTTokenizer(object):
     def get_eos_token_id(self):
         return self.vocab_map[self.get_eos_token()]
 
+    def get_new_node_token_id(self):
+        return self.vocab_map[self.get_new_node_token()]
+
+    def get_jump_token_id(self):
+        return self.vocab_map[self.get_jump_token()]
+
     def get_gsum_token_id(self):
         return self.vocab_map.get(self.get_gsum_token(), None)
+
+    def get_node_idx_tokens(self):
+        if self.node_idx_tokens is None:
+            self.node_idx_tokens = {
+                str(x) for x in range(self.config["structure"]["node"]["scope_base"])
+            }
+        return self.node_idx_tokens
+
+    def get_node_idx_token_ids(self):
+        if self.node_idx_token_ids is None:
+            self.node_idx_token_ids = {
+                self.vocab_map[str(x)]
+                for x in range(self.config["structure"]["node"]["scope_base"])
+            }
+        return self.node_idx_token_ids
 
     def get_token_components(self, ls_tokens):
         if self.token_components is None:
@@ -210,9 +262,14 @@ class GSTTokenizer(object):
             else:
                 assert isinstance(feature["input_ids"][0], int)
                 input_pad_val = self.pad_token_id
+            if isinstance(feature["labels"][0], Iterable):
+                label_pad_val = [self.label_pad_token_id] * len(feature["labels"][0])
+            else:
+                assert isinstance(feature["labels"][0], int)
+                label_pad_val = self.label_pad_token_id
             padded_input_ids = [input_pad_val] * padding_len
             padded_position_ids = [0] * padding_len
-            padded_labels = [self.label_pad_token_id] * padding_len
+            padded_labels = [label_pad_val] * padding_len
             padded_attention_mask = [0] * padding_len
 
             feature["input_ids"] = _merge_two_ls(
@@ -267,35 +324,61 @@ class GSTTokenizer(object):
                     feature[name] = feature[name][:pad_to].tolist()
         return feature
 
-    def pack_token_seq(self, ls_tokens: List[str], previous_idx: int):
+    def pack_token_seq(
+        self, ls_tokens: List[str], ls_labels: List[str], previous_idx: int
+    ):
         token_compontens = self.get_token_components(ls_tokens)
         token_len = len(ls_tokens) + 1
+        if isinstance(self.dataset, IterableDataset):
+            print(f"Convert Iterable dataset to iterable: `dataset -> iter(dataset)`")
+            self.dataset = iter(self.dataset)
         while token_len < self.mpe:
-            if random.uniform(0, 1.0) <= self.random_ratio:
-                # randomly sample a graph
-                idx = (
-                    self.dataset.get_random_sample_idx()
-                    if hasattr(self.dataset, "get_random_sample_idx")
-                    else random.choice(self.sampler)
+            if isinstance(self.dataset, Dataset):
+                if random.uniform(0, 1.0) <= self.random_ratio:
+                    # randomly sample a graph
+                    idx = (
+                        self.dataset.get_random_sample_idx()
+                        if hasattr(self.dataset, "get_random_sample_idx")
+                        else random.choice(self.sampler)
+                    )
+                else:  # repeat the previous graph
+                    idx = previous_idx
+                sep_token = (
+                    self.get_eos_token()
+                    if idx != previous_idx
+                    else self.get_gsum_token()
                 )
-            else:  # repeat the previous graph
-                idx = previous_idx
-            sep_token = (
-                self.get_eos_token() if idx != previous_idx else self.get_gsum_token()
-            )
-            _, new_graph = self.dataset[idx]
-            new_ls_tokens, _, _, _, _ = self.tokenize(new_graph)
+                _, new_graph = self.dataset[idx]
+            else:
+                idx = 0
+                sep_token = self.get_eos_token()
+                _, new_graph = next(self.dataset)
+            new_ls_tokens, new_ls_labels, _, _, _, _ = self.tokenize(new_graph)
             if token_compontens == 0:
                 seps = [sep_token]
+                label_seps = [self.get_label_pad_token()]
             else:
                 seps = [[sep_token] * token_compontens]
+                label_seps = [[self.get_label_pad_token()] * token_compontens]
             ls_tokens = ls_tokens + seps + new_ls_tokens
+            ls_labels = ls_labels + label_seps + new_ls_labels
 
             previous_idx = idx
             token_len = len(ls_tokens) + 1
-        return ls_tokens
+        return ls_tokens, ls_labels
+
+    def _tailor_node_struct_repr(self, node_structure_mapping):
+        # for forward compatibility
+        return node_structure_mapping
+
+    def _tailor_edge_struct_repr(self, edge_structure_mapping):
+        # for forward compatibility
+        return edge_structure_mapping
 
     def tokenize(self, graph: Data):
+        return self.raw_tokenize(graph)
+
+    def raw_tokenize(self, graph: Data):
         # input: raw small/medium graph OR subgraph sampled from big graphs
         # output: sequence of tokens from vocab
         # 0. decide whether to mask attr
@@ -308,16 +391,21 @@ class GSTTokenizer(object):
             path = graph2path(graph, prioritize=self.task_type != "pretrain")
         # 3. obtain node/edge structure and semantics mapping
         node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
-            path, self.config["structure"]["node"]["scope_base"]
+            path,
+            self.config["structure"]["node"]["scope_base"],
+            self.config["structure"]["node"]["node_scope"],
+            self.config["structure"]["node"].get("cyclic", False),
         )
+        node_structure_mapping = self._tailor_node_struct_repr(node_structure_mapping)
         edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
             path, graph
         )
+        edge_structure_mapping = self._tailor_edge_struct_repr(edge_structure_mapping)
         (
             node_semantics_mapping,
             edge_semantics_mapping,
             graph_semantics_mapping,
-        ) = get_semantics_raw_node_edge2attr_mapping(path, graph, self.config)
+        ) = self.semantics2tokens_mapping(path, graph, self.config)
         # 3.1 obtain target node or target edge tokens FOR node/edge-lvl tasks
         tgt_node_token = None
         tgt_edge_src_token = None
@@ -368,43 +456,70 @@ class GSTTokenizer(object):
         # keeping it will produce lots of redundant tokens
         dict_edge = self.config["structure"]["edge"]
         if dict_edge.get("remove_edge_type_token", False):
-            edge_types = {dict_edge["bi_token"]}
+            edge_types = {self._tailor_edge_struct_repr(dict_edge["bi_token"])}
             ls_tokens = [token for token in ls_tokens if token not in edge_types]
+        # 5.1 obtain label tokens from input tokens
+        ls_labels = nx_utils.get_labels_from_input_tokens(ls_tokens, self)
         # 6. add nx/instructions/eos tokens and etc.
         # 6.1 enable nx func to enhance structure understanding
-        ls_struct_tokens = nx_utils.understand_structure(
+        ls_struct_tokens, ls_struct_labels = nx_utils.understand_structure(
             graph,
             tokenization_config=self.config,
             node_structure_mapping=node_structure_mapping,
             edge_structure_mapping=edge_structure_mapping,
+            gtokenizer=self,
         )
         ls_tokens.extend(ls_struct_tokens)
+        ls_labels.extend(ls_struct_labels)
         # 6.2 enable instruction tuning to enhance semantics understanding
-        ls_instruct_tokens = instruct_tuning_utils.follow_instructions(
+        (
+            ls_instruct_tokens,
+            ls_instruct_labels,
+        ) = instruct_tuning_utils.follow_instructions(
             graph,
             tokenization_config=self.config,
             node_structure_mapping=node_structure_mapping,
             edge_structure_mapping=edge_structure_mapping,
             node_semantics_mapping=node_semantics_mapping,
             edge_semantics_mapping=edge_semantics_mapping,
+            gtokenizer=self,
         )
         ls_tokens.extend(ls_instruct_tokens)
+        ls_labels.extend(ls_instruct_labels)
         # 6.3 add special tokens, e.g., eos
-        ls_tokens = self.add_eos_token(ls_tokens) if self.add_eos else ls_tokens
+        ls_tokens = (
+            self.add_eos_token(ls_tokens)
+            if (self.add_eos and ls_labels is None)
+            else ls_tokens
+        )
         return (
             ls_tokens,
+            ls_labels,
             tgt_node_token,
             tgt_edge_src_token,
             tgt_edge_dst_token,
             tgt_pos,
         )
 
-    def convert_tokens_to_ids(self, seq_tokens):
+    def convert_tokens_to_ids(self, seq_tokens, seq_labels):
         # 7. map tokens to token-id
         seq_tokens_id = [self.vocab_map[token] for token in seq_tokens]
+        seq_labels_id = [self.vocab_map[token] for token in seq_labels]
         # 8. add labels, attention mask, position_ids and etc
         in_dict = get_input_dict_from_seq_tokens_id(
-            seq_tokens_id, self.label_to_be_padded, self.label_pad_token_id
+            seq_tokens_id,
+            seq_labels_id,
+            self.label_to_be_padded,
+            self.label_pad_token_id,
+            self.cmpe,
+            self.cyclic_mpe,
+            self.get_node_idx_token_ids().union(
+                {
+                    self.get_eos_token_id(),
+                    self.get_jump_token_id(),
+                    self.get_gsum_token_id(),
+                }
+            ),
         )
         return in_dict
 
@@ -416,6 +531,7 @@ class GSTTokenizer(object):
         tgt_edge_src_token: Union[str, List[str], Tuple[str]],
         tgt_edge_dst_token: Union[str, List[str], Tuple[str]],
         tgt_pos: Optional[torch.Tensor] = None,
+        is_training: Optional[bool] = None,
     ):
         tgt_node_token_id = self._map_tokens_to_ids(tgt_node_token)
         tgt_edge_src_token_id = self._map_tokens_to_ids(tgt_edge_src_token)
@@ -431,25 +547,27 @@ class GSTTokenizer(object):
             tgt_pos=tgt_pos,
             gsum_token_id=self.get_gsum_token_id(),
             gtokenizer=self,
+            is_training=is_training,
         )
         return in_dict
 
-    def __call__(self, graph: Data):
+    def __call__(self, graph: Data, is_training: Optional[bool] = None):
         # 1~6. self.tokenize
         (
             ls_tokens,
+            ls_labels,
             tgt_node_token,
             tgt_edge_src_token,
             tgt_edge_dst_token,
             tgt_pos,
         ) = self.tokenize(graph)
-        ls_tokens = (
-            self.pack_token_seq(ls_tokens, graph.idx)
+        ls_tokens, ls_labels = (
+            self.pack_token_seq(ls_tokens, ls_labels, graph.idx)
             if self.mpe is not None
-            else ls_tokens
+            else (ls_tokens, ls_labels)
         )
         # 7~8. self.convert_tokens_to_ids
-        in_dict = self.convert_tokens_to_ids(ls_tokens)
+        in_dict = self.convert_tokens_to_ids(ls_tokens, ls_labels)
         # 9. prepare for tasks
         in_dict = self.prepare_inputs_for_task(
             in_dict,
@@ -458,11 +576,12 @@ class GSTTokenizer(object):
             tgt_edge_src_token,
             tgt_edge_dst_token,
             tgt_pos,
+            is_training,
         )
         return in_dict
 
     def add_eos_token(self, seq_tokens):
-        eos_token = self.config["structure"]["node"]["eos_token"]
+        eos_token = self.get_eos_token()
         seq_tokens.append(eos_token)
         return seq_tokens
 
@@ -487,17 +606,45 @@ def _get_batch_seq_len(ls_seq_len, pad_to_multiple_of, max_position_embeddings):
 
 
 def get_input_dict_from_seq_tokens_id(
-    seq_tokens_id: List[int], label_to_be_pad: Set[int], label_pad_token_id: int
+    seq_tokens_id: List[int],
+    seq_labels_id: List[int],
+    label_to_be_pad: Set[int],
+    label_pad_token_id: int,
+    mpe: int = 1024,
+    cyclic: bool = False,
+    node_idx_token_ids: Set = set(),
 ):
     seq_tokens_id = list(seq_tokens_id)
-    input_ids = seq_tokens_id[:-1]
-    labels = seq_tokens_id[1:]
+    if seq_labels_id is None:
+        input_ids = seq_tokens_id[:-1]
+        labels = seq_tokens_id[1:]
+    else:
+        seq_labels_id = list(seq_labels_id)
+        input_ids = seq_tokens_id
+        labels = seq_labels_id
+    assert len(input_ids) == len(
+        labels
+    ), f"input_ids: {len(input_ids)}, labels: {len(labels)}"
     if len(label_to_be_pad) > 0:
         labels = [
             token_id if token_id not in label_to_be_pad else label_pad_token_id
             for token_id in labels
         ]
-    position_ids = list(range(len(input_ids)))
+    # `random.randint` Return random integer in range [a, b], including both end points.
+    # v1: cyclic version
+    start_idx = random.randint(0, mpe - 1) if cyclic else 0
+    position_ids = list(
+        [ele % mpe for ele in range(start_idx, start_idx + len(input_ids))]
+    )
+    # v2: non-cyclic version
+    # start_idx = random.randint(0, max(0, mpe - len(input_ids) - 5)) if cyclic else 0
+    # position_ids = list(range(start_idx, start_idx + len(input_ids)))
+    # v3: pe relying on node positions
+    if cyclic:  # TODO: use another params to turn on/off this functionality
+        ls_tf = [1 if x in node_idx_token_ids else 0 for x in input_ids]
+        ls_tf = [1] * len(input_ids) if not isinstance(input_ids[0], int) else ls_tf
+        position_ids = (np.cumsum(ls_tf) - 1).tolist()
+
     attention_mask = [1] * len(input_ids)
     return {
         "input_ids": input_ids,
@@ -735,6 +882,9 @@ def get_mask_of_raw_seq(raw_seq, mask_type="first"):
         "random": _obtain_random_appearance_idx,
         "all": _obtain_all_appearance_idx,
     }
+    mask_type = (
+        random.choice(("first", "last", "random")) if mask_type == "mix" else mask_type
+    )
     mask_func = dict_mask_func[mask_type]
     idx = mask_func(dict_deco_idx)
     idx = sorted(idx)
@@ -826,70 +976,98 @@ class SPGSTTokenizer(GSTTokenizer):
         self, config: Dict, *, padding_side: str = "right", add_eos: bool = True
     ):
         super().__init__(config, padding_side=padding_side, add_eos=add_eos)
-
-    def tokenize(self, graph: Data):
-        # input: raw small/medium graph OR subgraph sampled from big graphs
-        # output: sequence of tokens from vocab
-        # 1 & 2. get Eulerian path from graph
-        path = graph2path(graph, prioritize=self.task_type != "pretrain")
-        # 3. obtain node/edge structure and semantics mapping
-        # 3.1 structure mapping
-        node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
-            path, self.config["structure"]["node"]["scope_base"]
+        self.config["structure"]["node"]["scope_base"] = 0
+        self.semantics2tokens_mapping = (
+            get_sp_semantics_raw_node_edge_graph2attr_mapping
         )
-        node_structure_mapping = {
-            k: f"{NODE_repr}{v}" for k, v in node_structure_mapping.items()
-        }
-        edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
-            path, graph
-        )
-        edge_structure_mapping = {
-            k: DICT_edge_type2repr[v] for k, v in edge_structure_mapping.items()
-        }
-        # 3.2 semantics mapping
-        (
-            sp_node_semantics_mapping,
-            sp_edge_semantics_mapping,
-            sp_graph_semantics_mapping,
-        ) = get_sp_semantics_raw_node_edge_graph2attr_mapping(path, graph, self.config)
-        # 4. decorate node/edge/graph with above mapping
-        raw_seq = nx_utils.get_raw_seq_from_path(path)
-        mask = get_mask_of_raw_seq(raw_seq, self.mask_type)
-        (
-            ls_tokens,
-            ls_node_regression_labels,
-            ls_edge_regression_labels,
-        ) = nx_utils.decorate_node_edge_graph_with_mask(
-            self,
-            raw_seq,
-            mask,
-            node_structure_mapping,
-            edge_structure_mapping,
-            sp_node_semantics_mapping,
-            sp_edge_semantics_mapping,
-            sp_graph_semantics_mapping,
-            attr_shuffle=self.config["semantics"].get("attr_shuffle", False),
-        )
-        # 5. remove bidirectional edge-type token, because it is treated as default edge-type,
-        # keeping it will produce lots of redundant tokens
-        dict_edge = self.config["structure"]["edge"]
-        if dict_edge.get("remove_edge_type_token", False):
-            edge_types = {DICT_edge_type2repr[dict_edge["bi_token"]]}
-            ls_tokens = [token for token in ls_tokens if token not in edge_types]
-        # 6. add special tokens, e.g., eos
-        ls_tokens = self.add_eos_token(ls_tokens) if self.add_eos else ls_tokens
-        return ls_tokens, None, None, None
-
-    def add_eos_token(self, seq_tokens):
-        eos_token = self.config["structure"]["node"]["eos_token"]
-        seq_tokens.append(f"{NODE_repr}{eos_token}")
-        return seq_tokens
+        self.sp = self.vocab_map
 
     def load_vocab(self):
         fn = os.path.join(
             self.config["name_or_path"], self.config.get("vocab_file", "vocab")
+        )  # 'triangles-sp-90k-hash-sep-v400-uds.model'
+        print(f"load sp tokenizer from {fn}")
+        return spm.SentencePieceProcessor(model_file=fn)
+
+    def get_vocab_size(self):
+        assert isinstance(self.vocab_map, spm.SentencePieceProcessor)
+        return self.vocab_map.vocab_size()
+
+    def get_edge_dir_tokens(self):
+        return [
+            token
+            for token in self.config["structure"]["edge"].values()
+            if isinstance(token, str)
+        ]
+
+    def get_all_special_tokens(self):
+        return (
+            self.get_common_structure()
+            + self.get_edge_dir_tokens()
+            + [self.get_gsum_token(), self.get_icl_token(), self.get_sep_token()]
+            + self.get_common_semantics()
         )
-        return load_vocab(fn)
+
+    def get_bos_token(self):
+        return self.sp.id_to_piece(self.sp.bos_id())
+
+    def get_eos_token(self):
+        return self.sp.id_to_piece(self.sp.eos_id())
+
+    def get_bos_token_id(self):
+        return self.sp.bos_id()
+
+    def get_eos_token_id(self):
+        return self.sp.eos_id()
+
+    def get_gsum_token_id(self):
+        return self.sp.piece_to_id(self.get_gsum_token())
+
+    def tokenize(self, graph: Data):
+        (
+            ls_tokens,
+            tgt_node_token,
+            tgt_edge_src_token,
+            tgt_edge_dst_token,
+            tgt_pos,
+        ) = super().tokenize(graph)
+        seq = "#".join(ls_tokens)
+        # ls_tokens = self.sp.encode_as_pieces(seq)
+        ls_tokens = self.sp.encode(
+            seq, out_type=str, enable_sampling=True, alpha=0.1, nbest_size=-1
+        )
+        return (
+            ls_tokens,
+            tgt_node_token,
+            tgt_edge_src_token,
+            tgt_edge_dst_token,
+            tgt_pos,
+        )
+
+    def convert_tokens_to_ids(self, seq_tokens):
+        # 7. map tokens to token-id
+        seq_tokens_id = self.sp.piece_to_id(seq_tokens)
+        # 8. add labels, attention mask, position_ids and etc
+        in_dict = get_input_dict_from_seq_tokens_id(
+            seq_tokens_id,
+            None,
+            self.label_to_be_padded,
+            self.label_pad_token_id,
+            self.cmpe,
+            self.cyclic_mpe,
+        )
+        return in_dict
+
+    def _map_tokens_to_ids(self, tokens: str):
+        if tokens is None:
+            token_ids = None
+        elif isinstance(tokens, str):
+            token_ids = self.sp.encode(tokens)
+        else:
+            raise NotImplementedError(
+                f"Not implement for type {type(tokens)} of tokens {tokens}!"
+            )
+        return token_ids
 
 
 def _sp_tokenize_attr(
@@ -991,7 +1169,10 @@ class StackedGSTTokenizer(GSTTokenizer):
             path = graph2path(graph, prioritize=self.task_type != "pretrain")
         # 3. obtain node/edge structure and semantics mapping
         node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
-            path, self.config["structure"]["node"]["scope_base"]
+            path,
+            self.config["structure"]["node"]["scope_base"],
+            self.config["structure"]["node"]["node_scope"],
+            self.config["structure"]["node"].get("cyclic", False),
         )
         edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
             path, graph
@@ -1041,10 +1222,15 @@ class StackedGSTTokenizer(GSTTokenizer):
         # TODO: implement it
         # 6. add special tokens, e.g., eos
         ls_tokens = self.add_eos_token(ls_tokens) if self.add_eos else ls_tokens
+        token_compontens = self.get_token_components(ls_tokens)
+        ls_labels = ls_tokens[1:] + [[self.get_eos_token()] * token_compontens]
         # 6.1 enable nx func to enhance structure understanding
         # TODO: implement it
         # 6.2 enable instruction tuning to enhance semantics understanding
-        ls_instruct_tokens = instruct_tuning_utils.follow_instructions(
+        (
+            ls_instruct_tokens,
+            ls_instruct_labels,
+        ) = instruct_tuning_utils.follow_instructions(
             graph,
             tokenization_config=self.config,
             node_structure_mapping=node_structure_mapping,
@@ -1053,24 +1239,37 @@ class StackedGSTTokenizer(GSTTokenizer):
             edge_semantics_mapping=edge_semantics_mapping,
             gtokenizer=self,
         )
-        ls_tokens.extend(ls_instruct_tokens)
+        ls_tokens.extend(ls_instruct_tokens) if len(ls_instruct_tokens) > 0 else None
+        ls_labels.extend(ls_instruct_labels) if len(ls_instruct_labels) > 0 else None
         return (
             ls_tokens,
+            ls_labels,
             tgt_node_token,
             tgt_edge_src_token,
             tgt_edge_dst_token,
             None,
         )
 
-    def convert_tokens_to_ids(self, seq_tokens: List[List[str]]):
+    def convert_tokens_to_ids(self, seq_tokens: List[List[str]], seq_labels: List[str]):
         # 7. map tokens to token-id
         seq_tokens_id = [
             [self.vocab_map[token] for token in feat_tokens]
             for feat_tokens in seq_tokens
         ]
+        seq_labels_id = [
+            [self.vocab_map[token] for token in feat_tokens]
+            for feat_tokens in seq_labels
+        ]
         # 8. add labels, attention mask, position_ids and etc
-        in_dict = get_input_dict_from_seq_tokens_id(seq_tokens_id, set(), None)
-        in_dict["labels"] = [token_ids[0] for token_ids in in_dict["labels"]]
+        in_dict = get_input_dict_from_seq_tokens_id(
+            seq_tokens_id,
+            seq_labels_id,
+            set(),
+            None,
+            self.cmpe,
+            self.cyclic_mpe,
+        )
+        # in_dict["labels"] = [token_ids[0] for token_ids in in_dict["labels"]]
         return in_dict
 
     def prepare_inputs_for_task(
@@ -1081,6 +1280,7 @@ class StackedGSTTokenizer(GSTTokenizer):
         tgt_edge_src_token: Union[str, List[str], Tuple[str]],
         tgt_edge_dst_token: Union[str, List[str], Tuple[str]],
         tgt_pos: Optional[torch.Tensor] = None,
+        is_training: Optional[bool] = None,
     ):
         tgt_node_token_id = self._map_tokens_to_ids(tgt_node_token)
         tgt_edge_src_token_id = self._map_tokens_to_ids(tgt_edge_src_token)
@@ -1099,22 +1299,23 @@ class StackedGSTTokenizer(GSTTokenizer):
         )
         return in_dict
 
-    def __call__(self, graph: Data):
+    def __call__(self, graph: Data, is_training: Optional[bool] = None):
         # 1~6. self.tokenize
         (
             ls_tokens,
+            ls_labels,
             tgt_node_token,
             tgt_edge_src_token,
             tgt_edge_dst_token,
             tgt_pos,
         ) = self.tokenize(graph)
-        ls_tokens = (
-            self.pack_token_seq(ls_tokens, graph.idx)
+        ls_tokens, ls_labels = (
+            self.pack_token_seq(ls_tokens, ls_labels, graph.idx)
             if self.mpe is not None
-            else ls_tokens
+            else (ls_tokens, ls_labels)
         )
         # 7~8. self.convert_tokens_to_ids
-        in_dict = self.convert_tokens_to_ids(ls_tokens)
+        in_dict = self.convert_tokens_to_ids(ls_tokens, ls_labels)
         # 9. prepare for tasks
         in_dict = self.prepare_inputs_for_task(
             in_dict,

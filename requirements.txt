@@ -1,9 +1,9 @@
 # refer to: https://stackoverflow.com/questions/61741997/how-to-format-requirements-txt-when-package-source-is-from-specific-websites
 # [warning] When `deepspeed` release new version, different workers might install different versions, and it will cause
 # problems like this:: some worker got stuck at the deepspeed initialization stage, while others are not
-# tensorboard
+tensorboardX
 fire==0.5.0
-deepspeed==0.11.1
+deepspeed==0.14.0
 triton==2.1.0
 torcheval==0.0.7
 torchmetrics==1.2.0
@@ -14,9 +14,7 @@ networkx[default]==3.1
 urllib3==1.26.18
 sentencepiece
 
-# below for Nebula, CPU
 # FlashAttention is only supported on CUDA 11.6 and above
 transformers==4.38.2
 # flash-attn
-# transformers
 

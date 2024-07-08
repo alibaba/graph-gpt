@@ -87,11 +87,5 @@
       ]
     }
   },
-  "tokenizer_class": "GSTTokenizer",
-  "auto_map": {
-    "AutoTokenizer": [
-      "tokenizer.GSTTokenizer",
-      null
-      ]
-  }
+  "tokenizer_class": "GSTTokenizer"
 }

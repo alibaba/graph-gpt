@@ -1,47 +1,20 @@
 {
-  "name_or_path": "ogbn_proteins",
-  "dataset": "ogbn-proteins",
-  "attr_world_identifier": "ogbn-proteins",
+  "name_or_path": "reddit_threads",
+  "dataset": "reddit_threads",
+  "attr_world_identifier": "reddit_threads",
   "task_type": "pretrain",
   "vocab_file": "vocab",
-  "sampling": {
-    "metis": {
-      "num_nodes": [20, 21, 22],
-      "valid": 0
-    },
-    "node_ego": {
-      "depth_neighbors": [
-        [9, 1]
-      ],
-      "replace": false,
-      "valid": 1
-    },
-    "node_random": {
-      "sampled_nodes": 127,
-      "valid": 0
-    },
-    "edge_ego": {
-      "depth_neighbors": [
-        [12, 1],
-        [1, 9]
-      ],
-      "replace": false,
-      "neg_ratio": 1,
-      "percent": 100,
-      "valid": 0
-    }
-  },
+  "sampling": null,
   "semantics": {
-    "attr_assignment": "random",
     "node": {
-      "discrete": "x",
+      "discrete": null,
       "continuous": null,
-      "ignored_val": "0"
+      "ignored_val": null
     },
     "edge": {
       "discrete": null,
-      "continuous": "edge_attr",
-      "ignored_val": "0"
+      "continuous": null,
+      "ignored_val": null
     },
     "graph": {
       "discrete": null,
@@ -79,11 +52,38 @@
     }
   },
   "structure": {
+    "nx": {
+      "enable": false,
+      "func": [
+        {
+          "name": "degree",
+          "valid": 0
+        },
+        {
+          "name": "triangles",
+          "valid": 0
+        },
+        {
+          "name": "shortest_path",
+          "valid": 0
+        },
+        {
+          "name": "shortest_path_length",
+          "valid": 0
+        },
+        {
+          "name": "eulerian_path",
+          "valid": 1
+        }
+      ]
+    },
     "node": {
-      "bos_token": "0",
+      "bos_token": "<bos>",
       "eos_token": "<eos>",
-      "node_scope": 128,
-      "scope_base": 128
+      "new_node_token": "<new>",
+      "node_scope": 256,
+      "scope_base": 256,
+      "cyclic": true
     },
     "edge": {
       "remove_edge_type_token": true,

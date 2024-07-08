@@ -8,6 +8,9 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 
 ## Update:
 
+***07/09/2024***
+1. v0.3.0 released.
+
 ***03/19/2024***
   1. v0.2.0 released.
   2. Implement `permute_nodes` for graph-level map-style dataset, in order to increase variations of Eulerian paths,
@@ -124,10 +127,12 @@ to download and preprocess dataset separately.
 
 1. Modify parameters in `./examples/ggpt_pretrain.sh`, e.g., `dataset_name`, `model_name`,
   `batch_size`, `workerCount` and etc, and then run `./examples/ggpt_pretrain.sh` to pretrain
-  the model with the dataset.
+  the model with the dataset. 
+   - To run toy example, run `./examples/toy_examples/ggpt_pretrain.sh` directly.
 2. Modify parameters in `./examples/ggpt_supervised.sh`, e.g., `dataset_name`, `model_name`,
   `batch_size`, `workerCount`, `pretrain_cpt` and etc, and then run `./examples/ggpt_supervised.sh`
   to fine-tune with downstream tasks.
+   - To run toy example, run `./examples/toy_examples/ggpt_supervised.sh` directly.
 
 
 ## Code Norm

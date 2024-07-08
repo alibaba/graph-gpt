@@ -1,13 +1,14 @@
 {
   "name_or_path": "pcqm4m-v2",
   "dataset": "molecule",
+  "ensemble_datasets": ["PCQM4Mv2"],
   "attr_world_identifier": "molecule",
   "task_type": "pretrain",
   "vocab_file": "vocab",
   "sampling": null,
   "label_tokens_to_pad": ["<icl>"],
   "semantics": {
-    "add_3d": true,
+    "add_3d": false,
     "attr_assignment": "random",
     "attr_shuffle": true,
     "node": {
@@ -56,10 +57,12 @@
   },
   "structure": {
     "node": {
-      "bos_token": "0",
+      "bos_token": "<bos>",
       "eos_token": "<eos>",
-      "node_scope": 1024,
-      "scope_base": 64
+      "new_node_token": "<new>",
+      "node_scope": 64,
+      "scope_base": 64,
+      "cyclic": 1
     },
     "edge": {
       "remove_edge_type_token": true,
@@ -89,11 +92,5 @@
       ]
     }
   },
-  "tokenizer_class": "GSTTokenizer",
-  "auto_map": {
-    "AutoTokenizer": [
-      "tokenizer.GSTTokenizer",
-      null
-      ]
-  }
+  "tokenizer_class": "StackedGSTTokenizer"
 }

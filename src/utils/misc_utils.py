@@ -148,8 +148,10 @@ def load_all(
     return ls_log, ls_result, ls_loss
 
 
-def estimate_tokens_per_sample(gtokenizer, dataset, sampler, mpe, world_size):
-    num_samples = 10000 // world_size
+def estimate_tokens_per_sample(
+    gtokenizer, dataset, sampler, mpe, world_size, tot_samples: int = 10000
+):
+    num_samples = tot_samples // world_size
     if not isinstance(dataset, IterableDataset):
         num_samples = min(num_samples, len(sampler))
         sampler = random.sample(sampler, num_samples)
@@ -163,9 +165,12 @@ def estimate_tokens_per_sample(gtokenizer, dataset, sampler, mpe, world_size):
             if i >= num_samples:
                 break
             ls_seq.append(len(gtokenizer.tokenize(ele[-1])[0]))
-    seq_sum = torch.tensor(np.sum(np.minimum(np.array(ls_seq), mpe))).cuda()
-    dist.all_reduce(seq_sum)
-    avg_len = round(seq_sum.item() / (world_size * num_samples), -1)
+    if world_size > 1:
+        seq_sum = torch.tensor(np.sum(np.minimum(np.array(ls_seq), mpe))).cuda()
+        dist.all_reduce(seq_sum)
+        avg_len = round(seq_sum.item() / (world_size * num_samples), -1)
+    else:
+        avg_len = np.mean(np.minimum(np.array(ls_seq), mpe)).round()
     print(
         f"Estimated tokens per sample {avg_len} with {world_size*num_samples} samples and mpe {mpe}"
     )

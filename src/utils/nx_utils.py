@@ -19,30 +19,40 @@ def understand_structure(
     tokenization_config: Dict,
     node_structure_mapping: Dict,
     edge_structure_mapping: Dict,
+    gtokenizer=None,
 ):
     ls = []
+    ls_labels = []
     nx_conf = tokenization_config["structure"].get("nx", {})
     if nx_conf.get("enable", False):
         G = to_networkx(graph, to_undirected="upper").to_undirected()
         for func in nx_conf["func"]:
             if func["valid"]:
-                tmp_ls = get_nx_struct(
+                tmp_ls, tmp_ls_labels = get_nx_struct(
                     func["name"],
                     G,
                     node_structure_mapping=node_structure_mapping,
                     edge_structure_mapping=edge_structure_mapping,
                     config=tokenization_config,
                     graph=graph,
+                    gtokenizer=gtokenizer,
                 )
                 ls.append(tmp_ls)
-        random.shuffle(ls)
+                ls_labels.append(tmp_ls_labels)
+        if len(ls) > 1:
+            idx_tmp = list(range(len(ls)))
+            random.shuffle(idx_tmp)
+            ls = [ls[idx] for idx in idx_tmp]
+            ls_labels = [ls_labels[idx] for idx in idx_tmp]
+
         ls = _flatten_list(ls)
-    return ls
+        ls_labels = _flatten_list(ls_labels)
+    return ls, ls_labels
 
 
 @_nx("degree")
 def _obtain_node_degree(
-    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, **kwargs
+    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, gtokenizer, **kwargs
 ):
     reserved_token_id = 0
     idx = random.choice(list(G.nodes()))
@@ -56,7 +66,7 @@ def _obtain_node_degree(
 
 @_nx("triangles")
 def _obtain_graph_triangles(
-    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, **kwargs
+    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, gtokenizer, **kwargs
 ):
     reserved_token_id = 1
     idx = random.choice(list(G.nodes()))
@@ -70,7 +80,7 @@ def _obtain_graph_triangles(
 
 @_nx("shortest_path")
 def _obtain_edge_shortest_path(
-    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, **kwargs
+    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, gtokenizer, **kwargs
 ):
     reserved_token_id = 2
     if len(G.nodes()) > 2:
@@ -92,7 +102,7 @@ def _obtain_edge_shortest_path(
 
 @_nx("shortest_path_length")
 def _obtain_edge_shortest_path_length(
-    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, **kwargs
+    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, gtokenizer, **kwargs
 ):
     reserved_token_id = 3
     if len(G.nodes()) > 2:
@@ -114,28 +124,25 @@ def _obtain_edge_shortest_path_length(
 
 @_nx("eulerian_path")
 def _obtain_eulerian_path(
-    G: nx.Graph, *, node_structure_mapping: Dict, config: Dict, graph: Data, **kwargs
+    G: nx.Graph,
+    *,
+    node_structure_mapping: Dict,
+    config: Dict,
+    graph: Data,
+    gtokenizer,
+    **kwargs,
 ):
     reserved_token_id = 4
     graph, permu = permute_nodes(graph)
-    G = to_networkx(graph, to_undirected="upper").to_undirected()
-    G = connect_graph(G)
-    if not nx.is_eulerian(G):
-        G = nx.eulerize(G)
-    path = []  # in case of single node graph
-    g = list(G.nodes())
-    random.shuffle(g)
-    for old_node in g:
-        if node_structure_mapping[old_node] != ("0",):
-            new_node = permu[old_node].item()
-            raw_path = list(_customized_eulerian_path(G, source=new_node))
-            path = shorten_path(raw_path)
-            break
+    path, old_node = _get_new_eulerian_path_v2(graph, permu, node_structure_mapping)
     tgt_node_tokens = [node_structure_mapping[old_node]]
 
     func_tokens = [config["structure"]["common"]["reserved_token"][reserved_token_id]]
     local_node_structure_mapping = get_structure_raw_node2idx_mapping(
-        path, config["structure"]["node"]["scope_base"]
+        path,
+        config["structure"]["node"]["scope_base"],
+        config["structure"]["node"]["node_scope"],
+        config["structure"]["node"].get("cyclic", False),
     )
     local_edge_structure_mapping = get_structure_raw_edge2type_mapping(path, graph)
     raw_seq = get_raw_seq_from_path(path)
@@ -157,8 +164,42 @@ def _obtain_eulerian_path(
         ls_tokens = [token for token in ls_tokens if token not in edge_types]
     # p = [src for src, tgt in path] + [path[-1][-1]]
     # tgt_node_tokens = [node_structure_mapping[node] for node in p]
+    prefix_tokens = func_tokens + _flatten_list(tgt_node_tokens)
+    ls_tokens = prefix_tokens + ls_tokens
+    ls_labels = get_labels_from_input_tokens(
+        ls_tokens, gtokenizer, skipped=len(prefix_tokens)
+    )
+    return ls_tokens, ls_labels
 
-    return func_tokens + _flatten_list(tgt_node_tokens) + ls_tokens
+
+def _get_new_eulerian_path_v1(graph, permu, node_structure_mapping):
+    G = to_networkx(graph, to_undirected="upper").to_undirected()
+    G = connect_graph(G)
+    if not nx.is_eulerian(G):
+        G = nx.eulerize(G)
+    path = []  # in case of single node graph
+    g = list(G.nodes())
+    random.shuffle(g)
+    for old_node in g:
+        if node_structure_mapping[old_node] != ("0",):
+            new_node = permu[old_node].item()
+            raw_path = list(_customized_eulerian_path(G, source=new_node))
+            path = shorten_path(raw_path)
+            break
+    return path, old_node
+
+
+def _get_new_eulerian_path_v2(graph, permu, node_structure_mapping):
+    path = graph2path_v2(graph)
+    if len(path) == 0:
+        assert len(node_structure_mapping) == 1
+        start_node = 0
+    else:
+        start_node = path[0][0]
+    for old_node in range(len(node_structure_mapping)):
+        if start_node == permu[old_node].item():
+            break
+    return path, old_node
 
 
 def _customized_eulerian_path(G, source):
@@ -170,10 +211,19 @@ def _customized_eulerian_path(G, source):
 
 
 def _flatten_list(ls):
-    return [ele for sub_ls in ls for ele in sub_ls]
+    if isinstance(ls[0], str):
+        return ls
+    elif isinstance(ls[0], Iterable):
+        return [ele for sub_ls in ls for ele in sub_ls]
+    else:
+        raise ValueError(
+            f"ls' element must be str or Iterable, but yours {ls[0]} is {type(ls[0])}"
+        )
 
 
 def _rebase_idx(idx: int, base: int):
+    if base == 0:
+        return f"{idx}"
     assert idx < base * base
     idx_1 = idx // base
     idx_2 = idx - idx_1 * base
@@ -181,23 +231,36 @@ def _rebase_idx(idx: int, base: int):
     return rebased_idx
 
 
-def get_structure_raw_node2idx_mapping(path: List[Tuple[int]], scope_base: int):
+def get_structure_raw_node2idx_mapping(
+    path: List[Tuple[int, int]], scope_base: int, scope: int, mapping_type: int = 0
+):
+    # mapping_type: 0/1/2 -> normal/cyclic/random
+    mapping_type = int(mapping_type)
     # refer: https://stackoverflow.com/a/17016257/4437068
     assert (sys.version_info.major == 3) and (sys.version_info.minor >= 7)
+    # `random.randint` Return random integer in range [a, b], including both end points.
+    start_idx = random.randint(0, scope - 1) if mapping_type > 0 else 0
     if path:
         path_s = [src for src, tgt in path]
         path_s.append(path[-1][-1])
         uniques = list(dict.fromkeys(path_s))
-        dict_map = {
-            old_idx: _rebase_idx(idx, scope_base) for idx, old_idx in enumerate(uniques)
-        }
-        # 1st element starts from 0
+        if mapping_type == 2:
+            rnd_idx = random.sample(range(scope), k=len(uniques))
+            dict_map = {
+                old_idx: _rebase_idx(idx, scope_base)
+                for idx, old_idx in zip(rnd_idx, uniques)
+            }
+        else:
+            dict_map = {
+                old_idx: _rebase_idx(idx % scope, scope_base)
+                for idx, old_idx in enumerate(uniques, start=start_idx)
+            }
     else:  # in case `path=[]` when graph has ONLY 1 node
-        dict_map = {0: ("0",)}
+        dict_map = {0: _rebase_idx(start_idx % scope, scope_base)}
     return dict_map
 
 
-def get_structure_raw_edge2type_mapping(path: List[Tuple[int]], data: Data):
+def get_structure_raw_edge2type_mapping(path: List[Tuple[int, int]], data: Data):
     # map the edge to its type
     dict_map = {
         (src, tgt): get_edge_type(data.edge_index, src, tgt) for src, tgt in path
@@ -286,6 +349,11 @@ def shorten_path(path):
 
 
 def graph2path(graph: Data, prioritize: bool = False) -> List[Tuple[int, int]]:
+    return graph2path_v2(graph)
+    # return graph2path_v1(graph, prioritize)
+
+
+def graph2path_v1(graph: Data, prioritize: bool = False) -> List[Tuple[int, int]]:
     G = to_networkx(graph, to_undirected="upper").to_undirected()
     # 1. Eulerize the graph if it is not
     G = connect_graph(G)
@@ -314,6 +382,43 @@ def graph2path(graph: Data, prioritize: bool = False) -> List[Tuple[int, int]]:
     # below will easily cause overfitting after several epochs since the path seq is fixed!
     # raw_path = list(nx.eulerian_circuit(G, source=0))
     # path = shorten_path(raw_path)
+    return path
+
+
+def graph2path_v2(graph: Data) -> List[Tuple[int, int]]:
+    G = to_networkx(graph, to_undirected="upper").to_undirected()
+    # 1. create list of subgraphs
+    if not nx.is_connected(G):
+        S = [G.subgraph(c).copy() for c in nx.connected_components(G)]
+    else:
+        S = [G]
+    # 2. find eulerian paths in each subgraph, and then concat sub-paths
+    random.shuffle(S)
+    s = S[0]
+    path = connected_graph2path(s)
+    prev_connect_node = list(s.nodes)[0] if len(path) == 0 else path[-1][-1]
+    for s in S[1:]:
+        spath = connected_graph2path(s)
+        if len(spath) == 0:  # single node
+            curr_connect_node = list(s.nodes)[0]
+        else:
+            curr_connect_node = spath[0][0]
+        jump_edge = (prev_connect_node, curr_connect_node)
+        path.append(jump_edge)
+        path.extend(spath)
+        prev_connect_node = path[-1][-1]
+    return path
+
+
+def connected_graph2path(G) -> List[Tuple[int, int]]:
+    if len(G.nodes) == 1:
+        path = []
+    else:
+        if not nx.is_eulerian(G):
+            G = nx.eulerize(G)
+        node = random.choice(list(G.nodes()))
+        raw_path = list(_customized_eulerian_path(G, source=node))
+        path = shorten_path(raw_path)
     return path
 
 
@@ -464,8 +569,8 @@ def decorate_node_edge_graph_with_mask(
         if i % 2 == 0:  # deco node
             node_id = node_structure_mapping[raw_token]
             # node_id will be List if it is represented by several ids, e.g., global+local-ids
-            ls_tokens.extend(node_id) if isinstance(
-                node_id, Iterable
+            ls_tokens.extend(node_id) if isinstance(node_id, Tuple) or isinstance(
+                node_id, List
             ) else ls_tokens.append(node_id)
             if is_deco:
                 node_attr = node_semantics_mapping["discrete"].get(raw_token, None)
@@ -500,3 +605,21 @@ def permute_nodes(graph, g=None):
         inv_permu = torch.argsort(permu)
         new_graph.x = graph.x[inv_permu]
     return new_graph, permu
+
+
+def get_labels_from_input_tokens(ls_tokens, gtokenizer, skipped=0):
+    mapping_type = int(gtokenizer.config["structure"]["node"].get("cyclic", False))
+    if len(ls_tokens) > 0:
+        ls_labels = ls_tokens[1:] + [gtokenizer.get_eos_token()]
+        for i, token in enumerate(ls_labels):
+            if (
+                token not in set(ls_tokens[skipped:i])
+                and token in gtokenizer.get_node_idx_tokens()
+                and mapping_type == 2
+            ):
+                ls_labels[i] = gtokenizer.get_new_node_token()
+            if i < skipped:
+                ls_labels[i] = gtokenizer.get_label_pad_token()
+        return ls_labels
+    else:
+        return []

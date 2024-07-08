@@ -1,4 +1,6 @@
 from typing import Dict
+from copy import deepcopy
+import random
 from torch_geometric.data import Data
 
 from . import control_flow
@@ -17,12 +19,20 @@ def follow_instructions(
     gtokenizer=None,
 ):
     ls = []
+    ls_labels = []
     instruct_conf = tokenization_config["semantics"].get("instructions", {})
     if instruct_conf.get("enable", False):
         for func in instruct_conf["func"]:
             if func["valid"]:
-                name = func["name"] if gtokenizer is None else func["name"] + "-stack"
-                tmp_ls = get_instruct(
+                name = (
+                    func["name"]
+                    if gtokenizer.__class__.__name__ != "StackedGSTTokenizer"
+                    else func["name"] + "-stack"
+                )
+                kwargs = deepcopy(func)
+                kwargs.pop("valid")
+                kwargs.pop("name")
+                tmp_ls, tmp_ls_labels = get_instruct(
                     name,
                     graph,
                     node_structure_mapping=node_structure_mapping,
@@ -31,9 +41,62 @@ def follow_instructions(
                     edge_semantics_mapping=edge_semantics_mapping,
                     config=tokenization_config,
                     gtokenizer=gtokenizer,
+                    **kwargs,
                 )
                 ls.extend(tmp_ls)
-    return ls
+                ls_labels.extend(tmp_ls_labels)
+    return ls, ls_labels
+
+
+@_instruct("homo_lumo")
+def _obtain_homolumo_properties(
+    graph: Data,
+    *,
+    node_structure_mapping: Dict,
+    config: Dict,
+    gtokenizer,
+    mask_ratio: float = 0,
+    **kwargs,
+):
+    # molecule task
+    reserved_token_id = 0
+
+    vals = graph.y.numpy().astype(str).tolist()  # [1, 1]
+    if (vals[0][0] != "nan") and (random.random() < 1 - mask_ratio):
+        val_tokens = [f"<{x}>" for x in list(vals[0][0])]
+
+        instruct_tokens = [
+            config["semantics"]["common"]["reserved_token"][reserved_token_id]
+        ]
+        ls = instruct_tokens + val_tokens
+        ls_labels = ls[1:] + [gtokenizer.get_eos_token()]
+        return ls, ls_labels
+    else:
+        return [], []
+
+
+@_instruct("cepdb_prop_all")
+def _obtain_all_cepdb_properties(
+    graph: Data, *, node_structure_mapping: Dict, config: Dict, gtokenizer, **kwargs
+):
+    # molecule task, 7 cepdb's properties
+    # "mass", "pce", "voc", "jsc", "e_homo_alpha", "e_gap_alpha", "e_lumo_alpha"
+    if graph.y.size()[1] == 7:
+        ls = []
+        vals = graph.y.numpy().astype(str).tolist()  # [1, 7]
+        for reserved_token_id, val in enumerate(vals[0]):
+            val_tokens = [f"<{x}>" for x in list(val)]
+
+            instruct_tokens = [
+                config["semantics"]["common"]["reserved_token"][reserved_token_id]
+            ]
+            tmp_ls = instruct_tokens + val_tokens
+            ls.append(tmp_ls)
+        random.shuffle(ls)
+        ls_labels = [x[1:] + [gtokenizer.get_eos_token()] for x in ls]
+        return _flatten_list(ls), _flatten_list(ls_labels)
+    else:
+        return [], []
 
 
 @_instruct("a2d")
@@ -64,7 +127,7 @@ def _obtain_stacked_acc2device(
     node_semantics_mapping: Dict,
     edge_semantics_mapping: Dict,
     config: Dict,
-    **kwargs
+    **kwargs,
 ):
     # oneid task
     reserved_token_id = graph.key_type.item() if hasattr(graph, "key_type") else 0

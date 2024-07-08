@@ -21,7 +21,8 @@ from torch_geometric.utils.sparse import index2ptr
 from torch_geometric.loader.cluster import ClusterData
 from torch_geometric.data import InMemoryDataset, Data
 from torch_sparse.metis import weight2metis
-from ogb.utils import smiles2graph
+from ogb.lsc import PygPCQM4Mv2Dataset
+from ogb.utils import smiles2graph, features
 from ogb.utils.torch_util import replace_numpy_with_torchtensor
 from ogb.utils.url import decide_download, download_url, extract_zip
 from ogb.utils.features import atom_to_feature_vector, bond_to_feature_vector
@@ -79,6 +80,161 @@ def mol2graph(mol):
         return graph
     except:
         return None
+
+
+def smiles2graph_extra(smiles_string):
+    """
+    COPIED and modified from `ogb/utils/mol.py::smiles2graph`
+    Converts SMILES string to graph Data object
+    :input: SMILES string (str)
+    :return: graph object
+    """
+
+    mol = Chem.MolFromSmiles(smiles_string)
+
+    # atoms
+    atom_features_list = []
+    for atom in mol.GetAtoms():
+        # compared to original script, ONLY below 3 lines got modified
+        z = atom.GetAtomicNum()
+        ls_extra = [row(z), group(z), family(z)]
+        atom_features_list.append(atom_to_feature_vector(atom) + ls_extra)
+    x = np.array(atom_features_list, dtype=np.int64)
+
+    # bonds
+    num_bond_features = 3  # bond type, bond stereo, is_conjugated
+    if len(mol.GetBonds()) > 0:  # mol has bonds
+        edges_list = []
+        edge_features_list = []
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+
+            edge_feature = bond_to_feature_vector(bond)
+
+            # add edges in both directions
+            edges_list.append((i, j))
+            edge_features_list.append(edge_feature)
+            edges_list.append((j, i))
+            edge_features_list.append(edge_feature)
+
+        # data.edge_index: Graph connectivity in COO format with shape [2, num_edges]
+        edge_index = np.array(edges_list, dtype=np.int64).T
+
+        # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
+        edge_attr = np.array(edge_features_list, dtype=np.int64)
+
+    else:  # mol has no bonds
+        edge_index = np.empty((2, 0), dtype=np.int64)
+        edge_attr = np.empty((0, num_bond_features), dtype=np.int64)
+
+    graph = dict()
+    graph["edge_index"] = edge_index
+    graph["edge_feat"] = edge_attr
+    graph["node_feat"] = x
+    graph["num_nodes"] = len(x)
+
+    return graph
+
+
+# below funcs `row`, `group`, `family` copied from https://github.com/graphcore/ogb-lsc-pcqm4mv2/blob/main/data_utils/feature_generation/generic_features.py
+def row(z):
+    _pt_row_sizes = (2, 8, 8, 18, 18, 32, 32)
+    """
+    Returns the periodic table row of the element.
+    """
+    total = 0
+    if 57 <= z <= 71:
+        return 8
+    if 89 <= z <= 103:
+        return 9
+    for i, size in enumerate(_pt_row_sizes):
+        total += size
+        if total >= z:
+            return i + 1
+    return 8
+
+
+def group(z):
+    """
+    Returns the periodic table group of the element.
+    """
+    if z == 1:
+        return 1
+    if z == 2:
+        return 18
+    if 3 <= z <= 18:
+        if (z - 2) % 8 == 0:
+            return 18
+        if (z - 2) % 8 <= 2:
+            return (z - 2) % 8
+        return 10 + (z - 2) % 8
+
+    if 19 <= z <= 54:
+        if (z - 18) % 18 == 0:
+            return 18
+        return (z - 18) % 18
+
+    if (z - 54) % 32 == 0:
+        return 18
+    if (z - 54) % 32 >= 18:
+        return (z - 54) % 32 - 14
+    if 57 <= z <= 71:
+        return 3
+    if 89 <= z <= 103:
+        return 3
+    return (z - 54) % 32
+
+
+def family(z):
+    """
+    Returns the periodic table family of the element.
+    0: Other non metals
+    1: Alkali metals
+    2: Alkaline earth metals
+    3: Transition metals
+    4: Lanthanides
+    5: Actinides
+    6: Other metals
+    7: Metalloids
+    8: Halogens
+    9: Noble gases
+    """
+    if z in [1, 6, 7, 8, 15, 16, 34]:
+        return 0
+    if z in [3, 11, 19, 37, 55, 87]:
+        return 1
+    if z in [4, 12, 20, 38, 56, 88]:
+        return 2
+    if z in range(57, 72):
+        return 4
+    if z in range(89, 104):
+        return 5
+    if z in [13, 31, 49, 50, 81, 82, 83, 84, 113, 114, 115, 166]:
+        return 6
+    if z in [5, 14, 32, 33, 51, 52]:
+        return 7
+    if z in [9, 17, 35, 53, 85, 117]:
+        return 8
+    if z in [2, 10, 18, 36, 54, 86, 118]:
+        return 9
+    else:
+        return 3
+
+
+class PygPCQM4Mv2ExtraDataset(PygPCQM4Mv2Dataset):
+    def __init__(
+        self,
+        root="dataset",
+        smiles2graph=smiles2graph_extra,
+        transform=None,
+        pre_transform=None,
+    ):
+        super().__init__(root, smiles2graph, transform, pre_transform)
+
+    @property
+    def processed_file_names(self):
+        return "geometric_data_processed_extra.pt"
 
 
 class PygPCQM4Mv2PosDataset(InMemoryDataset):
@@ -319,6 +475,7 @@ class PygCEPDBDataset(InMemoryDataset):
 
         super(PygCEPDBDataset, self).__init__(self.folder, transform, pre_transform)
 
+        print(f"Loading data from {self.processed_paths[0]}")
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     @property
@@ -327,7 +484,8 @@ class PygCEPDBDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return "geometric_data_processed.pt"
+        # "geometric_data_processed.pt" -> y: homo-lumo "geometric_data_processed_full.pt" -> y: 7 properties
+        return "geometric_data_processed_full.pt"
 
     def download(self):
         if decide_download(self.url):
@@ -342,18 +500,21 @@ class PygCEPDBDataset(InMemoryDataset):
         processes = 10
         data_df = pd.read_csv(osp.join(self.raw_dir, self.raw_file_names))
         smiles_list = data_df["SMILES_str"]
-        homolumogap_list = data_df["e_gap_alpha"]
+        # vals = data_df[["e_gap_alpha"]].values.tolist()
+        vals = data_df[
+            ["mass", "pce", "voc", "jsc", "e_homo_alpha", "e_gap_alpha", "e_lumo_alpha"]
+        ].values.tolist()
 
         print("Converting SMILES strings into graphs...")
         data_list = []
         with Pool(processes=processes) as pool:
             iter = pool.imap(smiles2graph_with_try, smiles_list)
 
-            for i, graph in tqdm(enumerate(iter), total=len(homolumogap_list)):
+            for i, graph in tqdm(enumerate(iter), total=len(vals)):
                 try:
                     data = Data()
 
-                    homolumogap = homolumogap_list[i]
+                    val = vals[i]
                     assert len(graph["edge_feat"]) == graph["edge_index"].shape[1]
                     assert len(graph["node_feat"]) == graph["num_nodes"]
 
@@ -365,7 +526,7 @@ class PygCEPDBDataset(InMemoryDataset):
                         torch.int64
                     )
                     data.x = torch.from_numpy(graph["node_feat"]).to(torch.int64)
-                    data.y = torch.Tensor([homolumogap])
+                    data.y = torch.Tensor([val])
 
                     data_list.append(data)
                 except Exception as inst:
@@ -527,7 +688,8 @@ class PygZINCDataset(InMemoryDataset):
 
         # let's only consider at reference PH=7 first, so use *_p0.smi.gz
         self.urls = [
-            f"http://zinc12.docking.org/db/bysubset/{subset}/{subset}_p0.smi.gz",
+            f"http://zinc12.docking.org/db/bysubset/{subset}/{subset}_prop.xls",
+            # f"http://zinc12.docking.org/db/bysubset/{subset}/{subset}_p0.smi.gz",
             # f"http://zinc12.docking.org/db/bysubset/{subset}/{subset}_p1.smi.gz",
             # f"http://zinc12.docking.org/db/bysubset/{subset}/{subset}_p2.smi.gz",
             # f"http://zinc12.docking.org/db/bysubset/{subset}/{subset}_p3.smi.gz"
@@ -551,32 +713,55 @@ class PygZINCDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return f"geometric_data_processed_{self.subset}.pt"
+        # "geometric_data_processed_{self.subset}.pt" -> no y  "geometric_data_processed_{self.subset}_full.pt" -> y: 9 properties
+        return f"geometric_data_processed_{self.subset}_full.pt"
 
     def download(self):
         for url in self.urls:
             if decide_download(url):
                 path = download_url(url, self.original_root)
-                extract_zip(path, self.original_root)
+                if path.endswith("gz"):
+                    extract_zip(path, self.original_root)
                 os.unlink(path)
             else:
                 print("Stop download.")
                 exit(-1)
 
     def process(self):
-        processes = 10
+        processes = 20
         data_list = []
         print(
             f"processing {len(self.raw_file_names)} raw files: {self.raw_file_names} ..."
         )
         for raw_file in self.raw_file_names:
-            data_df = pd.read_csv(
-                osp.join(self.raw_dir, raw_file),
-                sep=" ",
-                header=None,
-                names=["smiles", "zinc_id"],
-            )
-            smiles_list = data_df["smiles"]
+            if raw_file.endswith("xls"):
+                data_df = pd.read_csv(
+                    osp.join(self.raw_dir, raw_file),
+                    sep="\t",
+                )
+                # data_df = data_df.head(1000)  # for test only
+                smiles_list = data_df["SMILES"]
+            else:
+                data_df = pd.read_csv(
+                    osp.join(self.raw_dir, raw_file),
+                    sep=" ",
+                    header=None,
+                    names=["smiles", "zinc_id"],
+                )
+                smiles_list = data_df["smiles"]
+            vals = data_df[
+                [
+                    "MWT",
+                    "LogP",
+                    "Desolv_apolar",
+                    "Desolv_polar",
+                    "HBD",
+                    "HBA",
+                    "tPSA",
+                    "Charge",
+                    "NRB",
+                ]
+            ].values.tolist()
 
             print(f"Converting SMILES strings from {raw_file} into graphs ...")
 
@@ -587,6 +772,7 @@ class PygZINCDataset(InMemoryDataset):
                     try:
                         data = Data()
 
+                        val = vals[i]
                         assert len(graph["edge_feat"]) == graph["edge_index"].shape[1]
                         assert len(graph["node_feat"]) == graph["num_nodes"]
 
@@ -598,6 +784,7 @@ class PygZINCDataset(InMemoryDataset):
                             torch.int64
                         )
                         data.x = torch.from_numpy(graph["node_feat"]).to(torch.int64)
+                        data.y = torch.Tensor([val])
 
                         data_list.append(data)
                     except Exception as inst:
@@ -705,10 +892,16 @@ def get_edge_balanced_node_weight(rowptr, col, num_nodes):
 
 def obtain_graph_wgts(dataset: InMemoryDataset, idx: torch.Tensor):
     # weight graph by their number of eulerian paths, equivalently number of nodes
-    assert hasattr(dataset, "x")
-    x_idx = dataset.slices["x"]
-    # cnt of nodes of all graphs
-    cnt_nodes = x_idx[1:] - x_idx[:-1]
+    if hasattr(dataset._data, "_num_nodes"):
+        cnt_nodes = torch.tensor(dataset._data._num_nodes, dtype=torch.int64)
+    elif hasattr(dataset, "x"):
+        x_idx = dataset.slices["x"]
+        # cnt of nodes of all graphs
+        cnt_nodes = x_idx[1:] - x_idx[:-1]
+    else:
+        raise ValueError(
+            "Cannot obtain graph weights because `dataset._data._num_nodes` or `dataset.x` NOT exists!"
+        )
     # cnt of nodes of given graphs (by their idx)
     cnt_nodes_specific = cnt_nodes[idx].numpy()
     graph_wgts = cnt_nodes_specific / cnt_nodes_specific.sum()
@@ -864,6 +1057,65 @@ class StructureDataset(InMemoryDataset):
         pass
 
     def process(self):
+        if self.data_ver in {"v1", "v2", "v3", "v4", "v5"}:
+            data_list, split_dict = self._process_odps()
+        else:
+            data_list, split_dict = self._process_random_graphs()
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        print("Saving split dict ...")
+        split_dict = {k: torch.tensor(v) for k, v in split_dict.items()}
+        torch.save(split_dict, osp.join(self.root, self.split_idx_file_name))
+
+        print("Collating ...")
+        data, slices = self.collate(data_list)
+
+        print("Saving data ...")
+        torch.save((data, slices), self.processed_paths[0])
+
+    def _process_random_graphs(self):
+        from torch_geometric.utils import erdos_renyi_graph
+
+        dict_ = {
+            "v6": 0.1,
+            "v7": 0.05,
+            "v8": 0.15,
+            "v9": 0.01,
+            "v10": 0.03,
+        }
+
+        def get_random_graphs(num_nodes, p):
+            edge_index = erdos_renyi_graph(num_nodes, edge_prob=p, directed=False)
+            graph = Data(edge_index=edge_index, num_nodes=num_nodes)
+            return graph, round(num_nodes, -1)
+
+        # 2. process data
+        split_dict = {}
+        data_list = []
+        count = 3000000
+        num_nodes_low, num_nodes_high = 4, 101
+        vec_num_nodes = np.array(range(num_nodes_low, num_nodes_high))
+        vec_num_nodes_cnt = vec_num_nodes
+        vec_prob = vec_num_nodes_cnt / vec_num_nodes_cnt.sum()
+        all_num_nodes = np.random.choice(
+            vec_num_nodes, size=count, replace=True, p=vec_prob
+        )
+        prob = dict_[self.data_ver]
+        print(
+            f"precessing {count} records with num_nodes [{num_nodes_low}, {num_nodes_high}) and prob {prob} ..."
+        )
+        for i, num_nodes_ in tqdm(enumerate(all_num_nodes)):
+            data, dtype = get_random_graphs(num_nodes_, prob)
+            data_list.append(data)
+            if not dtype in split_dict:
+                split_dict[dtype] = []
+            split_dict[dtype].append(i)
+
+        return data_list, split_dict
+
+    def _process_odps(self):
         # data_df = pd.read_csv(osp.join(self.raw_dir, self.raw_file_names))
         from torch_geometric.datasets import TUDataset
 
@@ -934,18 +1186,7 @@ class StructureDataset(InMemoryDataset):
             data_list.append(graph)
             split_dict["triangles"].append(i)
 
-        if self.pre_transform is not None:
-            data_list = [self.pre_transform(data) for data in data_list]
-
-        print("Saving split dict ...")
-        split_dict = {k: torch.tensor(v) for k, v in split_dict.items()}
-        torch.save(split_dict, osp.join(self.root, self.split_idx_file_name))
-
-        print("Collating ...")
-        data, slices = self.collate(data_list)
-
-        print("Saving data ...")
-        torch.save((data, slices), self.processed_paths[0])
+        return data_list, split_dict
 
     def get_idx_split(self):
         if self.idx_split_dict is None:
@@ -959,22 +1200,27 @@ if __name__ == "__main__":
     # import pyanitools as pya
     from ogb.lsc import PygPCQM4Mv2Dataset
 
-    dataset = StructureDataset(root="../../data/Struct")
+    # dataset = PygPCQM4Mv2ExtraDataset(root="../../data/OGB")
+    # dataset = StructureDataset(root="../../data/Struct")
     # dataset = OneIDSmallDataset(root="../../data/OneID")
     # dataset = PygPCQM4Mv2Dataset(root="../../data/OGB")
     # dataset = PygPCQM4Mv2PosDataset(root="../../data/OGB")
     # dataset = PygCEPDBDataset(root="../../data/OGB")
     # dataset = PygANI1Dataset(root="../../data/OGB")
-    # dataset = PygZINCDataset(root="../../data/OGB", subset=11)
+    dataset = PygZINCDataset(root="../../data/OGB", subset=11)
     print(dataset)
     data_ = dataset._data
     print(data_)
     print(data_.edge_index)
     print(data_.edge_index.shape)
     print(data_.x)
-    print(data_.x.shape if data_.x else None)
+    print(data_.x.shape if hasattr(data_, "x") or data_.x else None)
     print(data_.edge_attr)
-    print(data_.edge_attr.shape if data_.edge_attr else None)
+    print(
+        data_.edge_attr.shape
+        if hasattr(data_, "edge_attr") or data_.edge_attr
+        else None
+    )
     print(dataset[100])
     print(dataset[100].edge_index)
     print(dataset[100].y if hasattr(dataset[100], "y") else "NO y")

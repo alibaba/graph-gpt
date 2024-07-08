@@ -865,6 +865,7 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         self.num_graphs = len(data)
         self.permute_nodes = permute_nodes
         self.g = None
+        self.idx_of_ds = 0
         # cannot pickle 'torch._C.Generator' object, so self.g has to None
         if self.permute_nodes:
             print(
@@ -899,6 +900,17 @@ class GraphsMapDataset(torch.utils.data.Dataset):
             self.num_graphs = len(self.sampler)
         # 2. other config
         self.reset_samples()
+        # 3. temporary code, for experiemtal only. # TODO: refactor this
+        if (
+            hasattr(self.data, "y")
+            and self.data.y is not None
+            and len(self.data.y.shape) == 2
+            and self.data.y.shape[1] > 1
+        ):
+            self.idx_tuple = tuple(list(range(self.data.y.shape[1])))
+        else:
+            self.idx_tuple = None
+        print(f"idx_tuple: {self.idx_tuple}")
 
         self.kwargs = kwargs
 
@@ -948,6 +960,12 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         if self.permute_nodes:
             graph, _ = nx_utils.permute_nodes(graph, self.g)
         graph.idx = idx
+        if self.idx_tuple:
+            idx_correction = random.choice(self.idx_tuple)
+            graph.y = graph.y[:, idx_correction : idx_correction + 1].reshape((-1))
+        else:
+            idx_correction = 0
+        graph.idx_of_ds = self.idx_of_ds + idx_correction
         if self.ensemble_paths:
             # TODO: permute nodes may affect this, investigate it!
             graph.root_n_id = node_idx
@@ -979,15 +997,18 @@ class EnsembleGraphsMapDataset(torch.utils.data.Dataset):
     ):
         self.datasets = datasets
         ls_double_idx = []
+        print(f"Combining {len(datasets)} datasets into one Ensemble")
         for i, ds in enumerate(self.datasets):
             num = len(ds.sample_idx)
             idx_of_ds = torch.tensor([i] * num, dtype=torch.int64)
             double_idx = torch.vstack([idx_of_ds, ds.sample_idx]).T  # [2, num]
             ls_double_idx.append(double_idx)
+            ds.idx_of_ds = i
         self.all_idx = torch.vstack(ls_double_idx)
         self.num_graphs = len(self.all_idx)
         self.sample_idx = torch.arange(self.num_graphs, dtype=torch.int64)
         self.sampler = self.sample_idx.tolist()
+        random.shuffle(self.sampler)
         self.reset_samples()
 
     def reset_samples(self, epoch: Optional[int] = None):

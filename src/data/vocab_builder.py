@@ -83,7 +83,8 @@ def get_semantics_vocab(dataset: Dataset, config: Dict):
             f"Read artificial molecule dataset that contains all possible features to build a unified vocab"
         )
         new_ds = read_complete_mol_features_ds()
-        data = dataset._data
+        # deepcopy to avoiding changing the content of dataset._data, otherwise causing error right after vocab building
+        data = dataset._data.clone()
         data.x = new_ds[0].x
         data.edge_attr = new_ds[0].edge_attr
         dataset = [data]
@@ -96,17 +97,20 @@ def get_semantics_vocab(dataset: Dataset, config: Dict):
 def _get_node_structure_vocab(config: Dict):
     bos_token = config.get("bos_token", "0")
     eos_token = config.get("eos_token", "<eos>")
+    new_token = config.get("new_node_token", "<new>")
     s_tokens = [
         config.get("regression_token", None),
         config.get("weight_token", None),
         config.get("summary_token", None),
     ]
-    idx_token = [str(ele) for ele in range(1, config["scope_base"])]
+    idx_token = [str(ele) for ele in range(0, config["scope_base"])]
     high_lvl_scope = int(math.ceil(config["node_scope"] / config["scope_base"]))
     idx_token_high_lvl = [
         f"{ele}*{config['scope_base']}" for ele in range(1, high_lvl_scope)
     ]
-    vocab = s_tokens + [eos_token, bos_token] + idx_token + idx_token_high_lvl
+    vocab = (
+        s_tokens + [eos_token, bos_token, new_token] + idx_token + idx_token_high_lvl
+    )
     vocab = [ele for ele in vocab if ele is not None]
     return vocab
 
@@ -193,5 +197,6 @@ def load_vocab(fn) -> Dict[str, int]:
         ls = res.split("\n")
         ls = [ele.strip().split() for ele in ls if len(ele) > 0]
         vocab_map = {k: int(v) for k, v in ls}
+    vocab_map.update({"<label_pad>": -100})
     print(f"{pformat(vocab_map, indent=4)}")
     return vocab_map

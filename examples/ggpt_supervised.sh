@@ -6,8 +6,6 @@ use_mlp=0
 gradient_accumulation_steps=1
 memory=20480
 freeze=-1
-# sample graphs for train proportional to their number of eulerian paths/num_nodes
-with_prob=0
 # tokenization config
 ignored_off=0
 attr_assignment="all"
@@ -29,12 +27,11 @@ then
 fi
 
 # model config
-model_name="mini"  # tiny mini small medium graphformer base large xlarge xxlarge
+model_name="mini"  # tiny mini small medium base large xlarge xxlarge
 
 # train config
 lr=1e-4
-beta2=0.99
-betas="[0.9,${beta2}]"
+betas="[0.9,0.99]"
 eps=1e-10
 weight_decay=0
 max_grad_norm=1
@@ -126,8 +123,6 @@ then
   # train config
   sampling_conf_sv="ns"
   max_position_embeddings_sv=1024
-  # other
-  true_valid=5000  # 128  512  4096  5000
 else
   echo "Using dataset ${dataset_name}, which is NOT implemented!!!"
 fi
@@ -153,12 +148,6 @@ then
   hidden_size=512
   num_hidden_layers=8
   echo "In Medium setting!"
-elif [ ${model_name} = "graphformer" ]
-then
-  hidden_size=768
-  num_hidden_layers=12
-  model_config_file="graphformer_model_config.json"
-  echo "In Graphformer setting!"
 elif [ ${model_name} = "base" ]
 then
   hidden_size=768
@@ -201,21 +190,7 @@ fi
 
 
 # pre-train ckp:: dataset-specific config
-if [ ${dataset_name} = "ogbn-proteins" ]
-then
-  pretrain_cpt="pt_ne_d9n1_h${hidden_size}_l${num_hidden_layers}_b1024_mpe256_tk2e10"
-elif [ ${dataset_name} = "ogbl-ppa" ]
-then
-  pretrain_cpt="pt_ee_d1n14_h${hidden_size}_l${num_hidden_layers}_b1600_mpe256_tk2e10"
-elif [ ${dataset_name} = "ogbg-molpcba" ]
-then
-  pretrain_cpt="pt_ns_h${hidden_size}_l${num_hidden_layers}_b1024_mpe1024_tk2e10"
-elif [ ${dataset_name} = "PCQM4Mv2" ]
-then
-  pretrain_cpt="pt_ns_h${hidden_size}_l${num_hidden_layers}_b512_mpe1024_tk2e10"
-else
-  echo "Using dataset ${dataset_name}, which is NOT implemented!!!"
-fi
+pretrain_cpt=""
 
 
 let batch_size_actual=batch_size_sv*workerCount*gradient_accumulation_steps
@@ -238,7 +213,6 @@ raw_udf="
   --output_dir='${output_dir_prefix}/${output_dir}'
   --pretrain_cpt='${pretrain_cpt}'
   --dataset_name='${dataset_name}'
-  --with_prob=${with_prob}
   --save_pred=${save_pred}
   --tokenization_config='${tokenization_config}'
   --attr_assignment='${attr_assignment}'
@@ -271,7 +245,6 @@ raw_udf="
   --optimization_config='${optimization_config}'
   --eval_only=${eval_only}
   --seed=${seed}
-  --true_valid=${true_valid}
 "
 
 udf=${raw_udf//$'\n'/}

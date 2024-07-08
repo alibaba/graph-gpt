@@ -1,0 +1,6 @@
+{
+  "embd_pdrop": 0,
+  "attn_pdrop": 0,
+  "resid_pdrop": 0,
+  "mlp_pdrop": 0
+}

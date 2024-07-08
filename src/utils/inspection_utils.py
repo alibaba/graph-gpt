@@ -1,9 +1,13 @@
 import os
 import numpy as np
 from typing import Dict, Union
+from pprint import pformat
+from functools import partial
 import torch
 from torch_geometric.data import Data
 from torch.utils.data import IterableDataset, Dataset
+
+pformat = partial(pformat, compact=False, width=400)
 
 
 def print_params(**kwargs):
@@ -163,20 +167,23 @@ def inspect_tokenization_results(
         print(f"Inspecting tokenization results!\nTokenize graph:\n{data}")
         (
             tokens,
+            labels,
             tgt_node_token,
             tgt_edge_src_token,
             tgt_edge_dst_token,
             tgt_pos,
         ) = gtokenizer.tokenize(graph)
-        print(f"\nTokens:\n{tokens}\n")
-        tokens = (
-            gtokenizer.pack_token_seq(tokens, idx)
+        print(f"\nTokens:\n{pformat(tokens)}\nLabels:\n{pformat(labels)}\n")
+        tokens, labels = (
+            gtokenizer.pack_token_seq(tokens, labels, idx)
             if gtokenizer.mpe is not None
-            else tokens
+            else (tokens, labels)
         )
-        print(f"Packed Tokens:\n{tokens}\n") if gtokenizer.mpe is not None else None
-        token_ids = gtokenizer.convert_tokens_to_ids(tokens)
-        print(f"Tokenized results:\n{token_ids}\n")
+        print(
+            f"Packed Tokens:\n{pformat(tokens)}\nPacked Labels:\n{pformat(labels)}\n"
+        ) if gtokenizer.mpe is not None else None
+        token_ids = gtokenizer.convert_tokens_to_ids(tokens, labels)
+        print(f"Tokenized results:\n{pformat(token_ids)}\n")
         inputs = gtokenizer.prepare_inputs_for_task(
             token_ids,
             graph,
@@ -189,7 +196,7 @@ def inspect_tokenization_results(
         inputs = data
     else:
         raise ValueError(f"Type {type(data)} of data {data} is NOT implemented yet!")
-    print(f"Inputs for model:\n{inputs}\n")
+    print(f"Inputs for model:\n{pformat(inputs)}\n")
     gtokenizer.set_eos_idx(inputs["input_ids"])
 
 

@@ -9,28 +9,26 @@ then
 fi
 
 # model config
-model_name="tiny"  # tiny mini small medium graphformer base large xlarge xxlarge
+model_name="tiny"  # tiny mini small medium base large xlarge xxlarge
 
 # train config
 batch_size=128
-workerCount=4
+workerCount=1
 num_cpus=10
-total_tokens=2e10
-warmup_tokens=2e9
+total_tokens=1e9
+warmup_tokens=1e8
 max_position_embeddings=1024
 tie_word_embeddings=0
 lr=3e-4
 weight_decay=0.01
 max_grad_norm=1
 eps=1e-8
-logit_adjust=0
 pack_tokens=1
 memory=40960
 ## deep-speed config
 deepspeed_config="./examples/ds_config2_pt.json"
 ## tokenization config
 attr_assignment="random"
-ignored_off=0
 
 
 # dataset config
@@ -96,22 +94,6 @@ then
   hidden_size=512
   num_hidden_layers=8
   echo "In Medium setting!"
-elif [ ${model_name} = "graphformer" ]
-then
-  lr=2e-4
-  hidden_size=768
-  num_hidden_layers=12
-  model_config_file="graphformer_model_config.json"
-
-  optimization_config_file="graphformer_optimizer_config.json"
-  if [ "${optimization_config_file}" = "" ]  # https://stackoverflow.com/a/13618376
-  then
-    optimization_config=""
-  else
-    optimization_config="./examples/${optimization_config_file}"
-  fi
-  suffix="_gf"
-  echo "In Graphformer setting!"
 elif [ ${model_name} = "base" ]
 then
   hidden_size=768
@@ -170,7 +152,6 @@ raw_udf="
   --dataset_name='${dataset_source}'
   --tokenization_config='${tokenization_config}'
   --attr_assignment='${attr_assignment}'
-  --ignored_off=${ignored_off}
   --batch_size=${batch_size}
   --pack_tokens=${pack_tokens}
   --num_workers=${num_cpus}
@@ -180,7 +161,6 @@ raw_udf="
   --weight_decay=${weight_decay}
   --eps=${eps}
   --max_grad_norm=${max_grad_norm}
-  --logit_adjust=${logit_adjust}
   --total_tokens=${total_tokens}
   --warmup_tokens=${warmup_tokens}
   --model_config='${model_config}'
