@@ -601,9 +601,18 @@ def permute_nodes(graph, g=None):
     permu = torch.randperm(num_nodes, generator=g)
     new_graph = graph.clone()
     new_graph.edge_index = permu[graph.edge_index]
+    new_graph.num_nodes = num_nodes
+
+    inv_permu = torch.argsort(permu)
     if isinstance(graph.x, torch.Tensor) and graph.x.numel() > 0:
-        inv_permu = torch.argsort(permu)
         new_graph.x = graph.x[inv_permu]
+    if (
+        hasattr(graph, "y")
+        and isinstance(graph.y, torch.Tensor)
+        and graph.y.numel() > 0
+        and graph.y.shape[0] == num_nodes
+    ):
+        new_graph.y = graph.y[inv_permu]
     return new_graph, permu
 
 

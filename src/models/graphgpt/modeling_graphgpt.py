@@ -102,6 +102,9 @@ class StackedFeatAggregation(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        # WHEN loading from pre-trained with HF's `model.from_pretrained`,
+        # IF fails due to name mismatch and etc, the params won't be init properly
+        # i.e., contains NAN, 0 and exteremely small vals, e.g., 1.4013e-45
         # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
         # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
         # https://github.com/pytorch/pytorch/issues/57109
@@ -126,17 +129,27 @@ class StackedFeatAggregation(nn.Module):
 class GraphGPTCausal(LlamaForCausalLM):
     def __init__(self, config):
         super().__init__(config)
-        if _use_dropout(config):
-            del self.model
-            self.model = utils_graphgpt.LlamaModel(config)
+        # 1. Transformer's backbone
+        LlamaModel = (
+            utils_graphgpt.LlamaModel
+            if _use_dropout(self.config)
+            else modeling_llama.LlamaModel
+        )
         if not config.causal_attention:
-            del self.model
-            LlamaModel = modeling_llama.LlamaModel
             print(
                 f"\nMonkey Patch {LlamaModel.__name__}'s method `_update_causal_mask`!\n"
             )
             LlamaModel._update_causal_mask = _update_causal_mask
-            self.model = LlamaModel(config)
+        self.model = LlamaModel(config)
+        # 1.1 Embedding dropout
+        if config.embed_pdrop > 0:
+            self.embed_dropout = nn.Dropout(p=config.embed_pdrop)
+        else:
+            self.embed_dropout = None
+        # 1.2 Node/edge attributes stacking
+        if config.stacked_feat > 1:
+            self.stacked_feat_agg = StackedFeatAggregation(config)
+        # 2. Optimization objective
         if config.next_n_token > 1:
             print(
                 f"Next-token-prediction changed to next/masked-{config.next_n_token}-tokens-prediction!"
@@ -144,8 +157,6 @@ class GraphGPTCausal(LlamaForCausalLM):
             self.next_n_token_head = nn.Linear(
                 config.hidden_size, config.hidden_size * config.next_n_token, bias=False
             )
-        if config.stacked_feat > 1:
-            self.stacked_feat_agg = StackedFeatAggregation(config)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -181,15 +192,16 @@ class GraphGPTCausal(LlamaForCausalLM):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
+        assert inputs_embeds is None
+        inputs_embeds = self.model.embed_tokens(input_ids)
+        if self.embed_dropout is not None:
+            inputs_embeds = self.embed_dropout(inputs_embeds)
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         if len(input_ids.shape) == 3:
-            inputs_embeds = self.model.embed_tokens(input_ids)
-            # [bz, seq, feat, dim]
-            # inputs_embeds = torch.sum(inputs_embeds, dim=-2)
             inputs_embeds = self.stacked_feat_agg(inputs_embeds)
-            # [bz, seq, dim]
+            # [bz, seq, feat, dim] ->[bz, seq, dim]
             assert inputs_embeds.shape[:2] == input_ids.shape[:2]
-            input_ids = None
+        input_ids = None
 
         outputs = self.model(
             input_ids=input_ids,
@@ -250,6 +262,7 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
+        # 1. Transformer's backbone
         LlamaModel = (
             utils_graphgpt.LlamaModel
             if _use_dropout(self.config)
@@ -261,13 +274,19 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
             )
             LlamaModel._update_causal_mask = _update_causal_mask
         self.model = LlamaModel(config)
-        # 0. Init for CausalLM, refer to `LlamaForCausalLM`
-        self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        # 1. stacked-feat processing, if possible
+        # 1.1 Embedding dropout
+        if config.embed_pdrop > 0:
+            self.embed_dropout = nn.Dropout(p=config.embed_pdrop)
+        else:
+            self.embed_dropout = None
+        # 1.2 Node/edge attributes stacking
         if config.stacked_feat > 1:
             self.stacked_feat_agg = StackedFeatAggregation(config)
-        # 2. Init for SequenceClassification, refer to `LlamaForSequenceClassification`
+        # 2. Init for CausalLM, refer to `LlamaForCausalLM`
+        self.vocab_size = config.vocab_size
+        if self.config.use_ntp:
+            self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        # 3. Init for SequenceClassification, refer to `LlamaForSequenceClassification`
         bias = self.config.problem_type == "regression"
         self.num_labels = config.num_labels
         if len(self.config.mlp) > 0:
@@ -321,11 +340,11 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        eulerian_position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pretrain_labels: Optional[torch.LongTensor] = None,
         task_labels: Optional[torch.LongTensor] = None,
+        cls_idx: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -341,6 +360,7 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
                 Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
                 config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
                 `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+            cls_idx (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
         Returns:
 
         Example:
@@ -363,18 +383,20 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
+        assert inputs_embeds is None
+        inputs_embeds = self.model.embed_tokens(input_ids)
+        if self.embed_dropout is not None:
+            inputs_embeds = self.embed_dropout(inputs_embeds)
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         if len(input_ids.shape) == 3:
-            inputs_embeds = self.model.embed_tokens(input_ids)
-            # [bz, seq, feat, dim]
-            # inputs_embeds = torch.sum(inputs_embeds, dim=-2)
             inputs_embeds = self.stacked_feat_agg(inputs_embeds)
-            # [bz, seq, dim]
+            # [bz, seq, feat, dim] -> [bz, seq, dim]
             assert inputs_embeds.shape[:2] == input_ids.shape[:2]
             in_ = input_ids[:, :, 0]  # [bz, seq, num_feat] -> [bz, seq]
-            input_ids = None
         else:
             in_ = input_ids  # [bz, seq]
+        input_ids = None
+
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -391,7 +413,7 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
         # 1. Calculate loss for pre-train, refer to `LlamaForCausalLM`
         pretrain_loss = None
         pretrain_logits = None
-        if pretrain_labels is not None:
+        if self.config.use_ntp:
             pretrain_logits = self.lm_head(hidden_states)
             logits = pretrain_logits.float()
             # Flatten the tokens
@@ -470,7 +492,36 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
                 else:
                     loss = loss_fct(pooled_logits, labels)
             elif self.config.problem_type == "single_label_classification":
-                if self.config.loss_type == "auc":
+                if self.config.loss_type in {"token_ce", "token_ce_intra"}:
+                    if self.config.loss_type == "token_ce_intra":
+                        # get the slice index of intra-instance classes
+                        # [bz] -> [bz, 1] -> [bz, num_labels]
+                        idx1 = (
+                            torch.arange(batch_size, device=logits.device)
+                            .reshape((-1, 1))
+                            .expand((-1, self.num_labels))
+                        )
+                        # [num_labels] -> [1, num_labels] -> [bz, num_labels] & [bz, 1] -> [bz, num_labels]
+                        idx2 = torch.arange(
+                            self.num_labels, device=logits.device
+                        ).reshape((1, -1)).expand((batch_size, -1)) + cls_idx.reshape(
+                            (-1, 1)
+                        )
+                        local_label_embeddings = hidden_states[
+                            idx1, idx2
+                        ]  # [bz, num_labels, dim]
+                        # [bz, seq, dim] & [bz, dim, num_labels] -> [bz, seq, num_labels]
+                        logits = torch.matmul(
+                            hidden_states, local_label_embeddings.transpose(-2, -1)
+                        )
+                        # above to mat-multiply local_label_embeddings
+                    loss_fct = CrossEntropyLoss()
+                    loss = loss_fct(
+                        logits.view(-1, self.num_labels).float(), labels.view(-1)
+                    )
+                    # below `pooled_logits` for output of evaluation only
+                    pooled_logits = logits
+                elif self.config.loss_type == "auc":
                     logits = pooled_logits.view(
                         -1, self.num_labels
                     )  # [batch, num_labels]
@@ -1205,15 +1256,8 @@ class GraphGPTForSequenceClassification(LlamaPreTrainedModel):
 
 def _use_dropout(config):
     if (
-        sum(
-            [
-                config.embd_pdrop,
-                config.attn_pdrop,
-                config.resid_pdrop,
-                config.mlp_pdrop,
-            ]
-        )
-        > 0
+        sum([config.path_pdrop, config.mlp_pdrop]) > 0
+        or config.layer_scale_init_value > 0
     ):
         print("Applying dropout in backbone transformer")
         return True

@@ -301,12 +301,20 @@ class OdpsTableIterableDataset(torch.utils.data.IterableDataset):
         skipped_samples=0,
         permute_nodes=True,
         epoch=0,
+        edge_dim=3,
+        node_dim=9,
+        y_dim=None,
     ):
+        # 0. dataset config
+        self.edge_dim = edge_dim
+        self.node_dim = node_dim
+        self.y_dim = y_dim
+        self.permute_nodes = permute_nodes
+        # other config
         self.epoch = epoch
         self.slice_id = slice_id
         # skipped_samples per-gpu, in case of resuming training
         self.skipped_samples = skipped_samples
-        self.permute_nodes = permute_nodes
         self.table_path = table_path
         reader = common_io.table.TableReader(
             table_path, slice_id=slice_id, slice_count=slice_count, num_threads=0
@@ -359,31 +367,41 @@ class OdpsTableIterableDataset(torch.utils.data.IterableDataset):
             while True:
                 try:
                     data = reader.read(num_records=1, allow_smaller_final_batch=True)[0]
-                    # cols: smiles, edge_index, edge_feat, node_feat, num_nodes
+                    # cols: id/smiles, edge_index, edge_feat, node_feat, num_nodes
+                    if isinstance(data[0], int):
+                        idx = data[0]
+                    else:
+                        str_idx = data[0].decode("utf-8")  # raw data is byte format
+                        idx = int(str_idx) if str_idx.isnumeric() else 0
                     edge_index = torch.from_numpy(
-                        np.frombuffer(
-                            base64.urlsafe_b64decode(data[1]), dtype=np.int64
-                        ).reshape(2, -1)
+                        np.frombuffer(base64.urlsafe_b64decode(data[1]), dtype=np.int64)
+                        .reshape(2, -1)
+                        .copy()
                     )
                     edge_attr = torch.from_numpy(
-                        np.frombuffer(
-                            base64.urlsafe_b64decode(data[2]), dtype=np.int64
-                        ).reshape(-1, 3)
+                        np.frombuffer(base64.urlsafe_b64decode(data[2]), dtype=np.int64)
+                        .reshape(-1, self.edge_dim)
+                        .copy()
                     )
                     x = torch.from_numpy(
-                        np.frombuffer(
-                            base64.urlsafe_b64decode(data[3]), dtype=np.int64
-                        ).reshape(-1, 9)
+                        np.frombuffer(base64.urlsafe_b64decode(data[3]), dtype=np.int64)
+                        .reshape(-1, self.node_dim)
+                        .copy()
                     )
-                    # y = torch.from_numpy(
-                    #     np.frombuffer(base64.b64decode(data[3]), dtype=np.float32)
-                    # )
                     new_data = {
                         "edge_index": edge_index,
                         "edge_attr": edge_attr,
                         "x": x,
-                        # "y": y,
                     }
+                    if self.y_dim is not None:
+                        y = torch.from_numpy(
+                            np.frombuffer(
+                                base64.urlsafe_b64decode(data[4]), dtype=np.int64
+                            )
+                            .reshape(-1, self.y_dim)
+                            .copy()
+                        )
+                        new_data.update({"y": y})
                     graph = Data.from_dict(new_data)
                     if self.permute_nodes:
                         graph, _ = nx_utils.permute_nodes(graph, None)
@@ -391,7 +409,7 @@ class OdpsTableIterableDataset(torch.utils.data.IterableDataset):
                 except common_io.exception.OutOfRangeException:
                     reader.close()
                     break
-                yield 0, graph
+                yield idx, graph
 
         return table_data_iterator()
 

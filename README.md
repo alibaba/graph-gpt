@@ -8,6 +8,9 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 
 ## Update:
 
+***08/18/2024***
+1. v0.3.1 released. Check `CHANGELOG.md` for details.
+
 ***07/09/2024***
 1. v0.3.0 released.
 
@@ -77,6 +80,40 @@ The source code and pre-trained checkpoints will be released in this repository 
 graph foundation model research, and also to assist the scientific discovery in pharmaceutical,
 chemistry, material and bio-informatics domains, etc.
 
+### Graph to Sequences
+
+After converting Eulerized graphs to sequences, there are several different ways to attach node and edge attributes to
+the sequences. We name these methods as `short`, `long` and `prolonged`.
+
+Given the graph, we Eulerize it first, and then turn it into an equivalent sequence. And then, we re-index the nodes
+cyclically.
+
+<img src="pic/cyclic-re-index.png" width="50%" height="50%" />
+
+Assume the graph has two node attributes and one edge attributes, and then the `short` method attaches the attributes
+as follows:
+
+<img src="pic/short.png" width="50%" height="50%" />
+
+And the `long` method as follows:
+
+<img src="pic/long.png" width="80%" height="80%" />
+
+And the `prolong` method as below:
+
+![prolong](pic/prolong.png)
+
+In the above figures, `n1`, `n2` and `e1` represents the tokens of node and edge attributes, and `[p]` represents the
+mask token.
+
+#### Cyclical node re-index
+
+A straightforward way to re-index the sequence of nodes is to start with 0 and add 1 incrementally. By this way, tokens
+of small indices will be sufficiently trained, and the large indices won't. To overcome this, we propose
+`cyclical re-index`, which starts with a random number in the given range, say `[0, 255]`, and increment by 1.
+After hitting the boundary, e.g., `255`, the next node index will be 0.
+
+<img src="pic/re-index.png" width="70%" height="70%" />
 
 ## Results
 

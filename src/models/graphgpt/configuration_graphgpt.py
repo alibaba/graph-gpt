@@ -63,10 +63,10 @@ class GraphGPTConfig(LlamaConfig):
         pooling_method="last",
         causal_attention: bool = True,
         # For transformer backbone's dropout -> embed layer, attn & attn residue, mlp layer
-        embd_pdrop: float = 0,
-        attn_pdrop: float = 0,
-        resid_pdrop: float = 0,
+        embed_pdrop: float = 0,
+        path_pdrop: float = 0,
         mlp_pdrop: float = 0,
+        layer_scale_init_value: float = 0,
         # For graphGPT input features stack
         stacked_feat: int = 1,
         stacked_feat_agg_method: str = "sum",
@@ -81,11 +81,12 @@ class GraphGPTConfig(LlamaConfig):
         **kwargs,
     ):
         self.next_n_token = next_n_token
+        self.causal_attention = causal_attention
         # 1. For dropout in transformer backbone
-        self.embd_pdrop = embd_pdrop
-        self.attn_pdrop = attn_pdrop
-        self.resid_pdrop = resid_pdrop
+        self.embed_pdrop = embed_pdrop
+        self.path_pdrop = path_pdrop
         self.mlp_pdrop = mlp_pdrop
+        self.layer_scale_init_value = layer_scale_init_value
         self.stacked_feat = stacked_feat
         self.stacked_feat_agg_method = stacked_feat_agg_method
         # 2. For downstream tasks

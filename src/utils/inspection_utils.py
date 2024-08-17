@@ -48,7 +48,7 @@ def print_params(**kwargs):
             f"samples_per_eval: {kwargs.get('samples_per_eval', None)}\n"
             f"eval_steps: {kwargs.get('eval_steps', None)}\n"
             f"k_samplers: {kwargs.get('k_samplers', None)}\n"
-            f"use_ddp: {kwargs.get('use_ddp', False)}\n"
+            f"use_deepspeed: {kwargs.get('use_deepspeed', False)}\n"
             f"gradient_accumulation_steps: {kwargs.get('gradient_accumulation_steps', None)}\n"
             f"model_type: {kwargs.get('model_type', 'graphgpt')}\n"
             f"model_config: {kwargs.get('model_config', '')}\n"

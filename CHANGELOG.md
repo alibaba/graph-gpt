@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2024-08-18
+
+### Model
+- Add drop path to regularize large models, and it works quite well for deep models
+
+### Other
+- Add one package dependency: `timm`, to implement EMA
+- Update README to include details of Eulerian sequence and cyclic node re-index.
+- Code refactoring.
+- Tokenization config json refactoring.
+- Update vocab by adding some special tokens, e.g., `<bos>`, `<new>`, `<mask>` and etc.
+- Turn of optimizer offload in deepspeed config to boost the training speed.
+
 ## [0.3.0] - 2024-07-09
 
 ### Dataset

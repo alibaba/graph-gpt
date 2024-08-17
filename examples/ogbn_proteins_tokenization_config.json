@@ -36,12 +36,14 @@
     "node": {
       "discrete": "x",
       "continuous": null,
-      "ignored_val": "0"
+      "ignored_val": "0",
+      "dim": 2
     },
     "edge": {
       "discrete": null,
       "continuous": "edge_attr",
-      "ignored_val": "0"
+      "ignored_val": "0",
+      "dim": 8
     },
     "graph": {
       "discrete": null,

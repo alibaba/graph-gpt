@@ -121,34 +121,56 @@ def load_from_ckp(
 ):
     if (len(pretrain_cpt) > 0) and (pretrain_cpt != output_dir):
         ckp, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt)
-        print(f"Loading pretrained weights from ckp {ckp}")
-        try:
-            model = model.from_pretrained(ckp, config=config)
-            print(f"load ckp using HF API `model.from_pretrained`")
-        except Exception as inst:
-            # print(type(inst))
-            # print(inst.args)
-            print(inst)
-            from deepspeed.utils.zero_to_fp32 import (
-                get_fp32_state_dict_from_zero_checkpoint,
-            )
+        model = load_from_ckp_with_try(model, ckp, config)
+    return model
 
-            stat_dict = get_fp32_state_dict_from_zero_checkpoint(ckp)
-            for key in stat_dict.keys():
-                if "score" in key:
-                    stat_dict.pop(key)
-                    print(f"pop key {key} in stat_dict!")
-            missing_keys, unexpected_keys = model.load_state_dict(
-                stat_dict, strict=False
-            )
-            print(
-                f"[{datetime.now()}] load ckp using DeepSpeed API `get_fp32_state_dict_from_zero_checkpoint` and pytorch `load_state_dict`\n"
-                f"missing keys: {missing_keys}\n"
-                f"unexpected_keys: {unexpected_keys}\n"
-            )
+
+def load_from_ckp_with_try(
+    model,
+    ckp,
+    config,
+    skip_keys=True,
+):
+    print(f"Loading pretrained weights from ckp {ckp}")
+    try:
+        # fn_model = os.path.join(ckp, "../model_ema_best.pt")
+        # if not os.path.isfile(fn_model):
+        fn_model = os.path.join(ckp, "model.pt")
+        stat_dict = torch.load(fn_model)
+        stat_dict = {
+            (k[7:] if k.startswith("module.") else k): v for k, v in stat_dict.items()
+        }
+        missing_keys, unexpected_keys = model.load_state_dict(stat_dict, strict=False)
+        loading_info = {
+            "missing_keys": missing_keys,
+            "unexpected_keys": unexpected_keys,
+        }
+        # model, loading_info = model.from_pretrained(fn, config=config, local_files_only=True, output_loading_info=True)
         print(
-            f"After loading weights from ckp:\n{model.config}\nnum_labels: {model.num_labels}\nmodel-type: {model.dtype}\n\n{model}"
+            f"[{datetime.now()}] load ckp using torch API from:\n{fn_model}\nwith loading_info:\n{loading_info}"
         )
+    except Exception as inst:
+        # print(type(inst))
+        # print(inst.args)
+        print(inst)
+        from deepspeed.utils.zero_to_fp32 import (
+            get_fp32_state_dict_from_zero_checkpoint,
+        )
+
+        stat_dict = get_fp32_state_dict_from_zero_checkpoint(ckp)
+        for key in list(stat_dict.keys()):
+            if ("score" in key) and skip_keys:
+                stat_dict.pop(key)
+                print(f"pop key {key} in stat_dict!")
+        missing_keys, unexpected_keys = model.load_state_dict(stat_dict, strict=False)
+        print(
+            f"[{datetime.now()}] load ckp using DeepSpeed API `get_fp32_state_dict_from_zero_checkpoint` and pytorch `load_state_dict`\n"
+            f"missing keys: {missing_keys}\n"
+            f"unexpected_keys: {unexpected_keys}\n"
+        )
+    print(
+        f"After loading weights from ckp:\n{model.config}\nnum_labels: {model.num_labels}\nmodel-type: {model.dtype}\n\n{model}"
+    )
     return model
 
 
@@ -298,6 +320,9 @@ def init_loader_for_odps_table_ds(
     batch_size,
     OdpsTableIterableDataset,
     tables,
+    edge_dim,
+    node_dim,
+    y_dim,
     train_shuffle,
     train_sampler,
     num_workers,
@@ -320,6 +345,9 @@ def init_loader_for_odps_table_ds(
         skipped_samples=skipped_samples,
         permute_nodes=True,
         epoch=epoch,
+        edge_dim=edge_dim,
+        node_dim=node_dim,
+        y_dim=y_dim,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -330,7 +358,7 @@ def init_loader_for_odps_table_ds(
         collate_fn=collator_fn,
         worker_init_fn=worker_init_fn_seed,
         pin_memory=True,
-        drop_last=True,
+        drop_last=False,  # set False for odps dataset
         prefetch_factor=4,
     )
     return train_loader, i_local

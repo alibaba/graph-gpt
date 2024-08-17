@@ -32,7 +32,8 @@ def parse_tokenization_config(
         )
         tokenizer_config["dataset"] = dataset_name
         tokenizer_config["task_type"] = task_type
-        tokenizer_config["tokenizer_class"] = tokenizer_class
+        if tokenizer_class is not None:
+            tokenizer_config["tokenizer_class"] = tokenizer_class
         tokenizer_config["structure"]["nx"] = nx_config
     if len(attr_assignment) > 0:
         tokenizer_config["semantics"]["attr_assignment"] = attr_assignment
@@ -96,6 +97,10 @@ def parse_model_config(
     tie_word_embeddings,
     causal_attention,
     attention_dropout,
+    embed_dropout,
+    path_dropout,
+    mlp_dropout,
+    layer_scale_init_value,
     next_n_token,
     stacked_feat,
     stacked_feat_agg_method,
@@ -117,6 +122,7 @@ def parse_model_config(
         config = GraphModelConfig().from_pretrained(model_config)
     else:
         config = GraphModelConfig()
+    config.update(model_config_dict)
     config.update(
         {
             "vocab_size": gtokenizer.vocab_size,
@@ -134,12 +140,15 @@ def parse_model_config(
             "eos_token_id": gtokenizer.get_eos_token_id(),
             "causal_attention": bool(causal_attention),
             "attention_dropout": attention_dropout,
+            "embed_pdrop": embed_dropout,
+            "path_pdrop": path_dropout,
+            "mlp_pdrop": mlp_dropout,
+            "layer_scale_init_value": layer_scale_init_value,
             "next_n_token": next_n_token,
             "stacked_feat": stacked_feat,
             "stacked_feat_agg_method": stacked_feat_agg_method,
         }
     )
-    config.update(model_config_dict)
     return config
 
 
@@ -159,6 +168,10 @@ def parse_model_config_for_ft(
     # tie_word_embeddings,
     causal_attention,
     attention_dropout,
+    embed_dropout,
+    path_dropout,
+    mlp_dropout,
+    layer_scale_init_value,
     # next_n_token,
     stacked_feat,
     stacked_feat_agg_method,
@@ -170,6 +183,7 @@ def parse_model_config_for_ft(
     loss_type,
     loss_utils,
     tokenizer_config,
+    ntp_ratio,
     **kwargs,
 ):
     if len(pretrain_cpt) > 0:
@@ -202,6 +216,10 @@ def parse_model_config_for_ft(
         tie_word_embeddings=tie_word_embeddings,
         causal_attention=causal_attention,
         attention_dropout=attention_dropout,
+        embed_dropout=embed_dropout,
+        path_dropout=path_dropout,
+        mlp_dropout=mlp_dropout,
+        layer_scale_init_value=layer_scale_init_value,
         next_n_token=next_n_token,
         stacked_feat=stacked_feat,
         stacked_feat_agg_method=stacked_feat_agg_method,
@@ -218,15 +236,9 @@ def parse_model_config_for_ft(
             "problem_type": problem_type,
             "loss_type": loss_type if len(loss_type) > 0 else None,
             "num_neg": loss_utils.get_neg_ratio(tokenizer_config["sampling"]),
+            "use_ntp": ntp_ratio > 0,
         }
     )
-    if len(model_config) > 0:
-        with open(model_config, "r") as fp:
-            model_config_dict = json.load(fp)
-            print(f"Load model config {pformat(model_config_dict)} from {model_config}")
-    else:
-        model_config_dict = {}
-    config.update(model_config_dict)
     return config
 
 
@@ -379,6 +391,7 @@ def dump_all_conf(
     tokenizer_config,
     params,
     tmp_ds_config,
+    use_deepspeed=True,
     **kwargs,
 ):
     if not os.path.exists(output_dir):
@@ -389,9 +402,10 @@ def dump_all_conf(
     with open(os.path.join(output_dir, "params.txt"), "w+") as fp:
         fp.write(params)
     print(f"[{datetime.now()}] Finish -> Dump to `params.txt`")
-    with open(os.path.join(output_dir, "ds_config.json"), "w+") as fp:
-        json.dump(tmp_ds_config, fp, indent=4)
-    print(f"[{datetime.now()}] Finish -> Dump to `ds_config.json`")
+    if use_deepspeed:
+        with open(os.path.join(output_dir, "ds_config.json"), "w+") as fp:
+            json.dump(tmp_ds_config, fp, indent=4)
+        print(f"[{datetime.now()}] Finish -> Dump to `ds_config.json`")
 
 
 def init_log_conf(

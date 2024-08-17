@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Tuple
+import math
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import (
@@ -267,9 +268,10 @@ def _py_one_cycle(
     print(f"Pop scheduler in ds_config: {scheduler_conf}")
 
     def func(optimizer):
+        lrs = [dict_.get("lr", max_lr) for dict_ in optimizer.param_groups]
         return OneCycleLR(
             optimizer,
-            max_lr=max_lr,
+            max_lr=lrs,
             total_steps=total_steps,
             pct_start=pct_start,
             anneal_strategy="cos",
@@ -280,3 +282,48 @@ def _py_one_cycle(
         )
 
     return func, {"scheduler": scheduler_conf}
+
+
+def get_layerwise_param_groups(model, base_lr, lr_decay: float = 0.95):
+    print("utilizing layerwise lr v1!")
+    params_groups = []
+    params_groups.append({"params": model.model.embed_tokens.parameters()})
+    if hasattr(model, "stacked_feat_agg"):
+        params_groups.append({"params": model.stacked_feat_agg.parameters()})
+    for layer in model.model.layers:
+        params_groups.append({"params": layer.parameters()})
+    params_groups.append({"params": model.model.norm.parameters()})
+    if hasattr(model, "lm_head"):
+        params_groups.append({"params": model.lm_head.parameters()})
+    if hasattr(model, "score"):
+        params_groups.append({"params": model.score.parameters()})
+    [
+        dict_.update({"lr": math.pow(lr_decay, i) * base_lr})
+        for i, dict_ in enumerate(params_groups[::-1])
+    ]
+    return params_groups
+
+
+def get_layerwise_param_groups_v2(model, base_lr, lr_decay: float = 0.95):
+    param_groups = [
+        {"params": list(module.parameters()), "lr": base_lr * (lr_decay**depth)}
+        for depth, module in enumerate(reversed(list(model.children())))
+    ]
+    return param_groups
+
+
+def get_layerwise_param_groups_v3(model, base_lr, lr_decay: float = 0.5):
+    param_groups = [{"params": []}, {"params": []}]
+    param_groups[0]["params"].extend(list(model.model.parameters()))
+    if hasattr(model, "stacked_feat_agg"):
+        param_groups[0]["params"].extend(list(model.stacked_feat_agg.parameters()))
+
+    if hasattr(model, "lm_head"):
+        param_groups[1]["params"].extend(list(model.lm_head.parameters()))
+    if hasattr(model, "score"):
+        param_groups[1]["params"].extend(list(model.score.parameters()))
+    [
+        dict_.update({"lr": math.pow(lr_decay, i) * base_lr})
+        for i, dict_ in enumerate(param_groups[::-1])
+    ]
+    return param_groups

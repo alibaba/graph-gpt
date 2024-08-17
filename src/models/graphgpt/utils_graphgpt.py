@@ -25,7 +25,9 @@ Dropout to be implemented in 3 modules
 2. LlamaAttention -> GPT2Attention :: attention dropout
 3. LlamaModel -> GPT2Model :: token embedding dropout
 """
+import warnings
 from typing import List, Optional, Tuple, Union
+import numpy as np
 
 import torch
 from torch import nn
@@ -34,6 +36,7 @@ from transformers.utils import logging
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.models.llama import modeling_llama
 from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.beit.modeling_beit import BeitDropPath
 from transformers.utils.import_utils import is_torch_fx_available
 from src.utils.attn_mask_utils import is_torch_greater_or_equal_than_1_13
 from src.utils.attn_mask_utils import (
@@ -52,34 +55,86 @@ if is_torch_fx_available():
 logger = logging.get_logger(__name__)
 
 
+class DropPath(BeitDropPath):
+    def __init__(self, drop_prob: Optional[float] = None) -> None:
+        super().__init__(drop_prob)
+
+
 class LlamaMLP(modeling_llama.LlamaMLP):
     def __init__(self, config):
         super().__init__(config)
-        self.dropout = nn.Dropout(config.mlp_pdrop)
+        self.mlp_act_dropout = nn.Dropout(config.mlp_pdrop)
+        self.mlp_dropout = nn.Dropout(config.mlp_pdrop)
 
     def forward(self, x):
-        down_proj = super().forward(x)
-        down_proj = self.dropout(down_proj)
+        assert not (self.config.pretraining_tp > 1)
+        x = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+        x = self.mlp_act_dropout(x)
+        down_proj = self.mlp_dropout(self.down_proj(x))
         return down_proj
 
 
-class LlamaAttention(modeling_llama.LlamaAttention):
-    def __init__(self, config: LlamaConfig):
-        super().__init__(config)
-        self.resid_dropout = nn.Dropout(config.resid_pdrop)
+class LlamaDecoderLayer(modeling_llama.LlamaDecoderLayer):
+    def __init__(
+        self, config: LlamaConfig, layer_idx: int, drop_prob: Optional[float] = None
+    ):
+        super().__init__(config, layer_idx)
+        if config.mlp_pdrop > 0:
+            del self.mlp
+            self.mlp = LlamaMLP(config)
+        if drop_prob is None:
+            drop_prob = config.path_pdrop
+        self.drop_path = DropPath(drop_prob) if drop_prob > 0.0 else nn.Identity()
+        # copied from transformers.models.beit.modeling_beit.BeitLayer
+        init_values = config.layer_scale_init_value
+        if init_values > 0:
+            self.lambda_1 = nn.Parameter(
+                init_values * torch.ones((config.hidden_size)), requires_grad=True
+            )
+            self.lambda_2 = nn.Parameter(
+                init_values * torch.ones((config.hidden_size)), requires_grad=True
+            )
+        else:
+            self.lambda_1, self.lambda_2 = None, None
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        attn_output, attn_weights, past_key_value = super().forward(
+    ) -> Tuple[
+        torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]
+    ]:
+        """
+        Args:
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+            attention_mask (`torch.FloatTensor`, *optional*):
+                attention mask of size `(batch_size, sequence_length)` if flash attention is used or `(batch_size, 1,
+                query_sequence_length, key_sequence_length)` if default attention is used.
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+            use_cache (`bool`, *optional*):
+                If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding
+                (see `past_key_values`).
+            past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
+        """
+        if "padding_mask" in kwargs:
+            warnings.warn(
+                "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
+            )
+
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+
+        # Self Attention
+        hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -89,23 +144,31 @@ class LlamaAttention(modeling_llama.LlamaAttention):
             cache_position=cache_position,
             **kwargs,
         )
-        # TODO: indicator, dropout added before outputing attn_output
-        attn_output = self.resid_dropout(attn_output)
-        return attn_output, attn_weights, past_key_value
+        # apply lambda_1 if present TODO: indicator of modification
+        if self.lambda_1 is not None:
+            hidden_states = self.lambda_1 * hidden_states
+        # first residual connection
+        hidden_states = residual + self.drop_path(hidden_states)
 
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        # apply lambda_2 if present  TODO: indicator of modification
+        if self.lambda_2 is not None:
+            hidden_states = self.lambda_2 * hidden_states
+        # second residual connection
+        hidden_states = residual + self.drop_path(hidden_states)
 
-class LlamaDecoderLayer(modeling_llama.LlamaDecoderLayer):
-    def __init__(self, config: LlamaConfig, layer_idx: int):
-        super().__init__(config, layer_idx)
-        del self.self_attn
-        del self.mlp
-        if not getattr(config, "_flash_attn_2_enabled", False):
-            self.self_attn = LlamaAttention(config=config)
-        else:
-            raise ValueError(
-                "LlamaFlashAttention2 Not supported!!!"
-            )  # LlamaFlashAttention2(config=config)
-        self.mlp = LlamaMLP(config)
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (self_attn_weights,)
+
+        if use_cache:
+            outputs += (present_key_value,)
+
+        return outputs
 
 
 class LlamaModel(modeling_llama.LlamaModel):
@@ -115,168 +178,17 @@ class LlamaModel(modeling_llama.LlamaModel):
 
     def __init__(self, config: LlamaConfig):
         super().__init__(config)
+        # stochastic depth decay rule
+        dpr = np.linspace(0, config.path_pdrop, config.num_hidden_layers)
         del self.layers
         self.layers = nn.ModuleList(
-            [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [
+                LlamaDecoderLayer(config, layer_idx, dpr[layer_idx])
+                for layer_idx in range(config.num_hidden_layers)
+            ]
         )
-        self.drop = nn.Dropout(config.embd_pdrop)
         # Initialize weights and apply final processing
         self.post_init()
-
-    def forward(
-        self,
-        input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
-            )
-
-        if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
-                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            )
-            use_cache = False
-
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
-
-        past_seen_tokens = 0
-        if use_cache:  # kept for BC (cache positions)
-            if not isinstance(past_key_values, StaticCache):
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-            past_seen_tokens = past_key_values.get_seq_length()
-
-        if cache_position is None:
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
-
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
-
-        causal_mask = self._update_causal_mask(attention_mask, inputs_embeds)
-
-        # embed positions
-        hidden_states = inputs_embeds
-
-        # TODO: indicator, dropout added before feeding to transformer layers
-        hidden_states = self.drop(hidden_states)
-
-        # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
-        next_decoder_cache = None
-
-        for decoder_layer in self.layers:
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
-
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
-                )
-
-            hidden_states = layer_outputs[0]
-
-            if use_cache:
-                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
-
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
-
-        hidden_states = self.norm(hidden_states)
-
-        # add hidden states from the last decoder layer
-        if output_hidden_states:
-            all_hidden_states += (hidden_states,)
-
-        next_cache = None
-        if use_cache:
-            next_cache = (
-                next_decoder_cache.to_legacy_cache() if isinstance(next_decoder_cache, Cache) else next_decoder_cache
-            )
-        if not return_dict:
-            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
-        return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states,
-            past_key_values=next_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attns,
-        )
-
-    def _prepare_attention_mask(
-        self, attention_mask, input_shape, inputs_embeds, past_key_values_length
-    ):
-        if self.config.causal_attention:
-            return self._prepare_decoder_attention_mask(
-                attention_mask, input_shape, inputs_embeds, past_key_values_length
-            )
-        else:
-            return self._prepare_encoder_attention_mask(
-                attention_mask, input_shape, inputs_embeds, past_key_values_length
-            )
-
-    def _prepare_decoder_attention_mask(
-        self, attention_mask, input_shape, inputs_embeds, past_key_values_length
-    ):
-        if hasattr(super(), "_prepare_decoder_attention_mask"):
-            # For transformer version 4.34.x
-            return super()._prepare_decoder_attention_mask(
-                attention_mask, input_shape, inputs_embeds, past_key_values_length
-            )
-        elif hasattr(modeling_llama, "_prepare_4d_causal_attention_mask"):
-            # For transformer version >= 4.35
-            return modeling_llama._prepare_4d_causal_attention_mask(
-                attention_mask, input_shape, inputs_embeds, past_key_values_length
-            )
-        elif hasattr(super(), "_update_causal_mask"):
-            # For transformer version >= 4.38
-            return super()._update_causal_mask(
-                attention_mask, inputs_embeds
-            )
-        else:
-            raise NotImplementedError("_prepare_decoder_attention_mask is NOT implemented!!!")
-
-    def _prepare_encoder_attention_mask(
-        self, attention_mask, input_shape, inputs_embeds, past_key_values_length
-    ):
-        return _prepare_4d_attention_mask(
-            attention_mask, input_shape, inputs_embeds, past_key_values_length
-        )
 
 
 class UniBiLlamaModel(modeling_llama.LlamaModel):

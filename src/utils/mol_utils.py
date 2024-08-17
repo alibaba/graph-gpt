@@ -25,6 +25,14 @@ def read_complete_mol_features_ds():
     return [data]
 
 
+def read_complete_onedevice_features_ds():
+    x = _get_all_possible_attr([10])
+    edge_attr = _get_all_possible_attr([10, 10, 10, 91, 91])
+    data = Data(edge_attr=edge_attr, x=x)
+    print(f"OneDevice dataset contains all possible features:\n{data}")
+    return [data]
+
+
 def get_3d_rotation_mat():
     # https://en.wikipedia.org/wiki/Rotation_matrix#General_3D_rotations
     angles = (np.random.random(3) * 2 * np.pi).astype(np.float32)

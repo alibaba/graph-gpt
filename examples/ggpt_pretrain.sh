@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # dataset config
-dataset_name="ogbl-ppa"  # PCQM4Mv2 ogbg-molpcba ogbl-ppa ogbn-proteins
-dataset_source=""  # molecule  PCQM4Mv2
+dataset_name="PCQM4Mv2"  # PCQM4Mv2 ogbg-molpcba ogbl-ppa ogbn-proteins
+dataset_source="molecule"  # molecule  PCQM4Mv2
 if [ "${dataset_source}" = "" ]
 then
   dataset_source=${dataset_name}
@@ -25,7 +25,7 @@ max_grad_norm=1
 eps=1e-8
 pack_tokens=1
 memory=40960
-## deep-speed config
+## deep-speed config; set it to empty to enable native DDP training
 deepspeed_config="./examples/ds_config2_pt.json"
 ## tokenization config
 attr_assignment="random"

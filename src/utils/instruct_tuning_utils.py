@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import List, Dict
 from copy import deepcopy
 import random
 from torch_geometric.data import Data
@@ -161,22 +161,30 @@ def _flatten_list(ls):
 def _get_all_node_feats(
     node,
     edge,
-    node_structure_mapping,
-    node_semantics_mapping,
-    edge_semantics_mapping,
-    edge_semantics_default=None,
+    node_structure_mapping: Dict = None,
+    edge_structure_mapping: Dict = None,
+    node_semantics_mapping: Dict = None,
+    edge_semantics_mapping: Dict = None,
+    node_semantics_default: List = None,
+    edge_semantics_default: List = None,
 ):
-    ls_node_id = list(node_structure_mapping[node])
+    ls_node_id = (
+        list(node_structure_mapping[node]) if node_structure_mapping is not None else []
+    )
     if node_semantics_mapping["discrete"]:
         ls_node_attr = node_semantics_mapping["discrete"][node]
     else:
         ls_node_attr = []
+
+    ls_edge_struct = (
+        [edge_structure_mapping[edge]] if edge_structure_mapping is not None else []
+    )
     if edge_semantics_mapping["discrete"]:
         ls_edge_attr = edge_semantics_mapping["discrete"].get(
             edge, edge_semantics_default
-        )
+        )  # `get` is for case of jump-edge
     else:
         ls_edge_attr = []
     # For jump-edge, no edge-attr available, so use default edge attr
     # TODO: implement removing edge-type, e.g., removing edge-bi
-    return ls_node_id + ls_node_attr + ls_edge_attr
+    return ls_node_id + ls_node_attr + ls_edge_struct + ls_edge_attr

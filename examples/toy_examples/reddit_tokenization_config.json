@@ -9,12 +9,14 @@
     "node": {
       "discrete": null,
       "continuous": null,
-      "ignored_val": null
+      "ignored_val": null,
+      "dim": 0
     },
     "edge": {
       "discrete": null,
       "continuous": null,
-      "ignored_val": null
+      "ignored_val": null,
+      "dim": 0
     },
     "graph": {
       "discrete": null,

@@ -10,7 +10,10 @@ import numpy.typing as npt
 from torch_geometric.data import Dataset
 from .dataset_iterable import OdpsTableIterableTokenizedDataset
 from .data_sources import read_merge_molecule_datasets
-from ..utils.mol_utils import read_complete_mol_features_ds
+from ..utils.mol_utils import (
+    read_complete_mol_features_ds,
+    read_complete_onedevice_features_ds,
+)
 
 
 def _get_vocab_of_attr(
@@ -76,18 +79,24 @@ def get_semantics_vocab(dataset: Dataset, config: Dict):
     reserved_vocab = config["semantics"]["common"].get("reserved_token", [])
     numbers_vocab = config["semantics"]["common"].get("numbers", [])
     world_identifier = config.get("attr_world_identifier", config["dataset"])
-    if world_identifier == "molecule":
-        # print(f"merge all molecule datasets to build a unified vocab")
-        # new_ds = read_merge_molecule_datasets(config["data_dir"])
-        print(
-            f"Read artificial molecule dataset that contains all possible features to build a unified vocab"
-        )
-        new_ds = read_complete_mol_features_ds()
-        # deepcopy to avoiding changing the content of dataset._data, otherwise causing error right after vocab building
-        data = dataset._data.clone()
-        data.x = new_ds[0].x
-        data.edge_attr = new_ds[0].edge_attr
-        dataset = [data]
+    if world_identifier == "molecule" or world_identifier == "onedevice":
+        if world_identifier == "molecule":
+            # print(f"merge all molecule datasets to build a unified vocab")
+            # new_ds = read_merge_molecule_datasets(config["data_dir"])
+            print(
+                f"Read artificial molecule dataset that contains all possible features to build a unified vocab"
+            )
+            new_ds = read_complete_mol_features_ds()
+            # deepcopy to avoiding changing the content of dataset._data, otherwise causing error right after vocab building
+            data = dataset._data.clone()
+            data.x = new_ds[0].x
+            data.edge_attr = new_ds[0].edge_attr
+            dataset = [data]
+        else:
+            print(
+                f"Read artificial onedevice dataset that contains all possible features to build a unified vocab"
+            )
+            dataset = read_complete_onedevice_features_ds()
     node_vocab = _get_node_edge_graph_semantics_vocab(dataset, config, "node")
     edge_vocab = _get_node_edge_graph_semantics_vocab(dataset, config, "edge")
     graph_vocab = _get_node_edge_graph_semantics_vocab(dataset, config, "graph")
@@ -141,10 +150,11 @@ def _get_graph_structure_vocab(config: Dict):
 
 
 def _get_common_structure_vocab(config: Dict):
+    mask_token = config.get("mask_token", "<mask>")
     icl_token = config.get("icl_token", None)
     sep_token = config.get("sep_token", None)
     reserved_token = config.get("reserved_token", [])
-    vocab = [icl_token, sep_token] + reserved_token
+    vocab = [mask_token, icl_token, sep_token] + reserved_token
     vocab = [ele for ele in vocab if ele is not None]
     return vocab
 

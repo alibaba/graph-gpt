@@ -1,4 +1,5 @@
 import random
+import math
 
 import numpy as np
 import torch
@@ -12,6 +13,7 @@ TASK_TYPES = {
     "pretrain-ltp",
     "pretrain-euler",
     "node",
+    "nodev2",
     "edge",
     "graph",
     "graph-dh",
@@ -29,67 +31,182 @@ def prepare_inputs_for_pretrain(in_dict, **kwargs):
     return in_dict
 
 
-def _mask_ids(mask_token_id, global_rnd_id, raw_id):
+def _mask_ids(
+    mask_token_id,
+    global_rnd_id,
+    raw_id,
+    mask_token_precent: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+    pad_token_id: int = 0,
+):
     # If the i-th token is chosen, we replace the i-th token with
     # (1) the [MASK] token 80% of the time
     # (2) a random token 10% of the time
     # (3) the unchanged i-th token 10% of the time
+    rate_vec = np.cumsum(mask_token_precent)
+    assert rate_vec[2] == 1.0, f"rate_vec: {rate_vec}"
+    if raw_id == pad_token_id:
+        return raw_id
     rnd = random.random()
-    if rnd < 0.8:
+    if rnd < rate_vec[0]:
         return mask_token_id
-    elif rnd < 0.9:
+    elif rnd < rate_vec[1]:
         return global_rnd_id
     else:
         return raw_id
 
 
-def _mask_stacked_input_ids(
-    input_ids: List[List[int]], mask_token_id, all_vocab_ids, mask_ratio: float = 0.15
-):
-    labels_mask = [[-100] * len(input_ids[0])] * len(input_ids)
-    node_idx = [ele[0] for ele in input_ids]
-    node_idx_set = set(node_idx)
-    node_idx_masked = random.sample(
-        list(node_idx_set), k=int(round(len(node_idx_set) * mask_ratio))
-    )
-    node_idx_masked_set = set(node_idx_masked)
+def _get_keys(idx, ls: List[int], ls_of_ls: List[List[int]]):
+    if idx % 2 == 0:  # key for node
+        key = ls[0]
+    else:  # key for edge
+        prev_node = ls_of_ls[idx - 1][0]
+        next_node = ls_of_ls[idx + 1][0]
+        key = (
+            (prev_node, next_node) if prev_node < next_node else (next_node, prev_node)
+        )
+    return key
 
-    for idx, ls_tokens in enumerate(input_ids):
-        if ls_tokens[0] in node_idx_masked_set:
+
+def _mask_stacked_input_ids(
+    input_ids: List[List[int]],
+    mask_token_id,
+    all_vocab_ids,
+    mask_ratio: float = 0.15,
+    mask_token_precent: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+    pad_token_id: int = 0,
+    has_eos: bool = True,
+    stack_method: str = "short",
+):
+    # labels_mask = [[-100] * len(input_ids[0])] * len(input_ids)
+    # above list's element are the same list, causing problems when indexing each element
+    labels_mask = np.full((len(input_ids), len(input_ids[0])), -100).tolist()
+    if has_eos:
+        eos = input_ids[-1:]
+        input_ids = input_ids[:-1]
+    else:
+        eos = []
+        input_ids = input_ids
+    if stack_method == "short":
+        keys = [ele[0] for ele in input_ids]
+    else:
+        assert (
+            len(input_ids) % 2 == 1
+        ), f"tmp_ids: {input_ids},\nhas_eos: {has_eos},\n{locals()}"
+        keys = [_get_keys(i, ele, input_ids) for i, ele in enumerate(input_ids)]
+    keys_set = set(keys)
+    keys_masked = random.sample(
+        list(keys_set), k=int(round(len(keys_set) * mask_ratio))
+    )
+    keys_masked_set = set(keys_masked)
+    # print(f"keys: {keys}\nkeys_masked_set: {keys_masked_set}")
+
+    for idx, (ls_tokens, key) in enumerate(zip(input_ids, keys)):
+        if key in keys_masked_set:
             labels_mask[idx] = input_ids[idx]
             input_ids[idx] = [
-                _mask_ids(mask_token_id, random.sample(all_vocab_ids, k=1)[0], ele)
+                _mask_ids(
+                    mask_token_id,
+                    random.sample(all_vocab_ids, k=1)[0],
+                    ele,
+                    mask_token_precent,
+                    pad_token_id,
+                )
                 for ele in ls_tokens
             ]
+    input_ids.extend(eos)
     return input_ids, labels_mask
 
 
+def _mask_stacked_input_ids_v2(
+    input_ids: List[List[int]],
+    mask_token_id,
+    all_vocab_ids,
+    mask_ratio: float = 0.15,
+    mask_token_precent: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+    pad_token_id: int = 0,
+    has_eos: bool = True,
+    stack_method: str = "short",
+):
+    # v2 choose tokens to mask globally
+    seq = len(input_ids)
+    dim = len(input_ids[0])
+    input_ids = np.array(input_ids)
+    labels_mask = np.full((seq, dim), -100)
+
+    indices = list(np.ndindex((seq, dim)))
+    idx_masked = random.sample(
+        range(len(indices)), k=int(round(len(indices) * mask_ratio))
+    )
+    rate_vec = np.cumsum(mask_token_precent)
+
+    for idx in idx_masked:
+        idx_seq, idx_dim = indices[idx]
+        labels_mask[idx_seq, idx_dim] = input_ids[idx_seq, idx_dim]
+        # If the i-th token is chosen, we replace the i-th token with
+        # (1) the [MASK] token 80% of the time
+        # (2) a random token 10% of the time
+        # (3) the unchanged i-th token 10% of the time
+        if input_ids[idx_seq, idx_dim] != pad_token_id:
+            rnd = random.random()
+            if rnd < rate_vec[0]:
+                input_ids[idx_seq, idx_dim] = mask_token_id
+            elif rnd < rate_vec[1]:
+                input_ids[idx_seq, idx_dim] = random.sample(all_vocab_ids, k=1)[0]
+            else:
+                pass
+    return input_ids.tolist(), labels_mask.tolist()
+
+
 def _mask_input_ids(
-    input_ids: List[int], mask_token_id, all_vocab_ids, mask_ratio: float = 0.15
+    input_ids: List[int],
+    mask_token_id,
+    all_vocab_ids,
+    mask_ratio: float = 0.15,
+    mask_token_precent: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+    pad_token_id: int = 0,
 ):
     labels_mask = [-100] * len(input_ids)
     idx_masked = random.sample(
         range(len(input_ids)), k=int(round(len(input_ids) * mask_ratio))
     )
+    rate_vec = np.cumsum(mask_token_precent)
+    assert rate_vec[2] == 1.0, f"rate_vec: {rate_vec}"
     for idx in idx_masked:
         labels_mask[idx] = input_ids[idx]
         # If the i-th token is chosen, we replace the i-th token with
         # (1) the [MASK] token 80% of the time
         # (2) a random token 10% of the time
         # (3) the unchanged i-th token 10% of the time
-        rnd = random.random()
-        if rnd < 0.8:
-            input_ids[idx] = mask_token_id
-        elif rnd < 0.9:
-            input_ids[idx] = random.sample(all_vocab_ids, k=1)[0]
-        else:
-            pass
+        if input_ids[idx] != pad_token_id:
+            rnd = random.random()
+            if rnd < rate_vec[0]:
+                input_ids[idx] = mask_token_id
+            elif rnd < rate_vec[1]:
+                input_ids[idx] = random.sample(all_vocab_ids, k=1)[0]
+            else:
+                pass
     return input_ids, labels_mask
+
+
+def _pad_stacked_targets(i, ls_token_ids, node_attr_dim=9, padding_val=-100):
+    if i % 2 == 0:  # pad node labels
+        ls_token_ids = [
+            token_id if j <= node_attr_dim else padding_val
+            for j, token_id in enumerate(ls_token_ids)
+        ]
+    else:  # pad edge labels
+        ls_token_ids = [
+            token_id if j > node_attr_dim else padding_val
+            for j, token_id in enumerate(ls_token_ids)
+        ]
+    return ls_token_ids
 
 
 @_inputs_deco("pretrain-mlm")
 def prepare_inputs_for_pretrain(in_dict, *, graph: Data, gtokenizer, **kwargs):
-    input_ids = in_dict["input_ids"] + in_dict["labels"][-1:]
+    # add eos to input_ids
+    add_eos = True
+    input_ids = in_dict["input_ids"] + in_dict["labels"][-1:]  # add eos
     len_extended_tokens = 1
     if len(gtokenizer.config["ensemble_datasets"]) >= 2:
         reserved_semantics_token = gtokenizer.get_common_semantics()[graph.idx_of_ds]
@@ -103,18 +220,53 @@ def prepare_inputs_for_pretrain(in_dict, *, graph: Data, gtokenizer, **kwargs):
         input_ids.extend(ls_extend_tokens)
         len_extended_tokens += len(ls_extend_tokens)
 
-    mask_token_id = 0
-    mask_ratio = 0.75
+    mask_token_id = gtokenizer.get_mask_token_id()
+    pad_token_id = gtokenizer.pad_token_id
+    assert mask_token_id != pad_token_id
+    conf = gtokenizer.config["pretrain_mlm"]
+    assert conf["name"] in {"polynomial", "cosine", "fixed"}
+    if conf["name"] == "fixed":
+        mask_ratio = conf["params"]["fixed_ratio"]
+    elif conf["name"] == "polynomial":
+        # 3-> cubic, 2-> square, 1-> linear, 0.5-> sqrt
+        powers = conf["params"]["power"]
+        mask_ratio = 1 - random.random() ** powers
+    else:
+        mask_ratio = min(
+            max(math.cos(random.random() * math.pi / 2), 0), 1
+        )  # MaskGIT-cos
+    mask_token_precent = conf["params"]["mtp"]
+    # [MASK] token 80% of the time, i.e., (0.8, 0.1, 0.1) -> BERT paper
     all_vocab_ids = gtokenizer.get_all_vocab_ids()
     if isinstance(input_ids[0], Iterable):
         input_ids, labels_mask = _mask_stacked_input_ids(
-            input_ids, mask_token_id, all_vocab_ids, mask_ratio
+            input_ids,
+            mask_token_id,
+            all_vocab_ids,
+            mask_ratio,
+            mask_token_precent=mask_token_precent,
+            pad_token_id=pad_token_id,
+            has_eos=add_eos,
+            stack_method=gtokenizer.stack_method,
         )
     else:
         assert isinstance(input_ids[0], int)
         input_ids, labels_mask = _mask_input_ids(
-            input_ids, mask_token_id, all_vocab_ids, mask_ratio
+            input_ids,
+            mask_token_id,
+            all_vocab_ids,
+            mask_ratio,
+            mask_token_precent,
+            pad_token_id,
         )
+    if hasattr(gtokenizer, "stack_method") and gtokenizer.stack_method == "long":
+        node_attr_dim = gtokenizer.config["semantics"]["node"]["dim"]
+        labels_mask = [
+            _pad_stacked_targets(
+                i, ls_labels, node_attr_dim=node_attr_dim, padding_val=-100
+            )
+            for i, ls_labels in enumerate(labels_mask)
+        ]
 
     in_dict["input_ids"] = input_ids
     in_dict["labels"] = labels_mask
@@ -309,36 +461,12 @@ def prepare_inputs_for_graph_lvl_task(
     is_training: bool = None,
     **kwargs,
 ):
-    reserved_semantics_token = gtokenizer.get_common_semantics()[graph.idx_of_ds]
-    token_id = gtokenizer._map_tokens_to_ids(reserved_semantics_token)
-    ls_extend_tokens = [token_id]
+    # reserved_semantics_token = gtokenizer.get_common_semantics()[graph.idx_of_ds]
+    # token_id = gtokenizer._map_tokens_to_ids(reserved_semantics_token)
+    # ls_extend_tokens = [token_id]
     # ABOVE for fine-tuning with train data from two different source, e.g., PCQM4M-v2 & CEPDB
-    # ls_extend_tokens = []
-    len_extended_tokens = len(ls_extend_tokens)
-    inputs_instance = in_dict["input_ids"][0]
-    if isinstance(inputs_instance, List):
-        ls_extend_tokens = [
-            [token_id] * len(inputs_instance) for token_id in ls_extend_tokens
-        ]
-    in_dict["input_ids"].extend(ls_extend_tokens)
-    in_dict["position_ids"].extend(
-        list(
-            [
-                ele % gtokenizer.cmpe
-                for ele in range(
-                    in_dict["position_ids"][-1] + 1,
-                    in_dict["position_ids"][-1] + 1 + len_extended_tokens,
-                )
-            ]
-        )
-    )
-    labels_instance = in_dict["labels"][0]
-    if isinstance(labels_instance, List):
-        ls_extend_labels = [[-100] * len(labels_instance)] * len_extended_tokens
-    else:
-        ls_extend_labels = [-100] * len_extended_tokens
-    in_dict["labels"].extend(ls_extend_labels)
-    in_dict["attention_mask"].extend([1] * len_extended_tokens)
+    ls_extend_tokens = []
+    in_dict = _extend_input_dict(in_dict, ls_extend_tokens, cmpe=gtokenizer.cmpe)
     in_dict["graph_labels"] = torch.squeeze(graph.y).tolist()
     return in_dict
 
@@ -405,4 +533,94 @@ def prepare_inputs_for_node_lvl_task(
     in_dict["attention_mask"].extend([1] * extended_token_len)
     assert graph.num_nodes == graph.y.shape[0]
     in_dict["node_labels"] = graph.y[graph.root_n_id].tolist()
+    return in_dict
+
+
+@_inputs_deco("nodev2")
+def prepare_inputs_for_node_v2_token_lvl_task(
+    in_dict: Dict[str, List[Union[int, List[int]]]],
+    *,
+    graph: Data,
+    gtokenizer,
+    tgt_node_token_id: Union[int, Tuple],
+    num_labels: int = 10,
+    loss_type: str = "token_ce",
+    **kwargs,
+):
+    assert hasattr(graph, "y") and graph.y.shape[0] == graph.num_nodes
+    nodev2_labels = graph.y[:, 0].tolist()
+    assert len(tgt_node_token_id) == len(nodev2_labels)
+    permute_label = True
+    # if permute_label:  # NOT WORKING
+    #     ls = list(range(num_labels))
+    #     random.shuffle(ls)
+    #     nodev2_labels = [ls[x] if x != -100 else -100 for x in nodev2_labels]
+    mapping = dict(zip(tgt_node_token_id, nodev2_labels))
+    mapping2raw_node_idx = dict(zip(tgt_node_token_id, list(range(len(nodev2_labels)))))
+    if isinstance(in_dict["input_ids"][0], int):
+        in_dict["nodev2_labels"] = [
+            mapping.pop(ele, -100) for ele in in_dict["input_ids"]
+        ]  # replace `.get` with `.pop` to ensure one node only trained once
+        in_dict["raw_node_idx"] = [
+            mapping2raw_node_idx.pop(ele, -100) for ele in in_dict["input_ids"]
+        ]  # replace `.get` with `.pop` to ensure evaluation is applied on every node only once!
+    else:
+        in_dict["nodev2_labels"] = [
+            mapping.pop(ele[0], -100) for ele in in_dict["input_ids"]
+        ]
+        in_dict["raw_node_idx"] = [
+            mapping2raw_node_idx.pop(ele[0], -100) for ele in in_dict["input_ids"]
+        ]
+    if loss_type == "token_ce_intra":
+        # below is to apply intra-instance clustering/classification
+        reserved_semantics_tokens = gtokenizer.get_common_semantics()
+        assert (
+            len(reserved_semantics_tokens) >= num_labels
+        ), f"len(reserved_semantics_tokens)=={len(reserved_semantics_tokens)} < num_labels=={num_labels}"
+        if permute_label:
+            random.shuffle(reserved_semantics_tokens)
+        in_dict["cls_idx"] = [len(in_dict["input_ids"])]
+        ls_extend_tokens = [
+            gtokenizer._map_tokens_to_ids(x) for x in reserved_semantics_tokens
+        ]
+        in_dict = _extend_input_dict(
+            in_dict,
+            ls_extend_tokens,
+            cmpe=gtokenizer.cmpe,
+            keys=("nodev2_labels", "raw_node_idx"),
+            vals=(-100, -100),
+        )
+    return in_dict
+
+
+def _extend_input_dict(
+    in_dict, ls_extend_tokens, cmpe=int(1e8), keys=tuple(), vals=tuple()
+):
+    len_extended_tokens = len(ls_extend_tokens)
+    inputs_instance = in_dict["input_ids"][0]
+    if isinstance(inputs_instance, List):
+        ls_extend_tokens = [
+            [token_id] * len(inputs_instance) for token_id in ls_extend_tokens
+        ]
+    in_dict["input_ids"].extend(ls_extend_tokens)
+    in_dict["position_ids"].extend(
+        list(
+            [
+                ele % cmpe
+                for ele in range(
+                    in_dict["position_ids"][-1] + 1,
+                    in_dict["position_ids"][-1] + 1 + len_extended_tokens,
+                )
+            ]
+        )
+    )
+    labels_instance = in_dict["labels"][0]
+    if isinstance(labels_instance, List):
+        ls_extend_labels = [[-100] * len(labels_instance)] * len_extended_tokens
+    else:
+        ls_extend_labels = [-100] * len_extended_tokens
+    in_dict["labels"].extend(ls_extend_labels)
+    in_dict["attention_mask"].extend([1] * len_extended_tokens)
+    for key, val in zip(keys, vals):
+        in_dict[key].extend([val] * len_extended_tokens)
     return in_dict

@@ -10,6 +10,15 @@ import deepspeed
 import torch
 import torch.distributed as dist
 from torch.utils.data import IterableDataset
+from torch.nn.parallel import DistributedDataParallel as DDP
+from transformers.trainer import (
+    OPTIMIZER_NAME,
+    OPTIMIZER_NAME_BIN,
+    SCHEDULER_NAME,
+    SCALER_NAME,
+)
+
+MODEL_NAME = "model.pt"
 
 
 def delete_old_ckp(dir_ckp):
@@ -38,9 +47,11 @@ def save_pred_results(dict_, model_dir, name):
     print(f"{name} results saved in {fn}!")
 
 
-def save_ckp(output_dir, model, epoch, use_ddp):
+def save_ckp(
+    output_dir, model, epoch, use_deepspeed, optimizer=None, lr_scheduler=None
+):
     rank = int(os.environ.get("RANK", 0))
-    if use_ddp:
+    if use_deepspeed:
         assert isinstance(model, deepspeed.DeepSpeedEngine)
         model_dir = os.path.join(output_dir, f"epoch_{epoch}")
         model_dir_dp = os.path.join(model_dir, f"global_step{model.global_steps}")
@@ -62,7 +73,33 @@ def save_ckp(output_dir, model, epoch, use_ddp):
             delete_old_ckp(old_model_dir)
     else:
         if rank == 0:
-            save_all(output_dir, model, epoch, save_model=True)
+            save_all(
+                output_dir,
+                model,
+                epoch,
+                save_model=True,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+            )
+
+
+def save_ddp_ckp(output_dir, model, optimizer, lr_scheduler):
+    assert isinstance(model, DDP), f"model type: {type(model)}"
+    # 1. save model params
+    # https://pytorch.org/tutorials/intermediate/ddp_tutorial.html#save-and-load-checkpoints
+    fn_model = os.path.join(output_dir, MODEL_NAME)
+    torch.save(model.state_dict(), fn_model)
+    print(f"DDP Model saved in {fn_model} using torch API.")
+    # 2. save optimizer stats
+    if optimizer is not None:
+        fn_optimizer = os.path.join(output_dir, OPTIMIZER_NAME)
+        torch.save(optimizer.state_dict(), fn_optimizer)
+        print(f"Optimizer saved in {fn_optimizer}")
+    # 3. save scheduler
+    if lr_scheduler is not None:
+        fn_scheduler = os.path.join(output_dir, SCHEDULER_NAME)
+        torch.save(lr_scheduler.state_dict(), fn_scheduler)
+        print(f"Scheduler saved in {fn_scheduler}")
 
 
 def save_all(
@@ -78,14 +115,15 @@ def save_all(
     val_dict=None,
     test_dict=None,
     world_size: int = 1,
+    optimizer=None,
+    lr_scheduler=None,
 ):
     model_dir = os.path.join(output_dir, f"epoch_{epoch}")
     if not os.path.exists(model_dir):
         os.makedirs(model_dir, exist_ok=True)
     # a). save model ckp
     if save_model:
-        model.save_pretrained(model_dir)
-        print(f"Model saved in {model_dir} using HF API.")
+        save_ddp_ckp(model_dir, model, optimizer, lr_scheduler)
     # b). delete old ckp
     old_model_dir = os.path.join(output_dir, f"epoch_{epoch - 5*world_size}")
     delete_old_ckp(old_model_dir)
@@ -146,6 +184,29 @@ def load_all(
         fn_loss = f"{output_dir}/loss.csv"
         ls_loss = _load_log(fn_loss)
     return ls_log, ls_result, ls_loss
+
+
+def load_ddp_ckp(
+    output_dir,
+    *,
+    model=None,
+    optimizer=None,
+    lr_scheduler=None,
+):
+    if model is not None:
+        assert isinstance(model, DDP)
+        # https://pytorch.org/tutorials/intermediate/ddp_tutorial.html#save-and-load-checkpoints
+        fn_model = os.path.join(output_dir, MODEL_NAME)
+        model.load_state_dict(torch.load(fn_model))
+        print(f"load DDP model params from {fn_model} using torch API")
+    if optimizer is not None:
+        fn_optimizer = os.path.join(output_dir, OPTIMIZER_NAME)
+        optimizer.load_state_dict(torch.load(fn_optimizer))
+        print(f"load optimizer from {fn_optimizer}")
+    if lr_scheduler is not None:
+        fn_scheduler = os.path.join(output_dir, SCHEDULER_NAME)
+        lr_scheduler.load_state_dict(torch.load(fn_scheduler))
+        print(f"load scheduler from {fn_scheduler}")
 
 
 def estimate_tokens_per_sample(

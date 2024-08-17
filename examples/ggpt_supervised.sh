@@ -19,8 +19,8 @@ eval_only=0
 #====================================================================================================
 
 # dataset config
-dataset_name="ogbn-proteins"  # PCQM4Mv2  ogbg-molpcba  ogbl-ppa  ogbn-proteins
-dataset_source=""  # molecule  PCQM4Mv2
+dataset_name="PCQM4Mv2"  # PCQM4Mv2  ogbg-molpcba  ogbl-ppa  ogbn-proteins
+dataset_source="PCQM4Mv2"  # molecule  PCQM4Mv2
 if [ "${dataset_source}" = "" ]
 then
   dataset_source=${dataset_name}
@@ -42,7 +42,7 @@ batch_size_sv=256
 workerCount=4
 num_cpus=10
 seed=42
-# deep-speed config
+# deep-speed config; set it to empty to enable native DDP training
 deepspeed_config="./examples/ds_config2.json"
 # others
 suffix_sv=""

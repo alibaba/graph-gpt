@@ -910,6 +910,8 @@ class GraphsMapDataset(torch.utils.data.Dataset):
             self.idx_tuple = tuple(list(range(self.data.y.shape[1])))
         else:
             self.idx_tuple = None
+        # TODO: causing problems in ogbg-molpcba dataset, so disable it!
+        self.idx_tuple = None
         print(f"idx_tuple: {self.idx_tuple}")
 
         self.kwargs = kwargs

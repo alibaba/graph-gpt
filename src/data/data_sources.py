@@ -496,6 +496,10 @@ def _read_pcqm4mv2(
             print(
                 f"Using all valid data as valid: {len(valid_idx)}, and last half of valid data as test: {len(test_idx)}!"
             )
+            # test_idx = split_idx["test-dev"]
+            # print(
+            #     f"Using all valid data as valid: {len(valid_idx)}, and test-dev data as test: {len(test_idx)}!"
+            # )
         train_dataset = GraphsMapDataset(
             dataset,
             None,
@@ -1043,6 +1047,64 @@ def _read_ogbl_ddi(
         ]  # TODO: use an elegant method to convert back to a dataset obj
 
 
+@_dataset("odps_onedevice")
+def _read_odps_onedevice_data(
+    table,
+    return_valid_test: bool = False,
+    edge_dim: int = 5,
+    node_dim: int = 1,
+    **kwargs,
+):
+    slice_id = int(os.environ.get("RANK", 0))
+    slice_count = int(os.environ.get("WORLD_SIZE", 1))
+
+    y_dim = 1
+    ls_tables = table.split(",")
+    if return_valid_test:
+        train_table, valid_table = ls_tables[:2]
+        test_table = valid_table
+        if len(ls_tables) == 3:
+            test_table = ls_tables[2]
+        train_dataset = OdpsTableIterableDataset(
+            train_table,
+            slice_id,
+            slice_count,
+            edge_dim=edge_dim,
+            node_dim=node_dim,
+            y_dim=y_dim,
+        )
+        valid_dataset = OdpsTableIterableDataset(
+            valid_table,
+            slice_id,
+            slice_count,
+            permute_nodes=False,
+            edge_dim=edge_dim,
+            node_dim=node_dim,
+            y_dim=y_dim,
+        )
+        test_dataset = OdpsTableIterableDataset(
+            test_table,
+            slice_id,
+            slice_count,
+            permute_nodes=False,
+            edge_dim=edge_dim,
+            node_dim=node_dim,
+            y_dim=y_dim,
+        )
+        return train_dataset, valid_dataset, test_dataset, train_dataset
+    else:
+        train_table = ls_tables[0]
+        train_dataset = OdpsTableIterableDataset(
+            train_table,
+            slice_id,
+            slice_count,
+            edge_dim=edge_dim,
+            node_dim=node_dim,
+            y_dim=y_dim,
+        )
+        return train_dataset, train_dataset
+
+
 @_dataset("odps_oneid")
 def _read_odps_oneid_data(table, return_valid_test: bool = False, **kwargs):
     slice_id = int(os.environ.get("RANK", 0))
@@ -1067,14 +1129,16 @@ def _read_odps_oneid_data(table, return_valid_test: bool = False, **kwargs):
 
 
 @_dataset("odps")
-def _read_odps_data(table, mode="train", **kwargs):
+def _read_odps_data(table, node_dim, edge_dim, mode="train", **kwargs):
     if mode == "train":
         slice_id = int(os.environ.get("RANK", 0))
         slice_count = int(os.environ.get("WORLD_SIZE", 1))
     else:
         slice_id = 0
         slice_count = 1
-    dataset = OdpsTableIterableDataset(table, slice_id, slice_count)
+    dataset = OdpsTableIterableDataset(
+        table, slice_id, slice_count, node_dim=node_dim, edge_dim=edge_dim
+    )
     return dataset, dataset
 
 
