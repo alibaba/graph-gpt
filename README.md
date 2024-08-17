@@ -104,7 +104,7 @@ And the `prolong` method as below:
 ![prolong](pic/prolong.png)
 
 In the above figures, `n1`, `n2` and `e1` represents the tokens of node and edge attributes, and `[p]` represents the
-mask token.
+padding token.
 
 #### Cyclical node re-index
 
