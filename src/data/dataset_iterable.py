@@ -367,44 +367,13 @@ class OdpsTableIterableDataset(torch.utils.data.IterableDataset):
             while True:
                 try:
                     data = reader.read(num_records=1, allow_smaller_final_batch=True)[0]
-                    # cols: id/smiles, edge_index, edge_feat, node_feat, num_nodes
-                    if isinstance(data[0], int):
-                        idx = data[0]
-                    else:
-                        str_idx = data[0].decode("utf-8")  # raw data is byte format
-                        idx = int(str_idx) if str_idx.isnumeric() else 0
-                    edge_index = torch.from_numpy(
-                        np.frombuffer(base64.urlsafe_b64decode(data[1]), dtype=np.int64)
-                        .reshape(2, -1)
-                        .copy()
+                    idx, graph = convert_sample_to_features(
+                        sample=data,
+                        edge_dim=self.edge_dim,
+                        node_dim=self.node_dim,
+                        y_dim=self.y_dim,
+                        permute_nodes=self.permute_nodes,
                     )
-                    edge_attr = torch.from_numpy(
-                        np.frombuffer(base64.urlsafe_b64decode(data[2]), dtype=np.int64)
-                        .reshape(-1, self.edge_dim)
-                        .copy()
-                    )
-                    x = torch.from_numpy(
-                        np.frombuffer(base64.urlsafe_b64decode(data[3]), dtype=np.int64)
-                        .reshape(-1, self.node_dim)
-                        .copy()
-                    )
-                    new_data = {
-                        "edge_index": edge_index,
-                        "edge_attr": edge_attr,
-                        "x": x,
-                    }
-                    if self.y_dim is not None:
-                        y = torch.from_numpy(
-                            np.frombuffer(
-                                base64.urlsafe_b64decode(data[4]), dtype=np.int64
-                            )
-                            .reshape(-1, self.y_dim)
-                            .copy()
-                        )
-                        new_data.update({"y": y})
-                    graph = Data.from_dict(new_data)
-                    if self.permute_nodes:
-                        graph, _ = nx_utils.permute_nodes(graph, None)
 
                 except common_io.exception.OutOfRangeException:
                     reader.close()
@@ -417,258 +386,48 @@ class OdpsTableIterableDataset(torch.utils.data.IterableDataset):
         return self.row_count
 
 
-class OdpsTableIterableTokenizedDataset(torch.utils.data.IterableDataset):
-    def __init__(
-        self,
-        table_path,
-        slice_id=0,
-        slice_count=1,
-        supervised_task="graph",  # graph|node|edge
-        **kwargs,
-    ):
-        self.table_path = table_path
-        reader = common_io.table.TableReader(
-            self.table_path, slice_id=slice_id, slice_count=slice_count, num_threads=0
+# ALIBABA INTERNAL refer to: https://aliyuque.antfin.com/uxctvg/gh8c24/xe07ff#CRTWj
+def convert_sample_to_features(sample, edge_dim, node_dim, y_dim, permute_nodes):
+    data = sample
+    # cols: id/smiles, edge_index, edge_feat, node_feat, num_nodes
+    if isinstance(data[0], int):
+        idx = data[0]
+    else:
+        if isinstance(data[0], str):
+            idx = data[0]
+        else:  # bytes
+            idx = data[0].decode("utf-8")
+    edge_index = torch.from_numpy(
+        np.frombuffer(base64.urlsafe_b64decode(data[1]), dtype=np.int64)
+        .reshape(2, -1)
+        .copy()
+    )
+    edge_attr = torch.from_numpy(
+        np.frombuffer(base64.urlsafe_b64decode(data[2]), dtype=np.int64)
+        .reshape(-1, edge_dim)
+        .copy()
+    )
+    x = torch.from_numpy(
+        np.frombuffer(base64.urlsafe_b64decode(data[3]), dtype=np.int64)
+        .reshape(-1, node_dim)
+        .copy()
+    )
+    new_data = {
+        "edge_index": edge_index,
+        "edge_attr": edge_attr,
+        "x": x,
+    }
+    if y_dim is not None:
+        y = torch.from_numpy(
+            np.frombuffer(base64.urlsafe_b64decode(data[4]), dtype=np.int64)
+            .reshape(-1, y_dim)
+            .copy()
         )
-        self.row_count = reader.get_row_count()
-        self.start_pos = reader.start_pos
-        self.end_pos = reader.end_pos
-        reader.close()
-        self.supervised_task = supervised_task
-        super(OdpsTableIterableTokenizedDataset, self).__init__()
-        print(
-            "table total_row_count:{}, start_pos:{}, end_pos:{}".format(
-                self.row_count, self.start_pos, self.end_pos
-            )
-        )
-
-    def __iter__(self):
-        worker_info = torch.utils.data.get_worker_info()
-        # print(f"worker_info:{worker_info}")
-        if worker_info is None:
-            worker_id = 0
-            num_workers = 1
-        else:
-            worker_id = worker_info.id
-            num_workers = worker_info.num_workers
-        # print("worker_id:{}, num_workers:{}".format(worker_id, num_workers))
-
-        table_start, table_end = _get_slice_range(
-            self.row_count, worker_id, num_workers, self.start_pos
-        )
-        table_path = "{}?start={}&end={}".format(
-            self.table_path, table_start, table_end
-        )
-        # print("table_path:%s" % table_path)
-
-        def table_data_iterator():
-            reader = common_io.table.TableReader(
-                table_path, num_threads=4, capacity=16384
-            )
-            while True:
-                try:
-                    data = reader.read(num_records=1, allow_smaller_final_batch=True)[0]
-                    idx = str(data[0])  # data[0] is bytes
-                    input_ids = np.frombuffer(
-                        base64.urlsafe_b64decode(data[1]), dtype=np.int64
-                    ).tolist()
-                    labels = np.frombuffer(
-                        base64.urlsafe_b64decode(data[2]), dtype=np.int64
-                    ).tolist()
-                    task_labels = (
-                        data[3]
-                        if isinstance(data[3], int)
-                        else np.frombuffer(
-                            base64.urlsafe_b64decode(data[3]), dtype=np.int64
-                        ).tolist()
-                    )
-                    attention_mask = np.ones_like(input_ids, dtype=np.int64).tolist()
-                    position_ids = list(range(len(input_ids)))
-                    in_dict = {
-                        # "idx": idx,
-                        "input_ids": input_ids,
-                        "labels": labels,
-                        "attention_mask": attention_mask,
-                        "position_ids": position_ids,
-                        f"{self.supervised_task}_labels": task_labels,
-                    }
-
-                except common_io.exception.OutOfRangeException:
-                    reader.close()
-                    break
-                yield in_dict
-
-        return table_data_iterator()
-
-    def __len__(self):
-        return self.row_count
-
-
-# below copied from https://code.alibaba-inc.com/deep_algo/oneid/blob/IDMappingE2E/data/oneid_mtp_dataset.py
-# with modifications:
-# 1. `self._get_slice_range` -> _get_slice_range
-# 2. method `pad`
-class OdpsIterableDatasetMTP(torch.utils.data.IterableDataset):
-    def __init__(self, table_path, slice_id=0, slice_count=1, max_len_input=256):
-        self.table_path = table_path
-        reader = common_io.table.TableReader(
-            table_path, slice_id=slice_id, slice_count=slice_count, num_threads=0
-        )
-        self.row_count = reader.get_row_count()
-        self.start_pos = reader.start_pos
-        self.end_pos = reader.end_pos
-        self.max_len_input = max_len_input
-        reader.close()
-        super(OdpsIterableDatasetMTP, self).__init__()
-        print(
-            "table total_row_count:{}, start_pos:{}, end_pos:{}".format(
-                self.row_count, self.start_pos, self.end_pos
-            )
-        )
-
-    def __len__(self):
-        return self.row_count
-
-    def __iter__(self):
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            worker_id = 0
-            num_workers = 1
-        else:
-            worker_id = worker_info.id
-            num_workers = worker_info.num_workers
-        print("worker_id:{}, num_workers:{}".format(worker_id, num_workers))
-
-        table_start, table_end = _get_slice_range(
-            self.row_count, worker_id, num_workers, self.start_pos
-        )
-        table_path = "{}?start={}&end={}".format(
-            self.table_path, table_start, table_end
-        )
-        print("table_path:%s" % table_path)
-
-        def table_data_iterator():
-            reader = common_io.table.TableReader(
-                table_path, num_threads=1, capacity=1024
-            )
-            while True:
-                try:
-                    data = reader.read(num_records=1, allow_smaller_final_batch=False)
-                except common_io.exception.OutOfRangeException:
-                    reader.close()
-                    break
-
-                start_node = str(data[0][1], "utf-8")
-                re_dict_map_str = str(data[0][13], "utf-8")
-
-                pe = list(map(int, str(data[0][3], "utf-8").split(",")))
-                se = [x + 1 for x in map(int, str(data[0][4], "utf-8").split(","))]
-                re = [x for x in map(int, str(data[0][5], "utf-8").split(","))]
-                edge_token_pv = [
-                    min(x, 100000000)
-                    for x in map(int, str(data[0][6], "utf-8").split(","))
-                ] + [100000000]
-                edge_token_date = [
-                    min(x, 90) for x in map(int, str(data[0][7], "utf-8").split(","))
-                ] + [91]
-
-                st_pe = list(map(int, str(data[0][8], "utf-8").split(",")))
-                st_se = [x + 1 for x in map(int, str(data[0][9], "utf-8").split(","))]
-                pr_re = [x for x in map(int, str(data[0][12], "utf-8").split(","))]
-
-                pr_pe = list(map(int, str(data[0][10], "utf-8").split(",")))
-                pr_se = [x + 1 for x in map(int, str(data[0][11], "utf-8").split(","))]
-
-                pe = pe + st_pe
-                se = se + st_se
-                re = re + pr_re
-
-                in_dict = {
-                    "se_ids": se,
-                    "pe_ids": pe,
-                    "re_ids": re,
-                    "edge_token_pv": edge_token_pv,
-                    "edge_token_date": edge_token_date,
-                    "st_pe_ids": torch.LongTensor(st_pe),
-                    "st_se_ids": torch.LongTensor(st_se),
-                    "pr_pe_ids": torch.LongTensor(pr_pe),
-                    "pr_se_ids": torch.LongTensor(pr_se),
-                    "pr_re_ids": torch.LongTensor(pr_re),
-                    "len": len(se),
-                    "start_node": start_node,
-                    "re_dict_map_str": re_dict_map_str,
-                }
-
-                pad_in_dict = self.pad(self.max_len_input, in_dict)
-                yield pad_in_dict
-
-        return table_data_iterator()
-
-    def pad(self, max_len, feature):  # compatible with graph-gpt's stack tokenizer
-        in_dict = feature
-        node_id = in_dict["pe_ids"]
-        edge_type = [ele + 200 for ele in in_dict["re_ids"]]
-        edge_pv = [min(ele, 10240) + 400 for ele in in_dict["edge_token_pv"]]
-
-        vocab = 10240 + 400
-        attention_mask = [1] * len(node_id)
-        input_ids = [list(ele) for ele in list(zip(node_id, edge_type, edge_pv))]
-        dict_ = {
-            "node_labels": in_dict["pr_pe_ids"].item(),
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "position_ids": list(range(len(input_ids))),
-            "labels": list(node_id[1:]) + [-100],
-        }
-        return dict_
-
-    def _pad(self, max_len, feature):  # original by xinshuai
-        if max_len > len(feature["se_ids"]):
-            padding_len = max_len - len(feature["se_ids"])
-            padded_input_ids = [0] * padding_len
-            feature["se_ids"] = torch.LongTensor(
-                feature["se_ids"][:-1] + padded_input_ids + [feature["se_ids"][-1]]
-            )
-            feature["re_ids"] = torch.LongTensor(
-                feature["re_ids"][:-1] + padded_input_ids + [feature["re_ids"][-1]]
-            )
-            feature["pe_ids"] = torch.LongTensor(
-                feature["pe_ids"][:-1] + padded_input_ids + [feature["pe_ids"][-1]]
-            )
-            feature["edge_token_pv"] = torch.LongTensor(
-                feature["edge_token_pv"][:-1]
-                + padded_input_ids
-                + [feature["edge_token_pv"][-1]]
-            )
-            feature["edge_token_date"] = torch.LongTensor(
-                feature["edge_token_date"][:-1]
-                + padded_input_ids
-                + [feature["edge_token_date"][-1]]
-            )
-
-            # 创建一个由1和0组成的列表，其长度与padded_input_ids相同，1对应实际token，0对应填充
-            feature["attention_mask"] = torch.LongTensor(
-                [1] * (max_len - padding_len - 1) + [0] * padding_len + [1, 1]
-            )  # sepecial_token+pred+token
-        else:
-            feature["se_ids"] = torch.LongTensor(
-                feature["se_ids"][: max_len - 1] + [feature["se_ids"][-1]]
-            )
-            feature["re_ids"] = torch.LongTensor(
-                feature["re_ids"][: max_len - 1] + [feature["re_ids"][-1]]
-            )
-            feature["pe_ids"] = torch.LongTensor(
-                feature["pe_ids"][: max_len - 1] + [feature["pe_ids"][-1]]
-            )
-            feature["edge_token_pv"] = torch.LongTensor(
-                feature["edge_token_pv"][: max_len - 1] + [feature["edge_token_pv"][-1]]
-            )
-            feature["edge_token_date"] = torch.LongTensor(
-                feature["edge_token_date"][: max_len - 1]
-                + [feature["edge_token_date"][-1]]
-            )
-            feature["attention_mask"] = torch.LongTensor([1] * (max_len + 1))
-        return feature
+        new_data.update({"y": y})
+    graph = Data.from_dict(new_data)
+    if permute_nodes:
+        graph, _ = nx_utils.permute_nodes(graph, None)
+    return idx, graph
 
 
 def _get_slice_range(row_count, worker_id, num_workers, baseline=0):

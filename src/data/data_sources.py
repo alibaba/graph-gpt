@@ -1,19 +1,23 @@
 import os
-import random
+import time
 
 import torch
 from typing import List
 from datetime import datetime
 from pprint import pformat
+import numpy as np
+
 from tqdm import tqdm
+import torch.distributed as dist
 from torch_geometric.datasets import TUDataset
 from torch_geometric.data import Data
+from torch_geometric.utils.undirected import is_undirected
 from ogb.nodeproppred import PygNodePropPredDataset
 from ogb.linkproppred import PygLinkPropPredDataset
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.lsc import PygPCQM4Mv2Dataset
 from ogb.utils import smiles2graph
-from src.utils import control_flow, tokenizer_utils, dataset_utils
+from src.utils import control_flow, dataset_utils
 from .dataset_map import (
     EnsembleNodesEdgesMapDataset,
     ShaDowKHopSeqMapDataset,
@@ -26,8 +30,6 @@ from .dataset_map import (
 from .dataset_iterable import (
     GraphsIterableDataset,
     OdpsTableIterableDataset,
-    OdpsTableIterableTokenizedDataset,
-    OdpsIterableDatasetMTP,
     OdpsTableIterableDatasetOneID,
 )
 
@@ -386,7 +388,7 @@ def _read_molecules(
     ls_ds = []
     for ds_name in ensemble_datasets:
         dataset, raw_dataset = read_dataset(
-            ds_name, data_dir, None, return_valid_test=False
+            ds_name, data_dir, None, return_valid_test=False, pt_all=True
         )
         ls_ds.append(dataset)
     train_dataset = EnsembleGraphsMapDataset(ls_ds)
@@ -395,24 +397,45 @@ def _read_molecules(
 
 @_molecule("ogbg-molhiv")
 @_dataset("ogbg-molhiv")
-def _read_ogbg_molhiv(data_dir, sampling_config, *, pretrain_mode=False, **kwargs):
+def _read_ogbg_molhiv(data_dir, sampling_config, *, return_valid_test=False, **kwargs):
     dataset_name = "ogbg-molhiv"
     dataset = PygGraphPropPredDataset(root=data_dir, name=dataset_name)
     # dataset._data -> Data(num_nodes=1049163, edge_index=[2, 2259376], edge_attr=[2259376, 3], x=[1049163, 9], y=[41127, 1])
-    train_dataset = GraphsMapDataset(
-        dataset,
-        None,
-        sample_idx=torch.arange(len(dataset)),
-        provide_sampler=True,
-    )
-    return train_dataset, dataset
+    if return_valid_test:
+        split_idx = dataset.get_idx_split()
+        train_dataset = GraphsMapDataset(
+            dataset, None, sample_idx=split_idx["train"], provide_sampler=True
+        )
+        valid_dataset = GraphsMapDataset(
+            dataset, None, sample_idx=split_idx["valid"], provide_sampler=True
+        )
+        test_dataset = GraphsMapDataset(
+            dataset, None, sample_idx=split_idx["test"], provide_sampler=True
+        )
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        # Train: 32901, Valid: 4113, Test: 4113
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            dataset,
+        )
+    else:
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=torch.arange(len(dataset)),
+            provide_sampler=True,
+            permute_nodes=True,
+        )
+        return train_dataset, dataset
 
 
 @_molecule("ogbg-molpcba")
 @_dataset("ogbg-molpcba")
-def _read_ogbg_molpcba(
-    data_dir, sampling_config, *, pretrain_mode=False, return_valid_test=False, **kwargs
-):
+def _read_ogbg_molpcba(data_dir, sampling_config, *, return_valid_test=False, **kwargs):
     dataset_name = "ogbg-molpcba"
     print(f"\nLoading dataset {dataset_name} ...")
     dataset = PygGraphPropPredDataset(root=data_dir, name=dataset_name)
@@ -443,6 +466,7 @@ def _read_ogbg_molpcba(
             None,
             sample_idx=torch.arange(len(dataset)),
             provide_sampler=True,
+            permute_nodes=True,
         )
         return train_dataset, dataset
 
@@ -456,7 +480,8 @@ def _read_pcqm4mv2(
     pretrain_mode: bool = False,
     return_valid_test: bool = False,
     with_prob: bool = False,
-    true_valid: int = 0,
+    true_valid: int = -1,
+    pt_all: bool = False,  # whether to use all data in pre-train
     **kwargs,
 ):
     print("\nLoading dataset PCQM4Mv2 ...")
@@ -479,27 +504,43 @@ def _read_pcqm4mv2(
     # https://dsc-courses.github.io/dsc40a-2022-fa/resources/lecture/lec02_mahdi.pdf
 
     permute_nodes = True
+    split_idx = dataset.get_idx_split()
     if return_valid_test:
+        shift_distribution = False
         add_cepdb = False
         add_zinc = False
         ls_idx = obtain_special_molecules(dataset)
-        split_idx = dataset.get_idx_split()
         train_idx = remove_special_molecules(split_idx["train"], ls_idx)
         valid_idx = remove_special_molecules(split_idx["valid"], ls_idx)
-        if true_valid > 0:
+        assert true_valid >= -2, f"true_valid: {true_valid}"
+        if true_valid == 0:
+            old_train, old_valid = train_idx, valid_idx
+            train_idx = torch.cat([train_idx, valid_idx], dim=-1)
+            valid_len = len(valid_idx)
+            test_idx = valid_idx[-valid_len // 16 :]
+            valid_idx = valid_idx[-valid_len // 8 :]
+            print(
+                f"ADD all valid samples into train!!!\n"
+                f"train_idx: {len(old_train)} -> {len(train_idx)}\n"
+                f"valid_idx: {len(old_valid)} -> {len(valid_idx)}, 1/8 of original valid\n"
+                f"test_idx: 0 -> {len(test_idx)}, 1/16 of valid index\n"
+                f"Caution: valid/test performance cannot reflect model performance because they are all used in training"
+            )
+        elif true_valid > 0:
             train_idx, valid_idx, test_idx = add_valid_to_train(
                 train_idx, valid_idx, true_valid
             )
-        else:
+        elif true_valid == -1:
             mid_idx = len(valid_idx) // 2
             test_idx = valid_idx[mid_idx:]
             print(
                 f"Using all valid data as valid: {len(valid_idx)}, and last half of valid data as test: {len(test_idx)}!"
             )
-            # test_idx = split_idx["test-dev"]
-            # print(
-            #     f"Using all valid data as valid: {len(valid_idx)}, and test-dev data as test: {len(test_idx)}!"
-            # )
+        else:
+            test_idx = split_idx["test-dev"]
+            print(
+                f"Using all valid data as valid: {len(valid_idx)}, and test-dev data as test: {len(test_idx)}!"
+            )
         train_dataset = GraphsMapDataset(
             dataset,
             None,
@@ -507,6 +548,7 @@ def _read_pcqm4mv2(
             permute_nodes=permute_nodes,
             provide_sampler=True,
             with_prob=with_prob,
+            shift_distribution=shift_distribution,
         )
         if add_cepdb:
             print("\nLoading dataset CEPDB ...")
@@ -574,7 +616,7 @@ def _read_pcqm4mv2(
     else:
         ls_idx = obtain_special_molecules(dataset)
         print(f"In pre-train mode, set all valid data's y to nan!")
-        valid_idx = dataset.get_idx_split()["valid"]
+        valid_idx = split_idx["valid"]
         y = dataset._data.y.clone()
         y[valid_idx] = float("nan")
         # y[torch.arange(len(dataset))] = float("nan")
@@ -582,13 +624,26 @@ def _read_pcqm4mv2(
         dataset._data.y = y.reshape([-1, 1]).round(decimals=3)
         print(f"After setting, y has {torch.isnan(dataset._data.y).sum()} NANs")
         try:
-            pretrain_idx = _load_idx_from_file(dataset.root, "dedup_idx")
+            fn = "dedup_idx" if pt_all else "dedup_idx_train_valid"
+            while not os.path.exists(os.path.join(dataset.root, fn)):
+                if int(dist.get_rank()) == 0:
+                    _generate_dedup_idx(dataset, fn, pt_all)
+                else:
+                    seconds = 3
+                    print(f"sleep for {seconds} seconds ...")
+                    time.sleep(seconds)
+            pretrain_idx = _load_idx_from_file(dataset.root, fn)
             print(
                 f"Using dedup_idx with {len(pretrain_idx)} molecules instead of original {len(dataset)} molecules!"
             )
         except Exception as inst:
             print(inst)
             pretrain_idx = remove_special_molecules(torch.arange(len(dataset)), ls_idx)
+        if not pt_all:
+            non_pretrain_mols = torch.cat(
+                [split_idx["test-dev"], split_idx["test-challenge"]]
+            ).tolist()
+            pretrain_idx = remove_special_molecules(pretrain_idx, non_pretrain_mols)
         train_dataset = GraphsMapDataset(
             dataset,
             None,
@@ -608,6 +663,28 @@ def _load_idx_from_file(root_dir, fn):
     ls_idx = [int(each.strip()) for each in ls_idx]
     print(f"load idx from {fn} with 1st 10 idx:\n{ls_idx[:10]}")
     return torch.tensor(ls_idx, dtype=torch.int64)
+
+
+def _generate_dedup_idx(dataset, fn, pt_all=False):
+    import pandas as pd
+
+    raw_dir = dataset.raw_dir
+    print(f"loading raw data from {os.path.join(raw_dir, 'data.csv.gz')}!")
+    data_df = pd.read_csv(os.path.join(raw_dir, "data.csv.gz"))
+    split_idx = dataset.get_idx_split()
+    if pt_all:
+        idx = torch.arange(len(dataset)).tolist()
+    else:
+        idx = torch.cat([split_idx["train"], split_idx["valid"]]).tolist()
+    data_df = data_df.iloc[idx]
+    df_new = data_df.drop_duplicates(subset=["smiles"])
+    ls_idx = df_new["idx"].values.tolist()
+    fn_out = os.path.join(dataset.root, fn)
+    print(
+        f"Writing {len(ls_idx)} deduped index to {fn_out} out of {len(data_df)} allowable index"
+    )
+    with open(fn_out, "w") as fp:
+        fp.writelines([f"{x}\n" for x in ls_idx])
 
 
 def add_specific_valid_to_train(
@@ -826,6 +903,99 @@ def _read_zinc(
     return train_dataset, dataset
 
 
+@_dataset("ogbn-products")
+def _read_ogbn_products(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test=False,
+    true_valid: int = -1,
+    **kwargs,
+):
+    dataset_name = "ogbn-products"
+    print(f"Loading {dataset_name} raw data from dir: {data_dir}")
+    raw_dataset = PygNodePropPredDataset(root=data_dir, name=dataset_name)
+    split_idx = raw_dataset.get_idx_split()
+    graph = raw_dataset[0]
+    # graph -> Data(num_nodes=2449029, edge_index=[2, 123718280], x=[2449029, 100], y=[2449029, 1])
+    edge_index, _ = remove_self_cycle(graph.edge_index, None)
+    assert is_undirected(
+        edge_index
+    ), f"Graph is NOT undirected, please convert it to undirected using our customized `to_undirected` in this script, AND add one more dim to edge-attr!"
+    dividend = 25000
+    graph = Data(
+        num_nodes=graph.num_nodes,
+        edge_index=edge_index,
+        x=_get_global_local_id_from_num_nodes(
+            graph.num_nodes, dividend=dividend, global_id_only=False
+        ),
+        x_embed=graph.x,
+        id=torch.arange(graph.num_nodes),
+        y=graph.y,
+    )
+    print(
+        f"\nLoading dataset from {graph} with ShaDowKHopSeqMapDataset.\nParams:\nsampling_config: {pformat(sampling_config)}"
+    )
+    if return_valid_test:
+        train_dataset = ShaDowKHopSeqMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            sample_idx=split_idx["train"],
+            provide_sampler=True,
+        )
+
+        print(f"[{datetime.now()}] Reformatting valid data ...")
+        valid_dataset = ShaDowKHopSeqMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            sample_idx=split_idx["valid"],
+            provide_sampler=True,
+        )
+
+        print(f"[{datetime.now()}] Reformatting test data ...")
+        test_idx = split_idx["test"]
+        if true_valid != -2:
+            cnt = test_idx.shape[0]
+            ratio = 0.1
+            seed = 42
+            g = torch.Generator()
+            g.manual_seed(seed)
+            indices = torch.randperm(cnt, generator=g)
+            indices = indices[: int(cnt * ratio)]
+            test_idx = test_idx[indices]
+            print(
+                f"Random sampling {ratio*100} percent test samples: {test_idx.shape[0]}"
+            )
+        test_dataset = ShaDowKHopSeqMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            sample_idx=test_idx,
+            provide_sampler=True,
+        )
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            [graph],
+        )
+    else:
+        dataset = ShaDowKHopSeqMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            sample_idx=None,
+            provide_sampler=True,
+        )
+        return dataset, [graph]
+
+
 @_dataset("ogbn-proteins")
 def _read_ogbn_proteins(
     data_dir,
@@ -954,6 +1124,238 @@ def _read_ogbl_ppa(
             split_edge=split_edge,
             data_split="valid",
         )
+        test_dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="test",
+        )
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            [graph],
+        )  # TODO: use an elegant method to convert back to a dataset obj
+    else:
+        dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="train",
+        )
+        return dataset, [
+            graph
+        ]  # TODO: use an elegant method to convert back to a dataset obj
+
+
+@_dataset("ogbl-citation2")
+def _read_ogbl_citation2(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test=False,
+    true_valid: int = -1,
+    **kwargs,
+):
+    dataset_name = "ogbl-citation2"
+    print(f"Loading {dataset_name} raw data from dir: {data_dir}")
+    raw_dataset = PygLinkPropPredDataset(root=data_dir, name=dataset_name)
+    split_edge = raw_dataset.get_edge_split()
+    graph = raw_dataset[0]
+    # graph -> Data(num_nodes=2927963, edge_index=[2, 30387995], x=[2927963, 128], node_year=[2927963, 1])
+    edge_index, _ = remove_self_cycle(graph.edge_index, None)
+    edge_index, edge_attr = to_undirected(edge_index, None)
+    dividend = 25000
+    graph = Data(
+        num_nodes=graph.num_nodes,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        x=_get_global_local_id_from_enumerate_with_dividend(
+            graph.node_year.view(-1) - 1901, dividend=dividend, global_id_only=False
+        ),
+        x_embed=graph.x,
+        id=torch.arange(graph.num_nodes),
+    )
+    print(
+        f"\nLoading dataset from {graph} with ShaDowKHopSeqFromEdgesMapDataset.\nParams:\nsampling_config: {pformat(sampling_config)}"
+    )
+    split_edge["train"].update({"edge": graph.edge_index.T.clone()})
+    unique_node_in_edge_idx = torch.unique(edge_index)
+    allow_zero_edges = False
+    if len(unique_node_in_edge_idx) < graph.num_nodes:
+        allow_zero_edges = True
+        print(
+            f"unique-node-in-edge-index < num_nodes: {len(unique_node_in_edge_idx)} < {graph.num_nodes}!!!\n"
+            f"isolated nodes exists, two isolated nodes will form a zero-edge subgraph!!!\n"
+            f"set `allow_zero_edges` to be {allow_zero_edges}"
+        )
+    if return_valid_test:
+        cnt_valid_test = 800
+        print(f"[{datetime.now()}] Reformatting train data ...")
+        edge = torch.vstack(
+            [split_edge["train"]["source_node"], split_edge["train"]["target_node"]]
+        ).T.clone()
+        pos_edge_attr = torch.ones((edge.shape[0], 1), dtype=torch.int64)
+        neg_edge_attr_candidates = torch.ones((1, 1), dtype=torch.int64)
+        # [N_p,2],  [N_p,1],  [1,1]
+        split_edge["train"].update(
+            {
+                "edge": edge,
+                "pos_edge_attr": pos_edge_attr,
+                "neg_edge_attr_candidates": neg_edge_attr_candidates,
+            }
+        )
+        train_dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="train",
+            allow_zero_edges=allow_zero_edges,
+        )
+
+        print(f"[{datetime.now()}] Reformatting valid data ...")
+        scope = split_edge["valid"]["source_node"].shape[0]
+        if true_valid == -2:
+            cnt_valid_test = scope
+        idx_sel = _get_fixed_sampled_sorted_idx(scope, cnt_valid_test)
+        dict_new = _get_reformatted_data_of_citation2(split_edge["valid"], idx_sel)
+        split_edge["valid"].update(dict_new)
+        valid_dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="valid",
+            allow_zero_edges=allow_zero_edges,
+        )
+
+        print(f"[{datetime.now()}] Reformatting test data ...")
+        scope = split_edge["test"]["source_node"].shape[0]
+        if true_valid == -2:
+            cnt_valid_test = scope
+        idx_sel = _get_fixed_sampled_sorted_idx(scope, cnt_valid_test)
+        dict_new = _get_reformatted_data_of_citation2(split_edge["test"], idx_sel)
+        split_edge["test"].update(dict_new)
+        test_dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="test",
+            allow_zero_edges=allow_zero_edges,
+        )
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            [graph],
+        )  # TODO: use an elegant method to convert back to a dataset obj
+    else:
+        dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="train",
+            allow_zero_edges=allow_zero_edges,
+        )
+        return dataset, [
+            graph
+        ]  # TODO: use an elegant method to convert back to a dataset obj
+
+
+@_dataset("ogbl-wikikg2")
+def _read_ogbl_wikikg2(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test=False,
+    **kwargs,
+):
+    dataset_name = "ogbl-wikikg2"
+    print(f"Loading {dataset_name} raw data from dir: {data_dir}")
+    raw_dataset = PygLinkPropPredDataset(root=data_dir, name=dataset_name)
+    split_edge = raw_dataset.get_edge_split()
+    graph = raw_dataset[0]
+    # graph -> Data(num_nodes=2500604, edge_index=[2, 16109182], edge_reltype=[16109182, 1])
+    edge_index, edge_attr = remove_self_cycle(graph.edge_index, graph.edge_reltype)
+    edge_index, edge_attr = to_undirected(edge_index, edge_attr)
+    print(
+        f"[WARNING] reltype `95` & `145` are lost when removing duplicated edge-index, please add them back to vocab: 'ogbl-wikikg2#edge#1#95' & 'ogbl-wikikg2#edge#1#145'\n"
+        * 5
+    )
+    dividend = 25000
+    graph = Data(
+        num_nodes=graph.num_nodes,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        x=_get_global_local_id_from_num_nodes(
+            graph.num_nodes, dividend=dividend, global_id_only=False
+        ),
+        id=torch.arange(graph.num_nodes),
+    )
+    print(
+        f"\nLoading dataset from {graph} with ShaDowKHopSeqFromEdgesMapDataset.\nParams:\nsampling_config: {pformat(sampling_config)}"
+    )
+    split_edge["train"].update({"edge": graph.edge_index.T.clone()})
+    if return_valid_test:
+        cnt_valid_test = 800
+        print(f"[{datetime.now()}] Reformatting train data ...")
+        edge = torch.vstack(
+            [split_edge["train"]["head"], split_edge["train"]["tail"]]
+        ).T.clone()
+        rel = split_edge["train"]["relation"]
+        pos_edge_attr = torch.vstack([torch.ones_like(rel), rel]).T.clone()
+        unique_rel = torch.unique(rel)
+        neg_edge_attr_candidates = torch.vstack(
+            [torch.ones_like(unique_rel), unique_rel]
+        ).T.clone()
+        # edge -> [N_p,2],  pos_edge_attr -> [N_p,2],  neg_edge_attr_candidates -> [C,2]
+        # edge -> [16109182, 2],  pos_edge_attr -> [16109182, 2],  neg_edge_attr_candidates -> [535, 2]
+        split_edge["train"].update(
+            {
+                "edge": edge,
+                "pos_edge_attr": pos_edge_attr,
+                "neg_edge_attr_candidates": neg_edge_attr_candidates,
+            }
+        )
+        train_dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="train",
+        )
+
+        print(f"[{datetime.now()}] Reformatting valid data ...")
+        scope = split_edge["valid"]["head"].shape[0]
+        idx_sel = _get_fixed_sampled_sorted_idx(scope, cnt_valid_test)
+        dict_new = _get_reformatted_data_of_wikikg2(split_edge["valid"], idx_sel)
+        split_edge["valid"].update(dict_new)
+        valid_dataset = ShaDowKHopSeqFromEdgesMapDataset(
+            graph,
+            sampling_config,
+            pretrain_mode=pretrain_mode,
+            split_edge=split_edge,
+            data_split="valid",
+        )
+
+        print(f"[{datetime.now()}] Reformatting test data ...")
+        scope = split_edge["test"]["head"].shape[0]
+        idx_sel = _get_fixed_sampled_sorted_idx(scope, cnt_valid_test)
+        dict_new = _get_reformatted_data_of_wikikg2(split_edge["test"], idx_sel)
+        split_edge["test"].update(dict_new)
         test_dataset = ShaDowKHopSeqFromEdgesMapDataset(
             graph,
             sampling_config,
@@ -1142,54 +1544,20 @@ def _read_odps_data(table, node_dim, edge_dim, mode="train", **kwargs):
     return dataset, dataset
 
 
-@_dataset("odps_tokenized")
-def _read_odps_tokenized_data(
-    table: str, mode: str = "train", supervised_task: str = "", **kwargs
-):
-    slice_id = int(os.environ.get("RANK", 0))
-    slice_count = int(os.environ.get("WORLD_SIZE", 1))
-
-    assert mode in {"train", "all"}
-    ls_tables = table.split(",")
-    assert (
-        len(ls_tables) == 3 if mode == "all" else len(ls_tables) == 1
-    ), f"mode: {mode}\nls_tables: {ls_tables}"
-
-    train_table = ls_tables[0]
-    train_dataset = OdpsTableIterableTokenizedDataset(
-        train_table, slice_id, slice_count, supervised_task, **kwargs
-    )
-    if mode == "all":
-        _, valid_table, test_table = ls_tables
-        valid_dataset = OdpsTableIterableTokenizedDataset(
-            valid_table, slice_id, slice_count, supervised_task, **kwargs
-        )
-        test_dataset = OdpsTableIterableTokenizedDataset(
-            test_table, slice_id, slice_count, supervised_task, **kwargs
-        )
-        return train_dataset, valid_dataset, test_dataset, train_dataset
-    elif mode == "train":
-        return train_dataset, train_dataset
-    else:
-        raise NotImplementedError(f"Mode {mode} is NOT implemented yet!")
-
-
 def _get_global_local_id_from_onehot(x: torch.Tensor, global_id_only: bool):
     # x: one-hot tensor
     # assume each col of one-hot tensor `x` represents one species
     # each row-record belongs to one of the species
-    global_id = (
-        torch.argmax(x, dim=-1, keepdim=True) + 1
-    )  # [N, 1] get the col-idx as the global-id, i.e., which species for the record
+
+    # [N, 1] get the col-idx as the global-id, i.e., which species for the record
+    global_id = torch.argmax(x, dim=-1, keepdim=True) + 1
     if global_id_only:
         output = global_id
     else:
-        x_cum = torch.cumsum(
-            x, dim=0
-        )  # [N, m] cum-sum along each col to get the cumulated count of each species
-        idx = (
-            x_cum * x
-        )  # [N, m] element-wise multiplication to get the local-id of each record
+        # [N, m] cum-sum along each col to get the cumulated count of each species
+        x_cum = torch.cumsum(x, dim=0)
+        # [N, m] element-wise multiplication to get the local-id of each record
+        idx = x_cum * x
         local_id = idx.sum(dim=-1).view((-1, 1))  # [N, 1]
         output = torch.cat([global_id, local_id], dim=1)  # [N, 2]
     return output
@@ -1199,9 +1567,9 @@ def _get_global_local_id_from_enumerate(x: torch.Tensor, global_id_only: bool):
     # x: tensor of (N,) or (N,1), enumerate all possible elements
     # assume each element represents one species
     # each row-record belongs to one of the species
-    global_id = x.view(
-        (-1, 1)
-    )  # [N, 1] get the col-idx as the global-id, i.e., which species for the record
+
+    # [N, 1] get the col-idx as the global-id, i.e., which species for the record
+    global_id = x.view((-1, 1))
     if global_id_only:
         output = global_id.clone()
     else:
@@ -1213,6 +1581,34 @@ def _get_global_local_id_from_enumerate(x: torch.Tensor, global_id_only: bool):
             ls_local_id.append(dict_[ele])
         local_id = torch.tensor(ls_local_id, dtype=x.dtype).view((-1, 1))  # [N, 1]
         output = torch.cat([global_id, local_id], dim=1)  # [N, 2]
+    return output
+
+
+def _get_global_local_id_from_num_nodes(
+    num_nodes: int, dividend: int, global_id_only: bool
+):
+    x = torch.arange(num_nodes).reshape((-1, 1))  # (N, 1)
+    if global_id_only:
+        output = x.clone()
+    else:
+        output = torch.hstack([x // dividend, x % dividend])  # (N, 2)
+    return output
+
+
+def _get_global_local_id_from_enumerate_with_dividend(
+    x: torch.Tensor, dividend: int, global_id_only: bool = False
+):
+    assert len(x.shape) == 1, f"x.shape: {x.shape}"
+    assert global_id_only == False
+    # [N] -> [N, m]
+    print("Converting to onehot ...")
+    x = torch.nn.functional.one_hot(x)
+    # [N, m] -> [N, 2]
+    print("Getting global_local_id_from_onehot ...")
+    x = _get_global_local_id_from_onehot(x, False)
+    output = torch.hstack(
+        [x[:, 0:1], x[:, 1:2] // dividend, x[:, 1:2] % dividend]
+    )  # (N, 2)
     return output
 
 
@@ -1228,3 +1624,123 @@ def _mask_concat_node_label_as_feat(graph: Data, idx: torch.Tensor):
         ]
     )  # [num_feat]
     return new_x, feat_mask
+
+
+def to_undirected(edge_index: torch.Tensor, edge_attr: torch.Tensor):
+    print("Converting directed graph to un-directed graph ...")
+    num_edges = edge_index.shape[1]
+    edge_index = edge_index.numpy()
+    bi_edge_index = np.hstack([edge_index, edge_index[[1, 0]]])
+    unique_edge_index, unique_idx = np.unique(bi_edge_index, return_index=True, axis=1)
+
+    bi_edge_type = np.hstack(
+        [
+            np.ones(edge_index.shape[1], dtype=int),
+            np.zeros(edge_index.shape[1], dtype=int),
+        ]
+    )
+    unique_edge_type = bi_edge_type[unique_idx].reshape((-1, 1))
+
+    if edge_attr is not None:
+        edge_attr = edge_attr.numpy()
+        bi_edge_attr = np.vstack([edge_attr, edge_attr])
+        unique_edge_attr = np.hstack([unique_edge_type, bi_edge_attr[unique_idx]])
+    else:
+        unique_edge_attr = unique_edge_type
+    new_num_edges = unique_edge_index.shape[1]
+    print(
+        f"Finish converting directed graph to un-directed graph with num_edges {num_edges} -> {new_num_edges}"
+    )
+    return torch.tensor(unique_edge_index), torch.tensor(unique_edge_attr)
+
+
+def remove_self_cycle(edge_index: torch.Tensor, edge_attr: torch.Tensor):
+    num_edges = edge_index.shape[1]
+    mask = edge_index[0] != edge_index[1]
+    if mask.sum().item() < num_edges:
+        print(f"Removing self-cyclic node: {num_edges} -> {mask.sum().item()}")
+        edge_index = edge_index[:, mask]
+        if edge_attr is not None:
+            edge_attr = edge_attr[mask]
+    return edge_index, edge_attr
+
+
+def _get_edge_neg(source_node, target_node_neg):
+    if len(source_node.shape) == 2:
+        # invoke itself
+        edge_neg = _get_edge_neg(target_node_neg, source_node)
+        edge_neg = edge_neg[:, [1, 0]].clone()
+    else:
+        assert len(source_node.shape) == 1
+        assert len(target_node_neg.shape) == 2
+        assert source_node.shape[0] == target_node_neg.shape[0]
+        num_negs = target_node_neg.shape[1]
+        # [N_p] -> [N_p,1] -> [N_p, num_negs]
+        source_node = source_node.reshape((-1, 1)).expand(
+            source_node.shape[0], num_negs
+        )
+        assert source_node.shape == target_node_neg.shape
+        edge_neg = torch.hstack(
+            [source_node.reshape((-1, 1)), target_node_neg.reshape((-1, 1))]
+        ).clone()
+    return edge_neg
+
+
+def _get_fixed_sampled_sorted_idx(scope, cnt_idx, seed=42):
+    g = torch.Generator()
+    g.manual_seed(seed)
+    indices = torch.randperm(scope, generator=g)[:cnt_idx]
+    indices, _ = torch.sort(indices)
+    return indices
+
+
+def _get_reformatted_data_of_citation2(dict_, idx_sel):
+    edge = torch.vstack(
+        [
+            dict_["source_node"][idx_sel],
+            dict_["target_node"][idx_sel],
+        ]
+    ).T.clone()
+    edge_neg = _get_edge_neg(
+        dict_["source_node"][idx_sel],
+        dict_["target_node_neg"][idx_sel],
+    )
+    pos_edge_attr = torch.ones((edge.shape[0], 1), dtype=torch.int64)
+    neg_edge_attr = torch.ones((edge_neg.shape[0], 1), dtype=torch.int64)
+    return {
+        "edge": edge,
+        "edge_neg": edge_neg,
+        "pos_edge_attr": pos_edge_attr,
+        "neg_edge_attr": neg_edge_attr,
+    }
+
+
+def _get_reformatted_data_of_wikikg2(dict_, idx_sel):
+    edge = torch.vstack(
+        [
+            dict_["head"][idx_sel],
+            dict_["tail"][idx_sel],
+        ]
+    ).T.clone()
+    rel = dict_["relation"][idx_sel]
+    pos_edge_attr = torch.vstack([torch.ones_like(rel), rel]).T.clone()
+
+    edge_neg1 = _get_edge_neg(
+        dict_["head"][idx_sel],
+        dict_["head_neg"][idx_sel],
+    )
+    edge_neg2 = _get_edge_neg(
+        dict_["tail_neg"][idx_sel],
+        dict_["tail"][idx_sel],
+    )
+    edge_neg = torch.hstack([edge_neg1, edge_neg2]).reshape((-1, 2)).clone()
+
+    neg_rel = rel.reshape((-1, 1)).expand(rel.shape[0], 1000).reshape((-1, 1))
+    neg_edge_attr = torch.hstack([torch.ones_like(neg_rel), neg_rel]).clone()
+
+    return {
+        "edge": edge,
+        "edge_neg": edge_neg,
+        "pos_edge_attr": pos_edge_attr,
+        "neg_edge_attr": neg_edge_attr,
+    }

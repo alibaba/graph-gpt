@@ -604,15 +604,11 @@ def permute_nodes(graph, g=None):
     new_graph.num_nodes = num_nodes
 
     inv_permu = torch.argsort(permu)
-    if isinstance(graph.x, torch.Tensor) and graph.x.numel() > 0:
-        new_graph.x = graph.x[inv_permu]
-    if (
-        hasattr(graph, "y")
-        and isinstance(graph.y, torch.Tensor)
-        and graph.y.numel() > 0
-        and graph.y.shape[0] == num_nodes
-    ):
-        new_graph.y = graph.y[inv_permu]
+    for k, v in new_graph:
+        if k in ["edge_index", "adj_t", "num_nodes", "batch", "ptr"]:
+            continue
+        if isinstance(v, Tensor) and v.size(0) == new_graph.num_nodes:
+            new_graph[k] = graph[k][inv_permu]
     return new_graph, permu
 
 

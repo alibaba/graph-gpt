@@ -1,33 +1,36 @@
 {
-  "name_or_path": "ogbl_ppa",
-  "dataset": "ogbl-ppa",
-  "attr_world_identifier": "ogbl-ppa",
-  "task_type": "pretrain",
-  "vocab_file": "vocab",
+  "name_or_path": "ogbl_wikikg2",
+  "dataset": "ogbl-wikikg2",
+  "attr_world_identifier": "ogbl-wikikg2",
+  "task_type": "pretrain-mlm",
+  "pretrain_mlm": {
+    "name": "polynomial",
+    "params": {"fixed_ratio": 0.7, "power": 1, "mtp": [0.8, 0, 0.2]},
+    "info": "name->polynomial|cosine|fixed,power->3/2/1/0.5"
+  },
+  "vocab_file": "vocab512",
   "sampling": {
-    "node_ego": {
-      "depth_neighbors": [
-        [1, 4]
-      ],
-      "replace": false,
-      "valid": 0
-    },
-    "node_random": {
-      "sampled_nodes": 127,
-      "valid": 0
-    },
     "edge_ego": {
       "depth_neighbors": [
         [1, 14]
       ],
       "replace": false,
       "neg_ratio": 1,
-      "percent": 100,
-      "valid": 1
+      "sample_wgt": true,
+      "percent": 10,
+      "method": {
+        "name": "local",
+        "sample_tails": true,
+        "sample_heads": true,
+        "sample_edges": false
+      },
+      "valid": 1,
+      "info": "method->local|global"
     }
   },
   "semantics": {
-    "attr_assignment": "random",
+    "attr_assignment": "first",
+    "attr_shuffle": false,
     "node": {
       "discrete": "x",
       "continuous": null,
@@ -35,10 +38,10 @@
       "dim": 2
     },
     "edge": {
-      "discrete": null,
+      "discrete": "edge_attr",
       "continuous": null,
       "ignored_val": null,
-      "dim": 0
+      "dim": 2
     },
     "graph": {
       "discrete": null,
@@ -73,15 +76,21 @@
         "<8>",
         "<9>"
       ]
+    },
+    "instructions": {
+      "enable": false
     }
   },
   "structure": {
+    "nx": {
+      "enable": false
+    },
     "node": {
       "bos_token": "<bos>",
       "eos_token": "<eos>",
       "new_node_token": "<new>",
-      "node_scope": 128,
-      "scope_base": 128,
+      "node_scope": 512,
+      "scope_base": 512,
       "cyclic": 1
     },
     "edge": {
@@ -113,5 +122,5 @@
       ]
     }
   },
-  "tokenizer_class": "GSTTokenizer"
+  "tokenizer_class": "StackedGSTTokenizer"
 }

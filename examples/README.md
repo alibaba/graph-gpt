@@ -15,3 +15,15 @@ The current procedure is listed below.
     bugs occur. This step does not need to produce the best results.
 3. Repeat step 2, but this time run long enough for each dataset, so that best results
     can be re-produced.
+
+# Run scripts
+
+## toy-examples
+
+- `./examples/toy_examples/ggpt_pretrain.sh`
+- `./examples/toy_examples/ggpt_supervised.sh`
+
+## graph-lvl examples
+
+- `./examples/graph_lvl/pcqm4m_v2_pretrain.sh`
+- `./examples/graph_lvl/pcqm4m_v2_supervised.sh`

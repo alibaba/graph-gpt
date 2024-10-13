@@ -26,13 +26,7 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
     SequenceClassifierOutputWithPast,
 )
-from transformers.utils import (
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-    ModelOutput,
-)
+from transformers.utils import ModelOutput
 from transformers import LlamaPreTrainedModel, LlamaForCausalLM
 from transformers.models.llama import modeling_llama
 from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
@@ -147,16 +141,42 @@ class GraphGPTCausal(LlamaForCausalLM):
         else:
             self.embed_dropout = None
         # 1.2 Node/edge attributes stacking
-        if config.stacked_feat > 1:
+        if config.stack_method in {"short", "long"}:
             self.stacked_feat_agg = StackedFeatAggregation(config)
+        # 1.3 inputs got raw embed feature
+        if config.embed_dim > 0:
+            self.raw_embed_dropout = None
+            if config.embed_pdrop > 0:
+                self.raw_embed_dropout = nn.Dropout(p=config.embed_pdrop)
+            self.embed_layernorm = modeling_llama.LlamaRMSNorm(
+                config.embed_dim, eps=config.rms_norm_eps
+            )
+            std = self.config.initializer_range
+            self.emb_mask_token = torch.nn.Parameter(
+                torch.empty((1, 1, config.embed_dim)).normal_(mean=0.0, std=std),
+                requires_grad=True,
+            )
+            # init_values = 1. / config.embed_dim
+            # self.lambda_embed = torch.nn.Parameter(
+            #     init_values * torch.ones(config.embed_dim), requires_grad=True
+            # )
+            # layer-scale with `lambda_embed` produce worse results than LN, and slower training speed
+            self.embed_proj = nn.Linear(
+                config.embed_dim, config.hidden_size, bias=False
+            )
         # 2. Optimization objective
-        if config.next_n_token > 1:
+        if config.stack_method in {"short", "long"}:
             print(
                 f"Next-token-prediction changed to next/masked-{config.next_n_token}-tokens-prediction!"
             )
-            self.next_n_token_head = nn.Linear(
-                config.hidden_size, config.hidden_size * config.next_n_token, bias=False
-            )
+            if self.config.next_n_token > 1:
+                self.next_n_token_head = nn.Linear(
+                    config.hidden_size,
+                    config.hidden_size * config.next_n_token,
+                    bias=False,
+                )
+            else:
+                self.next_n_token_head = nn.Identity()
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -169,6 +189,7 @@ class GraphGPTCausal(LlamaForCausalLM):
         eulerian_position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
+        inputs_raw_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         label_mask: Optional[torch.Tensor] = None,
         prior: Optional[torch.Tensor] = None,
@@ -192,6 +213,7 @@ class GraphGPTCausal(LlamaForCausalLM):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
+        # 1.1 Converting tokens to look-up embeddings
         assert inputs_embeds is None
         inputs_embeds = self.model.embed_tokens(input_ids)
         if self.embed_dropout is not None:
@@ -202,6 +224,24 @@ class GraphGPTCausal(LlamaForCausalLM):
             # [bz, seq, feat, dim] ->[bz, seq, dim]
             assert inputs_embeds.shape[:2] == input_ids.shape[:2]
         input_ids = None
+
+        # 1.2 Deal with input raw embeddings if any
+        if self.config.embed_dim > 0:
+            inputs_raw_embeds = inputs_raw_embeds.to(inputs_embeds.dtype)
+            # For inputs corresponding to -100 label, its embed shall multiply 1, i.e., the embed will be kept
+            # [N, seq, next_n] -> [N, seq, 1]
+            embed_mask = (labels == -100).sum(dim=-1, keepdim=True).to(bool)
+            # [N, seq, 1] * [1, 1, dim] -> [N, seq, dim]
+            mask_part = (~embed_mask).to(inputs_embeds.dtype) * self.emb_mask_token
+            # [N, seq, 1] * [N, seq, dim] -> [N, seq, dim]
+            non_mask_part = embed_mask.to(inputs_embeds.dtype) * inputs_raw_embeds
+
+            inputs_raw_embeds = non_mask_part + mask_part
+            inputs_raw_embeds = self.embed_layernorm(inputs_raw_embeds)
+            if self.raw_embed_dropout is not None:
+                inputs_raw_embeds = self.raw_embed_dropout(inputs_raw_embeds)
+            inputs_raw_embeds = self.embed_proj(inputs_raw_embeds)
+            inputs_embeds = inputs_embeds + inputs_raw_embeds
 
         outputs = self.model(
             input_ids=input_ids,
@@ -216,15 +256,38 @@ class GraphGPTCausal(LlamaForCausalLM):
         )
 
         hidden_states = outputs[0]  # [N, seq, dim]
-        if self.config.next_n_token > 1:
-            batch_size, _, dim = hidden_states.shape  # [N, seq, dim]
-            hidden_states = self.next_n_token_head(
-                hidden_states
-            )  # [N, seq, dim*next_n]
-            hidden_states = hidden_states.reshape(
-                (batch_size, -1, dim)
-            )  # [N, seq*next_n, dim]
-            labels = labels.reshape((batch_size, -1))  # [N, seq*next_n]
+        if self.config.stack_method == "long":
+            batch_size, seq, _ = hidden_states.shape  # [N, seq, dim]
+            # i). obtain mask
+            mask_m = labels != -100  # [N, seq, next_n]
+            # ii). deal hidden states: mask and reshape
+            # [N, seq, dim] -> [N, seq, dim*next_n] -> [N, seq, next_n, dim]
+            hidden_states = self.next_n_token_head(hidden_states).reshape(
+                (batch_size, seq, self.config.next_n_token, -1)
+            )
+            # [N, seq, next_n, dim] -> [M, dim]
+            hidden_states = hidden_states[mask_m]
+            # iii). deal labels: mask
+            # [N, seq, next_n] -> [M]
+            labels = labels[mask_m]
+        # the version below can save lots of GPU memory and boost speed
+        if self.config.stack_method == "short":
+            dim = hidden_states.shape[-1]  # [N, seq, dim]
+            # i). obtain mask
+            labels_m = labels[:, :, 0]  # [N, seq, next_n] -> [N, seq]
+            mask_m = labels_m != -100  # [N, seq]
+            # ii). deal hidden states: mask and reshape
+            # [N, seq, dim] -> [M, dim]
+            hidden_states = hidden_states[mask_m]
+            # [M, dim] -> [M, dim*next_n]
+            hidden_states = self.next_n_token_head(hidden_states)
+            # [M, dim*next_n] -> [M*next_n, dim]
+            hidden_states = hidden_states.reshape((-1, dim))
+            # iii). deal labels: mask and reshape
+            # [N, seq, next_n] -> [M, next_n]
+            labels = labels[mask_m]
+            # [M, next_n] -> [M*next_n]
+            labels = labels.reshape(-1)
         logits = self.lm_head(hidden_states)
 
         loss = None
@@ -280,8 +343,19 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
         else:
             self.embed_dropout = None
         # 1.2 Node/edge attributes stacking
-        if config.stacked_feat > 1:
+        if config.stack_method in {"short", "long"}:
             self.stacked_feat_agg = StackedFeatAggregation(config)
+        # 1.3 inputs got raw embed feature
+        if config.embed_dim > 0:
+            self.raw_embed_dropout = None
+            if config.embed_pdrop > 0:
+                self.raw_embed_dropout = nn.Dropout(p=config.embed_pdrop)
+            self.embed_layernorm = modeling_llama.LlamaRMSNorm(
+                config.embed_dim, eps=config.rms_norm_eps
+            )
+            self.embed_proj = nn.Linear(
+                config.embed_dim, config.hidden_size, bias=False
+            )
         # 2. Init for CausalLM, refer to `LlamaForCausalLM`
         self.vocab_size = config.vocab_size
         if self.config.use_ntp:
@@ -342,9 +416,11 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
+        inputs_raw_embeds: Optional[torch.FloatTensor] = None,
         pretrain_labels: Optional[torch.LongTensor] = None,
         task_labels: Optional[torch.LongTensor] = None,
         cls_idx: Optional[torch.LongTensor] = None,
+        sample_wgt: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -361,6 +437,7 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
                 config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
                 `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
             cls_idx (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            sample_wgt (`torch.FloatTensor` of shape `(batch_size,)`, *optional*): weight of sample
         Returns:
 
         Example:
@@ -383,6 +460,7 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
+        # 1.1 Converting tokens to look-up embeddings
         assert inputs_embeds is None
         inputs_embeds = self.model.embed_tokens(input_ids)
         if self.embed_dropout is not None:
@@ -396,6 +474,15 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
         else:
             in_ = input_ids  # [bz, seq]
         input_ids = None
+
+        # 1.2 Deal with input raw embeddings if any
+        if self.config.embed_dim > 0:
+            inputs_raw_embeds = inputs_raw_embeds.to(inputs_embeds.dtype)
+            inputs_raw_embeds = self.embed_layernorm(inputs_raw_embeds)
+            if self.raw_embed_dropout is not None:
+                inputs_raw_embeds = self.raw_embed_dropout(inputs_raw_embeds)
+            inputs_raw_embeds = self.embed_proj(inputs_raw_embeds)
+            inputs_embeds = inputs_embeds + inputs_raw_embeds
 
         outputs = self.model(
             input_ids=input_ids,
@@ -465,6 +552,30 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
                     masked_logits, dim=1, keepdim=False
                 )  # [N, num_labels]
 
+        if self.config.loss_type == "token_ce_intra":
+            inv_temperature = 20
+            hidden_states = nn.functional.normalize(hidden_states, dim=-1)
+            # get the slice index of intra-instance classes
+            # [bz] -> [bz, 1] -> [bz, num_labels]
+            idx1 = (
+                torch.arange(batch_size, device=logits.device)
+                .reshape((-1, 1))
+                .expand((-1, self.num_labels))
+            )
+            # [num_labels] -> [1, num_labels] -> [bz, num_labels] & [bz, 1] -> [bz, num_labels]
+            idx2 = torch.arange(self.num_labels, device=logits.device).reshape(
+                (1, -1)
+            ).expand((batch_size, -1)) + cls_idx.reshape((-1, 1))
+            local_label_embeddings = hidden_states[idx1, idx2]  # [bz, num_labels, dim]
+            # [bz, seq, dim] & [bz, dim, num_labels] -> [bz, seq, num_labels]
+            logits = (
+                torch.matmul(hidden_states, local_label_embeddings.transpose(-2, -1))
+                * inv_temperature
+            )
+            # above to mat-multiply local_label_embeddings
+        if self.config.loss_type in {"token_ce", "token_ce_intra"}:
+            # below `pooled_logits` for output of evaluation only
+            pooled_logits = logits
         task_loss = None
         if task_labels is not None:
             labels = task_labels.to(logits.device)
@@ -493,51 +604,40 @@ class GraphGPTDoubleHeadsModel(LlamaPreTrainedModel):
                     loss = loss_fct(pooled_logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 if self.config.loss_type in {"token_ce", "token_ce_intra"}:
-                    if self.config.loss_type == "token_ce_intra":
-                        # get the slice index of intra-instance classes
-                        # [bz] -> [bz, 1] -> [bz, num_labels]
-                        idx1 = (
-                            torch.arange(batch_size, device=logits.device)
-                            .reshape((-1, 1))
-                            .expand((-1, self.num_labels))
-                        )
-                        # [num_labels] -> [1, num_labels] -> [bz, num_labels] & [bz, 1] -> [bz, num_labels]
-                        idx2 = torch.arange(
-                            self.num_labels, device=logits.device
-                        ).reshape((1, -1)).expand((batch_size, -1)) + cls_idx.reshape(
-                            (-1, 1)
-                        )
-                        local_label_embeddings = hidden_states[
-                            idx1, idx2
-                        ]  # [bz, num_labels, dim]
-                        # [bz, seq, dim] & [bz, dim, num_labels] -> [bz, seq, num_labels]
-                        logits = torch.matmul(
-                            hidden_states, local_label_embeddings.transpose(-2, -1)
-                        )
-                        # above to mat-multiply local_label_embeddings
                     loss_fct = CrossEntropyLoss()
                     loss = loss_fct(
                         logits.view(-1, self.num_labels).float(), labels.view(-1)
                     )
-                    # below `pooled_logits` for output of evaluation only
-                    pooled_logits = logits
                 elif self.config.loss_type == "auc":
-                    logits = pooled_logits.view(
-                        -1, self.num_labels
-                    )  # [batch, num_labels]
+                    # [batch, num_labels]
+                    logits = pooled_logits.view(-1, self.num_labels)
                     y_pred = logits[:, 1].float() - logits[:, 0].float()  # [batch]
                     loss = auc_loss(y_pred, labels.view(-1), self.config.num_neg)
                 else:
-                    loss_fct = CrossEntropyLoss()
-                    loss = loss_fct(
-                        pooled_logits.view(-1, self.num_labels).float(), labels.view(-1)
-                    )
+                    if sample_wgt is None:
+                        loss_fct = CrossEntropyLoss()
+                        loss = loss_fct(
+                            pooled_logits.view(-1, self.num_labels).float(),
+                            labels.view(-1),
+                        )
+                    else:
+                        loss_fct = CrossEntropyLoss(reduction="none")
+                        loss = loss_fct(
+                            pooled_logits.view(-1, self.num_labels).float(),
+                            labels.view(-1),
+                        )
+                        assert (
+                            loss.shape[0] == sample_wgt.shape[0]
+                        ), f"{loss.shape[0]} != {sample_wgt.shape[0]}"
+                        loss = (
+                            loss.float().view(-1) * sample_wgt.float().view(-1)
+                        ).sum() / sample_wgt.float().sum()
             elif self.config.problem_type == "multi_label_classification":
                 is_labeled = labels == labels
                 loss_fct = BCEWithLogitsLoss(pos_weight=self.pos_weight)
-                loss = loss_fct(
-                    pooled_logits[is_labeled], labels[is_labeled]
-                )  # remove `.float()` to avoid force-converting fp16 to fp32
+                loss = loss_fct(pooled_logits[is_labeled], labels[is_labeled])
+                # remove `.float()` to avoid force-converting fp16 to fp32
+                # labels[is_labeled] will convert tensor `labels` from 2D to 1D
             task_loss = loss
         if not return_dict:
             output = (

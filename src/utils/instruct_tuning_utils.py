@@ -167,22 +167,24 @@ def _get_all_node_feats(
     edge_semantics_mapping: Dict = None,
     node_semantics_default: List = None,
     edge_semantics_default: List = None,
+    attr_type: str = "discrete",
 ):
+    assert attr_type in {"discrete", "embed"}
     ls_node_id = (
         list(node_structure_mapping[node]) if node_structure_mapping is not None else []
     )
-    if node_semantics_mapping["discrete"]:
-        ls_node_attr = node_semantics_mapping["discrete"][node]
+    if node_semantics_mapping[attr_type]:
+        ls_node_attr = node_semantics_mapping[attr_type][node]
     else:
         ls_node_attr = []
 
     ls_edge_struct = (
         [edge_structure_mapping[edge]] if edge_structure_mapping is not None else []
     )
-    if edge_semantics_mapping["discrete"]:
-        ls_edge_attr = edge_semantics_mapping["discrete"].get(
+    if edge_semantics_mapping[attr_type]:
+        ls_edge_attr = edge_semantics_mapping[attr_type].get(
             edge, edge_semantics_default
-        )  # `get` is for case of jump-edge
+        )  # `get` is for the case of jump-edge
     else:
         ls_edge_attr = []
     # For jump-edge, no edge-attr available, so use default edge attr

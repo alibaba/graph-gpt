@@ -3,7 +3,7 @@
 # problems like this:: some worker got stuck at the deepspeed initialization stage, while others are not
 tensorboardX
 fire==0.5.0
-deepspeed==0.14.0
+deepspeed==0.15.1
 triton==2.1.0
 torcheval==0.0.7
 torchmetrics==1.2.0

@@ -24,7 +24,7 @@ except ModuleNotFoundError:
 import sys
 
 # sys.path.insert(0, "..")
-sys.path.insert(0, ".")  # for submit to PAI
+sys.path.insert(0, ".")
 # put below `src.data` import above other `src.` to avoid `common_io` import error
 from src.data import (
     collator,
@@ -45,7 +45,6 @@ from src.utils import (
     conf_utils,
     loss_utils,
     loader_utils,
-    optimization_utils,
     tokenizer_utils,
     modules_utils,
     misc_utils,
@@ -71,10 +70,10 @@ def train(
     # tokenization config
     tokenizer_class: str = None,  # GSTTokenizer|StackedGSTTokenizer|SPGSTTokenizer
     tokenization_config: str = "reddit_tokenization_config.json",
-    attr_assignment: str = "",
+    attr_assignment: str = "first",
     add_eos: bool = False,
     task_type: str = "pretrain",
-    stack_method: str = "short",
+    stack_method: str = None,
     # training config
     optimization_config: str = "",
     total_tokens: float = 1e9,
@@ -95,18 +94,18 @@ def train(
     # architecture config
     model_type: str = "graphgpt",  # graphgpt|graphgpt2|graphbert
     model_config: str = "",
-    vocab_size: int = None,  # defaults to 32000
-    hidden_size: int = 128,  # defaults to 4096
-    num_hidden_layers: int = 2,  # defaults to 32
-    intermediate_size: int = 0,  # defaults to 11008
-    num_attention_heads: int = 0,  # defaults to 32
+    vocab_size: int = None,
+    hidden_size: int = 128,
+    num_hidden_layers: int = 2,
+    intermediate_size: int = 0,
+    num_attention_heads: int = 0,
     hidden_act: str = "silu",  # defaults to "silu"
     stacked_feat_agg_method: str = "gated",
-    max_position_embeddings: int = 128,  # defaults to 2048
+    max_position_embeddings: int = 128,
     initializer_range: float = 0.02,  # defaults to 0.02
     rope_theta: int = 10000,
     tie_word_embeddings: int = 0,  # defaults to False
-    causal_attention: int = 1,  # use causal or bi attention
+    causal_attention: int = 1,  # 1 for causal, 0 for bi attention
     attention_dropout: float = 0,
     embed_dropout: float = 0,
     path_dropout: float = 0,
@@ -137,7 +136,6 @@ def train(
         ) = modules_utils.set_up_model_architect(
             hidden_size=hidden_size, num_hidden_layers=num_hidden_layers
         )
-    reset_samples_per_epoch = False
     causal_attention = 0 if task_type == "pretrain-mlm" else causal_attention
     betas = (0.9, 0.95)
     # lr * 0.1 -> from llama2 pre-train settings
@@ -168,8 +166,8 @@ def train(
     tokenizer_config = conf_utils.parse_tokenization_config(**locals())
     assert "pretrain" in tokenizer_config["task_type"]
     assert (
-            tokenizer_config["semantics"]["attr_assignment"]
-            in tokenizer_utils.ATTR_ASSIGNMENT_TYPES
+        tokenizer_config["semantics"]["attr_assignment"]
+        in tokenizer_utils.ATTR_ASSIGNMENT_TYPES
     )
     pprint(tokenizer_config)
     if tokenizer_config["tokenizer_class"] == "StackedGSTTokenizer":
@@ -177,8 +175,8 @@ def train(
             tokenizer_config["semantics"]["edge"]["dim"]
             + tokenizer_config["semantics"]["node"]["dim"]
         )
-        assert stack_method in ("short", "long"), f"stack_method: {stack_method}"
-        if stack_method == "short":
+        assert stack_method in ("short", "long", None), f"stack_method: {stack_method}"
+        if tokenizer_config["structure"]["edge"]["remove_edge_type_token"]:
             stacked_feat = 1 + attr_dim
         else:
             stacked_feat = 2 + attr_dim
@@ -186,7 +184,12 @@ def train(
     else:
         stacked_feat = 1
         next_n_token = 1
-    print(f"stacked_feat: {stacked_feat}, next_n_token: {next_n_token}")
+    embed_dim = tokenizer_config["semantics"]["node"].get(
+        "embed_dim", 0
+    ) + tokenizer_config["semantics"]["edge"].get("embed_dim", 0)
+    print(
+        f"stacked_feat: {stacked_feat}, next_n_token: {next_n_token}, embed_dim: {embed_dim}"
+    )
 
     # 1.2 get graph dataset
     dataset, raw_dataset = read_dataset(
@@ -203,6 +206,11 @@ def train(
         pretrain_mode=True,
         ensemble_datasets=tokenizer_config.get("ensemble_datasets", []),
     )
+    reset_samples_per_epoch = (
+        dataset.reset_samples_per_epoch
+        if hasattr(dataset, "reset_samples_per_epoch")
+        else False
+    )
     if isinstance(dataset, IterableDataset):
         print(next(iter(dataset)))
     else:
@@ -211,7 +219,9 @@ def train(
     # 1.3 build vocab and then init tokenizer from the tokenization config
     vocab_builder.build_vocab(raw_dataset, tokenizer_config, rank)
     tokenizer_cls = getattr(tokenizer, tokenizer_config["tokenizer_class"])
-    gtokenizer = tokenizer_cls(tokenizer_config, add_eos=add_eos, stack_method=stack_method)
+    gtokenizer = tokenizer_cls(
+        tokenizer_config, add_eos=add_eos, stack_method=stack_method
+    )
     # 1.4 get train/test sampler
     train_dataset = dataset
     if not isinstance(train_dataset, IterableDataset):
@@ -285,15 +295,15 @@ def train(
     )
     print(model)
     # 2.3 Create optimizer (load optimization config if given)
-    # obtain layerwise lr
     model_parameters = model.parameters()
+    # obtain layerwise lr
     # model_parameters = loss_utils.get_layerwise_param_groups(model, lr, 0.95)
     if use_deepspeed:
         ds_config = conf_utils.parse_deepspeed_config(loss_utils=loss_utils, **locals())
         print(f"\n[{datetime.now()}] ds_config:\n{pformat(ds_config)}")
         model, optimizer, _, lr_scheduler = deepspeed.initialize(
             model=model,
-            model_parameters=model.parameters(),
+            model_parameters=model_parameters,
             config=ds_config,
             mpu=None,
             dist_init_required=False,
@@ -384,7 +394,7 @@ def train(
     ):
         train_sampler_new = []
         for epoch in range(epochs):
-            train_dataset.reset_samples(epoch)
+            train_dataset.reset_samples(epoch, rank)
             # random.shuffle(train_sampler)
             train_sampler_new.extend(train_dataset.sampler)
         random.shuffle(train_sampler_new)
@@ -428,7 +438,7 @@ def train(
             print(
                 f"Re-initialize train-loader with shuffled sampler and reset dataset!"
             )
-            train_dataset.reset_samples(epoch)
+            train_dataset.reset_samples(epoch, rank)
             train_sampler = train_dataset.sampler
             random.shuffle(train_sampler)
             print(f"train_sampler: {len(train_sampler)}")
@@ -469,19 +479,23 @@ def train(
             input_ids = data["input_ids"].to(device)
             attention_mask = data["attention_mask"].to(device)
             labels = data["labels"].to(device)
+            inputs_raw_embeds = None
+            if embed_dim > 0:
+                inputs_raw_embeds = data["embed"].to(device)
 
             if use_deepspeed:
                 output = model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=labels,
+                    inputs_raw_embeds=inputs_raw_embeds,
                 )  # Perform a single forward pass.
                 loss = output.loss
                 model.backward(loss)  # Derive gradients.
                 model.step()
             else:
                 assert (
-                        gradient_accumulation_steps == 1
+                    gradient_accumulation_steps == 1
                 ), "https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation"
                 optimizer.zero_grad()  # Clear gradients.
                 # https://pytorch.org/docs/stable/notes/amp_examples.html#amp-examples
@@ -491,6 +505,7 @@ def train(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         labels=labels,
+                        inputs_raw_embeds=inputs_raw_embeds,
                     )  # Perform a single forward pass.
                     loss = output.loss
                 # Scales loss.  Calls backward() on scaled loss to create scaled gradients.
@@ -521,7 +536,7 @@ def train(
                     (i - i_local) * batch_size * tokens_per_sample / t_interval
                 )
                 print(
-                    f"[{datetime.now()}][epoch {ep}][local {epoch}: {i}][global {j}] train_loss: {round(loss.item(), 7)}, {samples_per_second} samples / {tokens_per_second} tokens per sec"
+                    f"[{datetime.now()}][epoch {ep}][local {epoch}: {i}][global {j}] train_loss: {round(loss.item(),7)}, {samples_per_second} samples / {tokens_per_second} tokens per sec"
                 )
                 # Reduce SUM to get the loss from all the GPUs to RANK=0
                 # refer: https://github.com/microsoft/DeepSpeed/discussions/2377#discussioncomment-3765282
@@ -542,7 +557,7 @@ def train(
             if (j % steps_per_saving == 0) and (j > j_init):
                 ep += 1
                 print(
-                    f"[{datetime.now()}][end of epoch {ep}][local {epoch}: {i}][global {j}] Trained with {j * tokens_per_sample * batch_size * world_size} tokens! Saving ckp and logs!"
+                    f"[{datetime.now()}][end of epoch {ep}][local {epoch}: {i}][global {j}] Trained with {j*tokens_per_sample*batch_size*world_size} tokens! Saving ckp and logs!"
                 )
                 misc_utils.save_ckp(
                     output_dir,
@@ -586,7 +601,7 @@ def train(
             break
     ep += 1
     print(
-        f"[{datetime.now()}][end of training][epoch {ep}][local {epoch}: {i}][global {j}] Trained with {j * tokens_per_sample * batch_size * world_size} tokens! Saving ckp and logs!"
+        f"[{datetime.now()}][end of training][epoch {ep}][local {epoch}: {i}][global {j}] Trained with {j*tokens_per_sample*batch_size*world_size} tokens! Saving ckp and logs!"
     )
     misc_utils.save_ckp(
         output_dir,

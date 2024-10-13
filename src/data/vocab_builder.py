@@ -1,3 +1,4 @@
+from datetime import datetime
 import math
 import os
 import time
@@ -8,8 +9,6 @@ from pprint import pformat
 import torch
 import numpy.typing as npt
 from torch_geometric.data import Dataset
-from .dataset_iterable import OdpsTableIterableTokenizedDataset
-from .data_sources import read_merge_molecule_datasets
 from ..utils.mol_utils import (
     read_complete_mol_features_ds,
     read_complete_onedevice_features_ds,
@@ -17,7 +16,10 @@ from ..utils.mol_utils import (
 
 
 def _get_vocab_of_attr(
-    attr: npt.ArrayLike, world_identifier: str, node_edge_identifier: str
+    attr: npt.ArrayLike,
+    world_identifier: str,
+    node_edge_identifier: str,
+    share_vocab: bool = False,
 ):
     # node_edge_identifier == "node" or "edge" or "gid"
     _, num_col = attr.shape
@@ -29,7 +31,8 @@ def _get_vocab_of_attr(
         prefix_identifier = np.array(
             [[world_identifier, node_edge_identifier]] * num_row
         )
-        col_idx = np.array([[i]] * num_row).astype(str)
+        val = -1 if share_vocab else i
+        col_idx = np.array([[val]] * num_row).astype(str)
         arr = np.hstack([prefix_identifier, col_idx, col_val])
         ls_arr.append(arr)
     return ls_arr
@@ -57,10 +60,11 @@ def _get_node_edge_graph_semantics_vocab(dataset: Dataset, config: Dict, neg: st
 
     ls_arr = []
     attr = config["semantics"][neg]["discrete"]
+    share_vocab = config["semantics"][neg].get("share_vocab", False)
     if attr is not None:
         ls_attr_tensor = [g[attr] for g in dataset]
         attr_arr = torch.vstack(ls_attr_tensor).numpy()
-        ls_arr += _get_vocab_of_attr(attr_arr, world_identifier, neg)
+        ls_arr += _get_vocab_of_attr(attr_arr, world_identifier, neg, share_vocab)
     print(f"Building {neg} vocab with {len(ls_arr)} discrete {neg} features!")
     discrete_vocab = _get_vocab(ls_arr, config["semantics"][neg]["ignored_val"])
 
@@ -175,25 +179,24 @@ def save_vocab(vocab: List[str], fn: str):
         vocab_mapping = zip(vocab, token_ids)
         to_be_write = [f"{token} {token_id}\n" for token, token_id in vocab_mapping]
         fp.writelines(to_be_write)
-    print(f"Finish vocab construction and save it in {fn}!")
+    print(f"[{datetime.now()}] Finish vocab construction and save it in {fn}!")
 
 
 def build_vocab(dataset, config, rank=0, use_cache=True):
-    if isinstance(dataset, OdpsTableIterableTokenizedDataset):
-        print(f"Tokenized dataset loaded, NO need to build vocab!")
-        return
     fn = os.path.join(config["name_or_path"], config.get("vocab_file", "vocab"))
     if rank != 0:
         while not os.path.exists(fn):
-            print(f"waiting for the vocab to be built by the worker 0!")
+            print(
+                f"[{datetime.now()}] waiting for the vocab to be built by the worker 0!"
+            )
             time.sleep(3)
     else:
         if os.path.exists(fn) and use_cache:
-            print(f"Vocab is already built and saved in {fn}!")
+            print(f"[{datetime.now()}] Vocab is already built and saved in {fn}!")
         else:
             if not os.path.exists(config["name_or_path"]):
                 os.makedirs(config["name_or_path"])
-            print("\nstart vocab building ...")
+            print(f"\n[{datetime.now()}] start vocab building ...")
             structure_vocab = get_structure_vocab(config["structure"])
             semantics_vocab = get_semantics_vocab(dataset, config)
             vocab = structure_vocab + semantics_vocab
@@ -201,12 +204,12 @@ def build_vocab(dataset, config, rank=0, use_cache=True):
 
 
 def load_vocab(fn) -> Dict[str, int]:
-    print(f"Loading vocab from {fn} ...")
+    print(f"[{datetime.now()}] Loading vocab from {fn} ...")
     with open(fn, "r") as fp:
         res = fp.read()
         ls = res.split("\n")
         ls = [ele.strip().split() for ele in ls if len(ele) > 0]
         vocab_map = {k: int(v) for k, v in ls}
     vocab_map.update({"<label_pad>": -100})
-    print(f"{pformat(vocab_map, indent=4)}")
+    print(f"[{datetime.now()}]\n{pformat(vocab_map, indent=4)[:10000]} ......")
     return vocab_map

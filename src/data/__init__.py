@@ -1,6 +1,5 @@
 from .dataset_iterable import (
     OdpsTableIterableDataset,
-    OdpsTableIterableTokenizedDataset,
     get_odps_writer,
 )  # put this import on top to avoid `common_io` import error
 

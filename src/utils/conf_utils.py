@@ -15,23 +15,29 @@ def parse_tokenization_config(
     attr_assignment,
     **kwargs,
 ):
-    with open(tokenization_config, "r") as fp:
-        tokenizer_config = json.load(fp)
-        nx_config = tokenizer_config["structure"].get("nx", {})
+    if tokenization_config is None:
+        nx_config = {}
+    else:
+        with open(tokenization_config, "r") as fp:
+            tokenizer_config = json.load(fp)
+            nx_config = tokenizer_config["structure"].get("nx", {})
     if len(pretrain_cpt) > 0:
         print(f"Ignoring input tokenization config file\n{tokenization_config}")
         tokenization_config = os.path.join(pretrain_cpt, "tokenization_config.json")
         print(f"Use saved pretrain tokenization config file\n{tokenization_config}\n")
     with open(tokenization_config, "r") as fp:
         tokenizer_config = json.load(fp)
-        tokenizer_config["data_dir"] = data_dir
-        tokenizer_config["name_or_path"] = (
-            os.path.join(data_dir, tokenizer_config["name_or_path"])
-            if len(pretrain_cpt) == 0
-            else tokenizer_config["name_or_path"]
-        )
-        tokenizer_config["dataset"] = dataset_name
-        tokenizer_config["task_type"] = task_type
+        if data_dir is not None:
+            tokenizer_config["data_dir"] = data_dir
+            tokenizer_config["name_or_path"] = (
+                os.path.join(data_dir, tokenizer_config["name_or_path"])
+                if len(pretrain_cpt) == 0
+                else tokenizer_config["name_or_path"]
+            )
+        if dataset_name is not None:
+            tokenizer_config["dataset"] = dataset_name
+        if task_type is not None:
+            tokenizer_config["task_type"] = task_type
         if tokenizer_class is not None:
             tokenizer_config["tokenizer_class"] = tokenizer_class
         tokenizer_config["structure"]["nx"] = nx_config
@@ -63,9 +69,12 @@ def parse_tokenization_config_for_ft(
         tokenizer_class=tokenizer_class,
         attr_assignment=attr_assignment,
     )
-    with open(tokenization_config, "r") as fp:
-        tmp_config = json.load(fp)
-        sampling_config = tmp_config["sampling"]
+    if tokenization_config is None:
+        sampling_config = None
+    else:
+        with open(tokenization_config, "r") as fp:
+            tmp_config = json.load(fp)
+            sampling_config = tmp_config["sampling"]
     tokenizer_config["sampling"] = sampling_config
     tokenizer_config["pretrain_cpt"] = pretrain_cpt
     tokenizer_config["semantics"]["graph"] = {
@@ -103,7 +112,9 @@ def parse_model_config(
     layer_scale_init_value,
     next_n_token,
     stacked_feat,
+    stack_method,
     stacked_feat_agg_method,
+    embed_dim,
     **kwargs,
 ):
     if len(model_config) > 0:
@@ -146,7 +157,9 @@ def parse_model_config(
             "layer_scale_init_value": layer_scale_init_value,
             "next_n_token": next_n_token,
             "stacked_feat": stacked_feat,
+            "stack_method": stack_method,
             "stacked_feat_agg_method": stacked_feat_agg_method,
+            "embed_dim": embed_dim,
         }
     )
     return config
@@ -174,7 +187,10 @@ def parse_model_config_for_ft(
     layer_scale_init_value,
     # next_n_token,
     stacked_feat,
+    stack_method,
     stacked_feat_agg_method,
+    # raw-embed-input
+    embed_dim,
     num_labels,
     mlp,
     pooling_method,
@@ -222,7 +238,9 @@ def parse_model_config_for_ft(
         layer_scale_init_value=layer_scale_init_value,
         next_n_token=next_n_token,
         stacked_feat=stacked_feat,
+        stack_method=stack_method,
         stacked_feat_agg_method=stacked_feat_agg_method,
+        embed_dim=embed_dim,
     )
 
     config.update(
@@ -396,14 +414,14 @@ def dump_all_conf(
 ):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    with open(os.path.join(output_dir, "tokenization_config.json"), "w+") as fp:
+    with open(os.path.join(output_dir, "tokenization_config.json"), "w") as fp:
         json.dump(tokenizer_config, fp, indent=4)
     print(f"[{datetime.now()}] Finish -> Dump to `tokenization_config.json`")
-    with open(os.path.join(output_dir, "params.txt"), "w+") as fp:
+    with open(os.path.join(output_dir, "params.txt"), "w") as fp:
         fp.write(params)
     print(f"[{datetime.now()}] Finish -> Dump to `params.txt`")
     if use_deepspeed:
-        with open(os.path.join(output_dir, "ds_config.json"), "w+") as fp:
+        with open(os.path.join(output_dir, "ds_config.json"), "w") as fp:
             json.dump(tmp_ds_config, fp, indent=4)
         print(f"[{datetime.now()}] Finish -> Dump to `ds_config.json`")
 
@@ -441,28 +459,32 @@ def init_log_conf_for_ft(
     pretrain_cpt,
     output_dir,
     steps_per_epoch,
+    eval_only,
 ):
     if pretrain_cpt == output_dir:
-        _, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt)
+        _, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt, eval_only)
         last_step_index = (prev_epoch + 1) * steps_per_epoch
         ls_log, ls_result, ls_loss = misc_utils.load_all(
             output_dir, load_log=True, load_result=True, load_loss=True
         )
 
         last_step_index_from_log = int(ls_log[-1].strip().split(",")[2])
-        assert (
-            last_step_index >= last_step_index_from_log
-        ), f"last_step_index: {last_step_index}, last_step_index_from_log: {last_step_index_from_log}"
+        if not eval_only:
+            assert (
+                last_step_index >= last_step_index_from_log
+            ), f"last_step_index: {last_step_index}, last_step_index_from_log: {last_step_index_from_log}"
 
         last_step_index_from_result = int(ls_result[-1].strip().split(",")[1])
-        assert (
-            last_step_index == last_step_index_from_result
-        ), f"last_step_index: {last_step_index}, last_step_index_from_result: {last_step_index_from_result}"
+        if not eval_only:
+            assert (
+                last_step_index == last_step_index_from_result
+            ), f"last_step_index: {last_step_index}, last_step_index_from_result: {last_step_index_from_result}"
 
         last_step_index_from_loss = int(ls_loss[-1].strip().split(",")[2])
-        assert (
-            last_step_index >= last_step_index_from_loss
-        ), f"last_step_index: {last_step_index}, last_step_index_from_loss: {last_step_index_from_loss}"
+        if not eval_only:
+            assert (
+                last_step_index >= last_step_index_from_loss
+            ), f"last_step_index: {last_step_index}, last_step_index_from_loss: {last_step_index_from_loss}"
 
         print(
             f"Resume training from {pretrain_cpt} with last_step_index {last_step_index}!"

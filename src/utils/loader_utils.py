@@ -118,10 +118,12 @@ def load_from_ckp(
     output_dir,
     model,
     config,
+    skip_keys=True,
+    strict=False,
 ):
     if (len(pretrain_cpt) > 0) and (pretrain_cpt != output_dir):
         ckp, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt)
-        model = load_from_ckp_with_try(model, ckp, config)
+        model = load_from_ckp_with_try(model, ckp, config, skip_keys, strict)
     return model
 
 
@@ -130,6 +132,7 @@ def load_from_ckp_with_try(
     ckp,
     config,
     skip_keys=True,
+    strict=False,
 ):
     print(f"Loading pretrained weights from ckp {ckp}")
     try:
@@ -140,15 +143,7 @@ def load_from_ckp_with_try(
         stat_dict = {
             (k[7:] if k.startswith("module.") else k): v for k, v in stat_dict.items()
         }
-        missing_keys, unexpected_keys = model.load_state_dict(stat_dict, strict=False)
-        loading_info = {
-            "missing_keys": missing_keys,
-            "unexpected_keys": unexpected_keys,
-        }
-        # model, loading_info = model.from_pretrained(fn, config=config, local_files_only=True, output_loading_info=True)
-        print(
-            f"[{datetime.now()}] load ckp using torch API from:\n{fn_model}\nwith loading_info:\n{loading_info}"
-        )
+        print(f"[{datetime.now()}] load ckp using torch API from:\n{fn_model}")
     except Exception as inst:
         # print(type(inst))
         # print(inst.args)
@@ -158,17 +153,19 @@ def load_from_ckp_with_try(
         )
 
         stat_dict = get_fp32_state_dict_from_zero_checkpoint(ckp)
-        for key in list(stat_dict.keys()):
-            if ("score" in key) and skip_keys:
-                stat_dict.pop(key)
-                print(f"pop key {key} in stat_dict!")
-        missing_keys, unexpected_keys = model.load_state_dict(stat_dict, strict=False)
         print(
-            f"[{datetime.now()}] load ckp using DeepSpeed API `get_fp32_state_dict_from_zero_checkpoint` and pytorch `load_state_dict`\n"
-            f"missing keys: {missing_keys}\n"
-            f"unexpected_keys: {unexpected_keys}\n"
+            f"[{datetime.now()}] load ckp using DeepSpeed API `get_fp32_state_dict_from_zero_checkpoint`"
         )
+
+    for key in list(stat_dict.keys()):
+        if ("score" in key) and skip_keys:
+            stat_dict.pop(key)
+            print(f"pop key {key} in stat_dict!")
+    missing_keys, unexpected_keys = model.load_state_dict(stat_dict, strict=strict)
     print(
+        f"[{datetime.now()}] init model params using pytorch `load_state_dict`\n"
+        f"missing keys: {missing_keys}\n"
+        f"unexpected_keys: {unexpected_keys}\n"
         f"After loading weights from ckp:\n{model.config}\nnum_labels: {model.num_labels}\nmodel-type: {model.dtype}\n\n{model}"
     )
     return model
@@ -205,11 +202,7 @@ def get_train_valid_test_sampler(
         valid_shuffle, valid_sampler, valid_cnt = set_up_shuffle_and_sampler(
             valid_dataset, valid_sampler
         )
-        tensor_shape = len(valid_sampler) // world_size
-        valid_tensor_shape_list = [tensor_shape] * world_size
-        valid_sampler = distribute_sampler(valid_sampler, world_size, rank)[
-            :tensor_shape
-        ]
+        valid_sampler = distribute_sampler(valid_sampler, world_size, rank)
         valid_sampler_for_eval = random.sample(
             valid_sampler, min(len(valid_sampler), k_samplers)
         )
@@ -223,9 +216,7 @@ def get_train_valid_test_sampler(
         test_shuffle, test_sampler, test_cnt = set_up_shuffle_and_sampler(
             test_dataset, test_sampler
         )
-        tensor_shape = len(test_sampler) // world_size
-        test_tensor_shape_list = [tensor_shape] * world_size
-        test_sampler = distribute_sampler(test_sampler, world_size, rank)[:tensor_shape]
+        test_sampler = distribute_sampler(test_sampler, world_size, rank)
         test_sampler_for_eval = random.sample(
             test_sampler, min(len(test_sampler), k_samplers)
         )
@@ -240,12 +231,10 @@ def get_train_valid_test_sampler(
         valid_cnt = len(valid_dataset) * world_size
         valid_sampler = None
         valid_sampler_for_eval = None
-        valid_tensor_shape_list = []
 
         test_cnt = len(test_dataset) * world_size
         test_sampler = None
         test_sampler_for_eval = None
-        test_tensor_shape_list = []
 
         steps_per_epoch = (
             (len(train_dataset) // num_workers) // batch_size
@@ -258,11 +247,9 @@ def get_train_valid_test_sampler(
         valid_cnt,
         valid_sampler,
         valid_sampler_for_eval,
-        valid_tensor_shape_list,
         test_cnt,
         test_sampler,
         test_sampler_for_eval,
-        test_tensor_shape_list,
         steps_per_epoch,
     )
 

@@ -162,40 +162,48 @@ def inspect_tokenization_results(
         idx2, data = dataset[idx]
         if idx != idx2:
             print(f"[Warning]Local idx {idx2} NOT equal Global idx {idx}")
+    ls_embed = []
     if isinstance(data, Data):
         graph = data
         print(f"Inspecting tokenization results!\nTokenize graph:\n{data}")
-        (
-            tokens,
-            labels,
-            tgt_node_token,
-            tgt_edge_src_token,
-            tgt_edge_dst_token,
-            tgt_pos,
-        ) = gtokenizer.tokenize(graph)
-        print(f"\nTokens:\n{pformat(tokens)}\nLabels:\n{pformat(labels)}\n")
-        tokens, labels = (
-            gtokenizer.pack_token_seq(tokens, labels, idx)
+        token_res = gtokenizer.tokenize(graph)
+        print(
+            f"\nTokens:\n{pformat(token_res.ls_tokens)}\nLabels:\n{pformat(token_res.ls_labels)}\nembed:{np.array(token_res.ls_embed)}\n"
+        )
+        tokens, labels, ls_embed, ls_len = (
+            gtokenizer.pack_token_seq(token_res, idx)
             if gtokenizer.mpe is not None
-            else (tokens, labels)
+            else (
+                token_res.ls_tokens,
+                token_res.ls_labels,
+                token_res.ls_embed,
+                [len(token_res.ls_tokens)],
+            )
         )
         print(
-            f"Packed Tokens:\n{pformat(tokens)}\nPacked Labels:\n{pformat(labels)}\n"
+            f"Packed Tokens:\n{pformat(tokens)}\nPacked Labels:\n{pformat(labels)}\nPacked embed:\n{np.array(ls_embed).shape}\n{np.array(ls_embed)}\nPacked len:\n{pformat(ls_len)}"
         ) if gtokenizer.mpe is not None else None
-        token_ids = gtokenizer.convert_tokens_to_ids(tokens, labels)
-        print(f"Tokenized results:\n{pformat(token_ids)}\n")
+        in_dict = gtokenizer.convert_tokens_to_ids(tokens, labels)
+        if ls_embed:  # for pretty print purpose ONLY
+            in_dict["embed"] = np.array(ls_embed)
+        print(f"Tokenized results:\n{pformat(in_dict)}\n")
+        if ls_embed:
+            in_dict["embed"] = ls_embed
+        token_res.ls_tokens = tokens
+        token_res.ls_labels = labels
+        token_res.ls_embed = ls_embed
+        token_res.ls_len = ls_len
         inputs = gtokenizer.prepare_inputs_for_task(
-            token_ids,
+            in_dict,
             graph,
-            tgt_node_token,
-            tgt_edge_src_token,
-            tgt_edge_dst_token,
-            tgt_pos,
+            token_res=token_res,
         )
     elif isinstance(data, Dict):
         inputs = data
     else:
         raise ValueError(f"Type {type(data)} of data {data} is NOT implemented yet!")
+    if ls_embed:  # for pretty print purpose ONLY
+        inputs["embed"] = np.array(ls_embed)
     print(f"Inputs for model:\n{pformat(inputs)}\n")
     gtokenizer.set_eos_idx(inputs["input_ids"])
 

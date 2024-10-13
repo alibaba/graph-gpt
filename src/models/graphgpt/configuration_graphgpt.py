@@ -69,7 +69,10 @@ class GraphGPTConfig(LlamaConfig):
         layer_scale_init_value: float = 0,
         # For graphGPT input features stack
         stacked_feat: int = 1,
+        stack_method: str = None,  # short|long
         stacked_feat_agg_method: str = "sum",
+        # For input with embed features
+        embed_dim: int = 0,
         # For pre-train task
         next_n_token: int = 1,
         # For downstream tasks
@@ -88,7 +91,9 @@ class GraphGPTConfig(LlamaConfig):
         self.mlp_pdrop = mlp_pdrop
         self.layer_scale_init_value = layer_scale_init_value
         self.stacked_feat = stacked_feat
+        self.stack_method = stack_method
         self.stacked_feat_agg_method = stacked_feat_agg_method
+        self.embed_dim = embed_dim
         # 2. For downstream tasks
         self.cls_token_id = cls_token_id
         self.mlp = [] if mlp is None else list(mlp)

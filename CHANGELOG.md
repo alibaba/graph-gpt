@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2024-10-13
+
+### Dataset
+- Add edge-level example `ogbl-citation2` and `ogbl-wikikg2`
+- Add node-level example `ogbn-products`
+
+### Other
+- Code refactoring.
+- Update README to include details of Eulerian sequence
+
 ## [0.3.1] - 2024-08-18
 
 ### Model
@@ -13,7 +23,7 @@ All notable changes to this project will be documented in this file.
 - Code refactoring.
 - Tokenization config json refactoring.
 - Update vocab by adding some special tokens, e.g., `<bos>`, `<new>`, `<mask>` and etc.
-- Turn of optimizer offload in deepspeed config to boost the training speed.
+- Turn off optimizer offload in deepspeed config to boost the training speed.
 
 ## [0.3.0] - 2024-07-09
 

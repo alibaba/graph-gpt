@@ -1,14 +1,18 @@
 {
   "name_or_path": "ogbg_molpcba",
-  "dataset": "molecule",
-  "ensemble_datasets": ["ogbg-molpcba"],
+  "dataset": "ogbg-molpcba",
   "attr_world_identifier": "molecule",
-  "task_type": "pretrain",
-  "vocab_file": "vocab",
+  "task_type": "pretrain-mlm",
+  "pretrain_mlm": {
+    "name": "polynomial",
+    "params": {"fixed_ratio": 0.7, "power": 1, "mtp": [0.8, 0, 0.2]},
+    "info": "name->polynomial|cosine|fixed,power->3/2/1/0.5"
+  },
+  "vocab_file": "vocab512_stacked",
   "sampling": null,
   "semantics": {
-    "attr_assignment": "random",
-    "attr_shuffle": true,
+    "attr_assignment": "first",
+    "attr_shuffle": false,
     "node": {
       "discrete": "x",
       "continuous": null,
@@ -36,7 +40,8 @@
         "semantics_5",
         "semantics_6",
         "semantics_7",
-        "semantics_8"
+        "semantics_8",
+        "semantics_9"
       ],
       "numbers": [
         "<e>",
@@ -53,15 +58,21 @@
         "<8>",
         "<9>"
       ]
+    },
+    "instructions": {
+      "enable": false
     }
   },
   "structure": {
+    "nx": {
+      "enable": false
+    },
     "node": {
       "bos_token": "<bos>",
       "eos_token": "<eos>",
       "new_node_token": "<new>",
-      "node_scope": 256,
-      "scope_base": 256,
+      "node_scope": 512,
+      "scope_base": 512,
       "cyclic": 1
     },
     "edge": {

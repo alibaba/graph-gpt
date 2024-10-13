@@ -1,36 +1,44 @@
 {
-  "name_or_path": "pcqm4m-v2",
-  "dataset": "molecule",
-  "ensemble_datasets": ["PCQM4Mv2"],
-  "attr_world_identifier": "molecule",
+  "name_or_path": "ogbn_products",
+  "dataset": "ogbn-products",
+  "attr_world_identifier": "ogbn-products",
   "task_type": "pretrain-mlm",
   "pretrain_mlm": {
     "name": "polynomial",
     "params": {"fixed_ratio": 0.7, "power": 1, "mtp": [0.8, 0, 0.2]},
     "info": "name->polynomial|cosine|fixed,power->3/2/1/0.5"
   },
-  "vocab_file": "vocab",
-  "sampling": null,
-  "label_tokens_to_pad": ["<icl>"],
+  "vocab_file": "vocab512no_x",
+  "sampling": {
+    "node_ego": {
+      "depth_neighbors": [
+        [1, 24]
+      ],
+      "replace": false,
+      "valid": 1
+    }
+  },
   "semantics": {
-    "attr_assignment": "random",
+    "attr_assignment": "first",
     "attr_shuffle": false,
     "node": {
-      "discrete": "x",
+      "discrete": null,
+      "dim": 0,
       "continuous": null,
-      "ignored_val": "0",
-      "dim": 9
+      "ignored_val": null,
+      "embed": "x_embed",
+      "embed_dim": 100
     },
     "edge": {
-      "discrete": "edge_attr",
+      "discrete": null,
+      "dim": 0,
       "continuous": null,
-      "ignored_val": "0",
-      "dim": 3
+      "ignored_val": null
     },
     "graph": {
       "discrete": null,
       "continuous": null,
-      "ignored_val": "nan"
+      "ignored_val": null
     },
     "common": {
       "reserved_token": [
@@ -60,15 +68,21 @@
         "<8>",
         "<9>"
       ]
+    },
+    "instructions": {
+      "enable": false
     }
   },
   "structure": {
+    "nx": {
+      "enable": false
+    },
     "node": {
       "bos_token": "<bos>",
       "eos_token": "<eos>",
       "new_node_token": "<new>",
-      "node_scope": 64,
-      "scope_base": 64,
+      "node_scope": 512,
+      "scope_base": 512,
       "cyclic": 1
     },
     "edge": {

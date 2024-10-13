@@ -1,9 +1,15 @@
 # refer to: https://pytorch.org/docs/stable/data.html#torch.utils.data.Dataset
+from datetime import datetime
 import copy
 import random
 import numpy as np
 from tqdm import tqdm
 from typing import Optional, Dict, Iterable, Callable, List
+try:
+    NDArray = np.typing.NDArray
+except AttributeError:
+    NDArray = List
+from collections import defaultdict
 
 import torch
 from torch import Tensor
@@ -78,6 +84,7 @@ class MetisPartitionSeqMapDataset(torch.utils.data.Dataset):
         # 2. others
         self.subgraphs = None
         self.node2subgraph = {}
+        self.reset_samples_per_epoch = True
         self.reset_samples()
         self.kwargs = kwargs
 
@@ -87,7 +94,7 @@ class MetisPartitionSeqMapDataset(torch.utils.data.Dataset):
         else:
             return len(self.node2subgraph)
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: Optional[int] = None):
         print(f"RESET samples of {self.__class__.__name__} for epoch {epoch}!")
         epoch = 0 if epoch is None else epoch
         idx = epoch % len(self.subgraph_nodes)
@@ -201,7 +208,7 @@ class ShaDowKHopSeqMapDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.sample_idx)
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: Optional[int] = None):
         print(f"NOT RESET samples of {self.__class__.__name__} for epoch {epoch}!")
 
     def __getitem__(self, index):
@@ -294,6 +301,7 @@ class ShaDowKHopSeqFromEdgesMapDataset(torch.utils.data.Dataset):
         split_edge: Optional[Dict] = None,
         data_split: str = "train",
         pretrain_mode: bool = False,
+        allow_zero_edges: bool = False,
         **kwargs,
     ):
         if not WITH_TORCH_SPARSE:
@@ -308,14 +316,25 @@ class ShaDowKHopSeqFromEdgesMapDataset(torch.utils.data.Dataset):
         self.depth_neighbors = self.config["depth_neighbors"]
         self.neg_ratio = self.config["neg_ratio"]
         self.percent = self.config.get("percent", 100)
+        self.method = self.config.get("method", {"name": "global"})
+        self.sample_wgt = self.config.get("sample_wgt", False)
+        self.wgt = None
+        # TODO: experiment on this: whether should distinguish pre-train and fine-tune
+        # if pretrain_mode:
+        #     self.method = {"name": "global"}
         assert 100 >= self.percent > 0
         assert isinstance(self.percent, int)
+        assert self.method["name"] in {
+            "local",
+            "global",
+        }, f"method {self.method} is NOT implemented"
         self.replace = self.config["replace"]
         # other config
         self.split_edge = split_edge
         self.data_split = data_split
         self.pretrain_mode = pretrain_mode
         assert self.data_split == "train" if self.pretrain_mode else True
+        self.allow_zero_edges = allow_zero_edges
         # 1. set-up adj_t
         assert hasattr(data, "edge_index")
         if adj_t is None:
@@ -340,38 +359,75 @@ class ShaDowKHopSeqFromEdgesMapDataset(torch.utils.data.Dataset):
             self.data_split = "train"
             tmp_edge_index = self.data.edge_index.T.clone()
             mask = tmp_edge_index[:, 0] < tmp_edge_index[:, 1]
+            # CAUTION: mask is for bi-directional edge!!!
             self.split_edge = {"train": {"edge": tmp_edge_index[mask]}}
             # Here .clone() must be added, otherwise will be problematic in multiprocessing
             # Check https://github.com/pyg-team/pytorch_geometric/discussions/6919
         self.dict_ = self.split_edge[self.data_split]
+        self.train_count = None
+        if not pretrain_mode and self.data_split == "train" and self.sample_wgt:
+            # refer to: # https://github.com/snap-stanford/ogb/blob/f631af76359c9687b2fe60905557bbb241916258/examples/linkproppred/wikikg2/run.py#L190
+            train_triples = self.dict_
+            train_count = {}
+            for head, relation, tail in tqdm(
+                zip(
+                    train_triples["head"].numpy(),
+                    train_triples["relation"].numpy(),
+                    train_triples["tail"].numpy(),
+                )
+            ):
+                if (head, relation) not in train_count:
+                    train_count[(head, relation)] = 4
+                if (tail, -relation - 1) not in train_count:
+                    train_count[(tail, -relation - 1)] = 4
+
+                train_count[(head, relation)] += 1
+                train_count[(tail, -relation - 1)] += 1
+            self.train_count = train_count
+            print(f"using sample weight with {len(self.train_count)} dict entries!!!")
         self.all_edges_with_y = None
+        self.all_edge_attr = None
         self.sample_idx = None
         self.sampler = None
+        self.reset_samples_per_epoch = True
         self.reset_samples()
 
         self.kwargs = kwargs
 
-    def reset_samples(self, epoch: Optional[int] = None):
-        print(f"RESET samples of {self.__class__.__name__} for epoch {epoch}!")
+    def reset_samples(self, epoch: Optional[int] = 0, seed: Optional[int] = 42):
+        print(
+            f"[{datetime.now()}][data: {self.data_split}] RESET samples of {self.__class__.__name__} for epoch {epoch}!"
+        )
         pos_edges = self.dict_["edge"]  # [N_p, 2]
+        pos_edge_attr = self.dict_.get("pos_edge_attr", None)
         if "edge_neg" in self.dict_:
             neg_edges = self.dict_["edge_neg"]
+            neg_edge_attr = self.dict_.get("neg_edge_attr", None)
         else:
-            if self.percent < 100:
-                cnt_pos_edges = int(round(pos_edges.shape[0] * self.percent / 100.0))
-                pos_idx = torch.randint(pos_edges.shape[0], (cnt_pos_edges,))
-                pos_edges = pos_edges[pos_idx]
-                print(
-                    f"RESET pos_edges by sampling {cnt_pos_edges} pos edges from {self.dict_['edge'].shape[0]} pos edges!"
-                )
-            else:
-                cnt_pos_edges = pos_edges.shape[0]
-            cnt_neg_edges = self.neg_ratio * cnt_pos_edges
-            neg_edges = negative_sampling(
-                edge_index=self.new_edge_index,
+            pos_edges, pos_edge_attr = sample_pos_edges(
+                pos_edges,
+                pos_edge_attr,
+                percent=self.percent,
+                # reset sampling
+                seed=seed,
+                epoch=epoch,
+            )
+            neg_edge_attr_candidates = self.dict_.get("neg_edge_attr_candidates", None)
+            sampling_func = (
+                sample_neg_edges_globally
+                if self.method["name"] == "global"
+                else sample_neg_edges_locally
+            )
+            neg_edges, neg_edge_attr = sampling_func(
+                pos_edges,
+                pos_edge_attr,
+                # sampling params
+                self_looped_edge_index=self.new_edge_index,
                 num_nodes=self.data.num_nodes,
-                num_neg_samples=cnt_neg_edges,
-            ).T  # [N_e, 2]   N_e=neg_ratio*N_p
+                neg_ratio=self.neg_ratio,
+                neg_edge_attr_candidates=neg_edge_attr_candidates,
+                method=self.method,
+            )
         assert pos_edges.shape[1] == 2
         assert neg_edges.shape[1] == 2
         y_pos = torch.ones((pos_edges.shape[0], 1), dtype=torch.int64)
@@ -385,8 +441,31 @@ class ShaDowKHopSeqFromEdgesMapDataset(torch.utils.data.Dataset):
         self.sampler = list(self.sample_idx.tolist())
         random.shuffle(self.sampler)
         print(
-            f"FINISH reset of {self.__class__.__name__} with {y_pos.shape[0]} pos-samples and {y_neg.shape[0]} neg-samples!"
+            f"[{datetime.now()}] FINISH reset of {self.__class__.__name__} with {y_pos.shape[0]} pos-samples and {y_neg.shape[0]} neg-samples!\n"
         )
+        if (pos_edge_attr is not None) or (neg_edge_attr is not None):
+            # [N_p + N_e, edge_attr_dim]
+            self.all_edge_attr = torch.cat([pos_edge_attr, neg_edge_attr], dim=0)
+            assert self.all_edge_attr.shape[0] == self.all_edges_with_y.shape[0]
+        if self.train_count is not None:
+            # if put `defaultdict(lambda: 4)` in __init__, then error:
+            # Can't pickle local object 'ShaDowKHopSeqFromEdgesMapDataset.__init__.<locals>.<lambda>'
+            train_count = defaultdict(lambda: 4)
+            train_count.update(self.train_count)
+            ls_wgt = [
+                (train_count[(head, relation)], train_count[(tail, -relation - 1)])
+                for head, tail, relation in tqdm(
+                    zip(
+                        self.all_edges_with_y[:, 0].numpy(),
+                        self.all_edges_with_y[:, 1].numpy(),
+                        self.all_edge_attr[:, 1].numpy(),
+                    )
+                )
+            ]
+            arr_wgt = torch.tensor(ls_wgt).float()
+            self.wgt = torch.sqrt(1 / arr_wgt.sum(dim=-1))
+            assert self.wgt.shape[0] == self.all_edges_with_y.shape[0]
+            print(f"top 10 ls_wgt: {ls_wgt[:10]}")
 
     def __len__(self):
         return len(self.all_edges_with_y)
@@ -447,11 +526,29 @@ class ShaDowKHopSeqFromEdgesMapDataset(torch.utils.data.Dataset):
             if isinstance(v, Tensor) and v.size(0) == self.data.num_nodes:
                 data[k] = v[n_id_unique]
             elif isinstance(v, Tensor) and v.size(0) == self.data.num_edges:
-                # 1st mask to obtain subgraph edges' attrs, 2nd mask to remove target edge's attrs
-                data[k] = v[edge_mask][non_tgt_mask]
+                if self.allow_zero_edges and (
+                    edge_mask.numel() == 0 or non_tgt_mask.numel() == 0
+                ):
+                    print(
+                        f"[{datetime.now()}] Subgraph got no edges => [src, tgt]: {index} when assigning {k} !!!\n"
+                        f"edge_mask.numel()=={edge_mask.numel()}\n"
+                        f"non_tgt_mask.numel()=={non_tgt_mask.numel()}"
+                    )
+                    assert (
+                        edge_index.numel() == 0
+                    ), f"edge_index=={edge_index}\nedge_index.numel()=={edge_index.numel()}"
+                    data[k] = torch.empty((0,) + v.shape[1:], dtype=v.dtype)
+                else:
+                    # 1st mask to obtain subgraph edges' attrs, 2nd mask to remove target edge's attrs
+                    data[k] = v[edge_mask][non_tgt_mask]
             else:
                 data[k] = v
         data.idx = idx
+        if self.all_edge_attr is not None:
+            # [N_p+N_e, edge_attr_dim] -> [edge_attr_dim]
+            data.tgt_edge_attr = self.all_edge_attr[idx]
+        if self.wgt is not None:
+            data.wgt = self.wgt[idx]
         return idx, data
 
 
@@ -464,6 +561,242 @@ def _remove_target_edge(edge_index, src, dst, bidiretional=True):
     else:
         all_bool = ~forward_bool
     return edge_index[:, all_bool], all_bool
+
+
+def sample_pos_edges(
+    pos_edges,
+    pos_edge_attr,
+    percent,  # percentage of train samples used
+    # reset sampling
+    seed,
+    epoch,
+):
+    if percent < 100:
+        # logics below: for example, if `percent==10`, then epochs [0,9] will have the same seed
+        # `indices` will be the same, and epochs [0,9] will use non-repeated positive edges, 10% each epoch
+        # Then, from epochs [10,19], seed will be different, and will use another sequences of non-repeated positive edges.
+        tot_pos_edges = pos_edges.shape[0]
+        epoch_cyclic_period = int(round(100 / percent))
+        seed = seed + percent * epoch // 100
+        g = torch.Generator()
+        g.manual_seed(seed)
+        indices = torch.randperm(tot_pos_edges, generator=g)
+        cnt_pos_edges = int(round(tot_pos_edges * percent / 100.0))
+        cyclic_epoch = epoch % epoch_cyclic_period
+        pos_idx = indices[
+            cyclic_epoch * cnt_pos_edges : (cyclic_epoch + 1) * cnt_pos_edges
+        ]
+        pos_edges = pos_edges[pos_idx]
+        print(
+            f"[{datetime.now()}] RESET pos_edges by sampling {cnt_pos_edges} pos edges from {tot_pos_edges} pos edges!\n"
+            f"seed: {seed}, cyclic_epoch: {cyclic_epoch}, first 3 of pos_edges:\n{pos_edges[:3]}"
+        )
+        if pos_edge_attr is not None:
+            pos_edge_attr = pos_edge_attr[pos_idx]
+    return pos_edges, pos_edge_attr
+
+
+def sample_neg_edges_globally(
+    pos_edges,
+    pos_edge_attr,
+    *,
+    # sampling params
+    self_looped_edge_index,
+    num_nodes,
+    neg_ratio,
+    neg_edge_attr_candidates,
+    **kwargs,
+):
+    print(f"[{datetime.now()}] GLOBALLY sampling neg edges and edge-attrs ...")
+    cnt_neg_edges = neg_ratio * pos_edges.shape[0]
+    neg_edges = negative_sampling(
+        edge_index=self_looped_edge_index,
+        num_nodes=num_nodes,
+        num_neg_samples=cnt_neg_edges,
+    ).T  # [N_e, 2]   N_e=neg_ratio*N_p
+    neg_edge_attr = None
+    if neg_edge_attr_candidates is not None:
+        cnt_candidates = len(neg_edge_attr_candidates)
+        idx_attr = torch.randint(cnt_candidates, (cnt_neg_edges,))
+        # [cnt_candidates, edge_attr_dim] & [N_e] -> [N_e, edge_attr_dim]
+        neg_edge_attr = neg_edge_attr_candidates[idx_attr]
+    return neg_edges, neg_edge_attr
+
+
+def sample_neg_edges_locally(
+    pos_edges,
+    pos_edge_attr,
+    *,
+    # sampling params
+    num_nodes,
+    neg_ratio,
+    neg_edge_attr_candidates,
+    method: Dict,
+    **kwargs,
+):
+    # Given positive triplet, i.e., head, tail, edge (e.g., rel for KG), we can have 3 sampling strategy:
+    # 1. fix `head` & `rel`, randomly sample `tail`
+    # 2. fix `rel` & `tail`, randomly sample `head`
+    # 3. fix `head` & `tail`, randomly sample `edge`
+    print(f"[{datetime.now()}] LOCALLY sampling neg edges and edge-attrs ...")
+    cnt_neg_edges = neg_ratio * pos_edges.shape[0]
+
+    ls_neg_edges_and_attrs = []
+    if method["sample_tails"]:
+        ls_neg_edges_and_attrs.append(
+            _local_sample_tails(
+                pos_edges, pos_edge_attr, num_nodes=num_nodes, neg_ratio=neg_ratio
+            )
+        )
+    if method["sample_heads"]:
+        ls_neg_edges_and_attrs.append(
+            _local_sample_heads(
+                pos_edges, pos_edge_attr, num_nodes=num_nodes, neg_ratio=neg_ratio
+            )
+        )
+    if method["sample_edges"]:
+        ls_neg_edges_and_attrs.append(
+            _local_sample_edges(
+                pos_edges,
+                pos_edge_attr,
+                neg_edge_attr_candidates=neg_edge_attr_candidates,
+                neg_ratio=neg_ratio,
+            )
+        )
+
+    ls_neg_edges = [x[0] for x in ls_neg_edges_and_attrs]
+    ls_neg_edge_attr = [x[1] for x in ls_neg_edges_and_attrs]
+
+    neg_edge_candidates = torch.vstack(ls_neg_edges)
+
+    # 2. select required number of neg edges and egde-attr
+    g = torch.Generator()
+    indices = torch.randperm(neg_edge_candidates.shape[0], generator=g)[:cnt_neg_edges]
+    neg_edges = neg_edge_candidates[indices]
+
+    neg_edge_attr = None
+    if pos_edge_attr is not None:
+        neg_ea_candidates = torch.vstack(ls_neg_edge_attr)
+        assert neg_edge_candidates.shape[0] == neg_ea_candidates.shape[0]
+        neg_edge_attr = neg_ea_candidates[indices]
+    return neg_edges, neg_edge_attr
+
+
+def _local_sample_tails(
+    pos_edges,
+    pos_edge_attr,
+    *,
+    num_nodes,
+    neg_ratio,
+):
+    print(f"[{datetime.now()}] fix `head` & `edge`, randomly sample `tail` ...")
+    # fix `head` & `edge`, randomly sample `tail`
+    cnt_pos_edges = pos_edges.shape[0]
+    cnt_neg_edges = neg_ratio * pos_edges.shape[0]
+    # neg for heads, i.e., as tail of true head
+    head_neg = torch.randint(num_nodes, (cnt_neg_edges, 1))
+    # [Np, 1] -> [Np, nr] -> [Np*nr, 1]
+    head = pos_edges[:, 0:1].expand(cnt_pos_edges, neg_ratio).reshape((-1, 1))
+    # [Np*nr, 1] & [Np*nr, 1] -> [Np*nr, 2]
+    neg_edges = torch.hstack([head, head_neg])
+
+    neg_edge_attr = None
+    if pos_edge_attr is not None:
+        # [Np, dim] -> [Np, dim*nr] -> [Np*nr, dim]
+        neg_edge_attr = torch.hstack([pos_edge_attr] * neg_ratio).reshape(
+            [-1, pos_edge_attr.shape[1]]
+        )
+        assert (
+            neg_edge_attr.shape[0] == neg_edges.shape[0]
+        ), f"{neg_edge_attr.shape[0]} != {neg_edges.shape[0]}"
+    return neg_edges, neg_edge_attr
+
+
+def _local_sample_heads(
+    pos_edges,
+    pos_edge_attr,
+    *,
+    num_nodes,
+    neg_ratio,
+):
+    print(f"[{datetime.now()}] fix `tail` & `edge`, randomly sample `head` ...")
+    # fix `tail` & `edge`, randomly sample `head`
+    cnt_pos_edges = pos_edges.shape[0]
+    cnt_neg_edges = neg_ratio * pos_edges.shape[0]
+    # neg for tails, i.e., as head of true tail
+    tail_neg = torch.randint(num_nodes, (cnt_neg_edges, 1))
+    # [Np, 1] -> [Np, nr] -> [Np*nr, 1]
+    tail = pos_edges[:, 1:2].expand(cnt_pos_edges, neg_ratio).reshape((-1, 1))
+    # [Np*nr, 1] & [Np*nr, 1] -> [Np*nr, 2]
+    neg_edges = torch.hstack([tail_neg, tail])
+
+    neg_edge_attr = None
+    if pos_edge_attr is not None:
+        # [Np, dim] -> [Np, dim*nr] -> [Np*nr, dim]
+        neg_edge_attr = torch.hstack([pos_edge_attr] * neg_ratio).reshape(
+            [-1, pos_edge_attr.shape[1]]
+        )
+        assert (
+            neg_edge_attr.shape[0] == neg_edges.shape[0]
+        ), f"{neg_edge_attr.shape[0]} != {neg_edges.shape[0]}"
+    return neg_edges, neg_edge_attr
+
+
+def _local_sample_edges(
+    pos_edges,
+    pos_edge_attr,
+    *,
+    neg_edge_attr_candidates,
+    neg_ratio,
+):
+    print(f"[{datetime.now()}] fix `head` & `tail`, randomly sample `edge` ...")
+    assert len(pos_edges.shape) == 2
+    assert pos_edges.shape[1] == 2
+
+    neg_edges = torch.empty((0, 2), dtype=pos_edges.dtype)
+    neg_edge_attr = None
+    if pos_edge_attr is not None:
+        neg_edges = torch.hstack([pos_edges] * neg_ratio).reshape([-1, 2])
+        pos_edge_attr = torch.hstack([pos_edge_attr] * neg_ratio).reshape(
+            [-1, pos_edge_attr.shape[1]]
+        )
+        neg_edge_attr = _get_edge_attr_neg(pos_edge_attr, neg_edge_attr_candidates)
+        assert (
+            neg_edges.shape[0] == neg_edge_attr.shape[0]
+        ), f"{neg_edges.shape[0]} != {neg_edge_attr.shape[0]}"
+    return neg_edges, neg_edge_attr
+
+
+def _get_edge_attr_neg(pos_edge_attr, neg_edge_attr_candidates):
+    cnt_pos_edges = pos_edge_attr.shape[0]
+    cnt_candidates = len(neg_edge_attr_candidates)
+    assert (
+        cnt_candidates > 2
+    ), f"NOT implemented for cnt_candidates ({cnt_candidates}) <= 2"
+
+    idx_attr1 = torch.randint(cnt_candidates, (cnt_pos_edges,))
+    neg_edge_attr1 = neg_edge_attr_candidates[idx_attr1]
+
+    idx_attr2 = torch.randint(cnt_candidates, (cnt_pos_edges,))
+    neg_edge_attr2 = neg_edge_attr_candidates[idx_attr2]
+
+    mask1 = _get_row_equal_mask(pos_edge_attr, neg_edge_attr1)
+    neg_edge_attr = (~mask1).view((-1, 1)).to(
+        torch.int64
+    ) * neg_edge_attr1 + mask1.view((-1, 1)).to(torch.int64) * neg_edge_attr2
+    mask = _get_row_equal_mask(pos_edge_attr, neg_edge_attr)
+    print(
+        f"[WARNING] {mask.sum().item()} out of {neg_edge_attr.shape[0]} neg-edge-attr is the same as pos-edge-attr"
+    )
+    return neg_edge_attr
+
+
+def _get_row_equal_mask(a, b):
+    # return mask tensor of shape (a.shape[0],), True if the row is equal
+    assert (
+        len(a.shape) == len(b.shape) == 2
+    ), f"a -> {len(a.shape)}, b -> {len(b.shape)}"
+    return ~torch.abs(a - b).sum(dim=-1).to(bool)
 
 
 @_map_dataset("edge_random")
@@ -543,11 +876,12 @@ class RandomEdgesMapDataset(torch.utils.data.Dataset):
         self.all_edges_with_y = None
         self.ls_edges = None
         self.ls_subgraphs = None
+        self.reset_samples_per_epoch = True
         self.reset_samples()
 
         self.kwargs = kwargs
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: Optional[int] = None):
         print(f"RESET samples of {self.__class__.__name__} for epoch {epoch}!")
         pos_edges = self.dict_["edge"]  # [N_p, 2]
         if "edge_neg" in self.dict_:
@@ -702,10 +1036,11 @@ class RandomNodesMapDataset(torch.utils.data.Dataset):
             random.shuffle(self.sampler)
         # 4. others
         self.samples = None
+        self.reset_samples_per_epoch = True
         self.reset_samples()
         self.kwargs = kwargs
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: Optional[int] = None):
         print(f"RESET samples of {self.__class__.__name__} for epoch {epoch}!")
         tgt_nodes = torch.arange(self.data.num_nodes, dtype=torch.int64).view(
             1, -1
@@ -818,7 +1153,7 @@ class EnsembleNodesEdgesMapDataset(torch.utils.data.Dataset):
         self.reset_samples()
         self.kwargs = kwargs
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: Optional[int] = None):
         for dataset in self.ls_dataset:
             dataset.reset_samples(epoch)
 
@@ -857,6 +1192,7 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         provide_sampler: bool = False,
         with_prob: bool = False,
         ensemble_paths: bool = False,
+        shift_distribution: bool = False,
         **kwargs,
     ):
         self.cls = data._data.__class__
@@ -869,7 +1205,7 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         # cannot pickle 'torch._C.Generator' object, so self.g has to None
         if self.permute_nodes:
             print(
-                "[Warning] permute_nodes enabled! edge_attr remains the same; edge_index/x will be affected!\n"
+                "[Warning] permute_nodes enabled! edge_attr remains the same; edge_index and node-attrs will be affected!\n"
                 * 5
             )
         # 1. set-up sampler
@@ -887,6 +1223,7 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         else:
             self.sample_idx = sample_idx
         self.with_prob = with_prob
+        self.shift_distribution = shift_distribution
         if provide_sampler:
             assert self.sample_idx is not None
             if self.with_prob:
@@ -894,6 +1231,18 @@ class GraphsMapDataset(torch.utils.data.Dataset):
                     dataset=data, idx=sample_idx
                 )
                 self.sampler = self._generate_samples_with_prob()
+            elif self.shift_distribution:
+                self.vec_dist, self.min_num_nodes = _get_target_distribution(data)
+                self.dict_num_nodes2indices = _get_candidate_graphs_mapping(
+                    data, sample_idx
+                )
+                self.sampler = shift_to_target_distribution(
+                    train_num=len(self.sample_idx),
+                    min_num_nodes=self.min_num_nodes,
+                    distribution=self.vec_dist,
+                    dict_num_nodes2indices=self.dict_num_nodes2indices,
+                    seed=0,
+                )
             else:
                 self.sampler = self.sample_idx.tolist()
             random.shuffle(self.sampler)
@@ -922,15 +1271,32 @@ class GraphsMapDataset(torch.utils.data.Dataset):
         )
         return picked_graph.tolist()
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: int = 0):
         if self.with_prob:
             self.sampler = self._generate_samples_with_prob()
             print(
-                f"RESET samples of {self.__class__.__name__} of {self.num_graphs} graphs with prob for epoch {epoch}!\nObtaining {len(np.unique(self.sampler))} unique graphs"
+                f"[{datetime.now()}] RESET samples of {self.__class__.__name__} of {self.num_graphs} graphs with prob for epoch {epoch}!\nObtaining {len(np.unique(self.sampler))} unique graphs"
+            )
+        elif self.shift_distribution:
+            self.sampler = shift_to_target_distribution(
+                train_num=len(self.sample_idx),
+                min_num_nodes=self.min_num_nodes,
+                distribution=self.vec_dist,
+                dict_num_nodes2indices=self.dict_num_nodes2indices,
+                seed=epoch + seed if epoch is not None else seed,
+            )
+            self.sampler = sorted(self.sampler)
+            num = len(self.sampler) // 2
+            print(
+                f"[{datetime.now()}] RESET samples of {self.__class__.__name__} of {self.num_graphs} graphs with shifted distribution for epoch {epoch}!"
+                f"\nObtaining {len(self.sampler)} total graphs"
+                f"\n{len(np.unique(self.sampler))} unique graphs"
+                f"\nself.sampler[{num}:{num+10}] -> {self.sampler[num:num+10]}"
             )
         else:
+            self.sampler = sorted(self.sampler)
             print(
-                f"NOT RESET samples of {self.__class__.__name__} of {self.num_graphs} graphs for epoch {epoch}!"
+                f"[{datetime.now()}] NOT RESET samples of {self.__class__.__name__} of {self.num_graphs} graphs for epoch {epoch}!"
             )
 
     def get_random_sample_idx(self):
@@ -992,6 +1358,91 @@ def _get_graph_node_idx(dataset: InMemoryDataset, graph_idx: torch.Tensor):
     return gn_idx
 
 
+def _get_target_distribution(dataset: InMemoryDataset):
+    # obtain distribution p(num_nodes) of `valid` & `test-dev` graphs for PCQM4M-v2
+    x_idx = dataset.slices["x"]
+    vec_num_nodes = x_idx[1:] - x_idx[:-1]
+
+    dict_idx = dataset.get_idx_split()
+    target_idx = torch.cat([dict_idx["valid"], dict_idx["test-dev"]])
+    target_num_nodes = vec_num_nodes[target_idx].numpy()
+
+    max_num_nodes = target_num_nodes.max().item()
+    min_num_nodes = target_num_nodes.min().item()
+
+    values, counts = np.unique(target_num_nodes, return_counts=True)
+
+    eps = 0.1
+    vec_dist = np.zeros(max_num_nodes - min_num_nodes + 1) + eps
+    for val, cnt in zip(values, counts):
+        val_idx = val - min_num_nodes
+        vec_dist[val_idx] = vec_dist[val_idx] + cnt
+    vec_dist = vec_dist / vec_dist.sum()
+    return vec_dist, min_num_nodes
+
+
+def _get_candidate_graphs_mapping(dataset: InMemoryDataset, train_idx: Tensor):
+    # obtain `dict_num_nodes2indices`
+    # key is `num_nodes`, val is `list of graph's index`
+    x_idx = dataset.slices["x"]
+    vec_num_nodes = x_idx[1:] - x_idx[:-1]
+    train_num_nodes = vec_num_nodes[train_idx]
+    dict_num_nodes2indices = {}
+    for num_nodes, idx in zip(train_num_nodes.numpy(), train_idx.numpy()):
+        if num_nodes not in dict_num_nodes2indices:
+            dict_num_nodes2indices[num_nodes] = []
+        dict_num_nodes2indices[num_nodes].append(idx)
+    dict_num_nodes2indices = {k: np.array(v) for k, v in dict_num_nodes2indices.items()}
+    return dict_num_nodes2indices
+
+
+def shift_to_target_distribution(
+    train_num: int,
+    min_num_nodes: int,
+    distribution: NDArray,
+    dict_num_nodes2indices: Dict,
+    seed: int,
+):
+    # set `seed` to ensure the same results across different workers
+    print(f"using seed {seed} to shift distribution")
+    rng = np.random.default_rng(seed)
+    cnts = (train_num * distribution).round().astype(int)
+
+    all_idx = []
+    for raw_i, cnt in enumerate(cnts):
+        raw_num_nodes = raw_i + min_num_nodes
+        num_nodes = raw_num_nodes
+        num_shift = 0
+        # If given `num_nodes` has no graphs in train data, then shift the `num_nodes` to its neighbors
+        while num_nodes not in dict_num_nodes2indices:
+            num_shift = num_shift + 1
+            if raw_num_nodes + num_shift in dict_num_nodes2indices:
+                num_nodes = raw_num_nodes + num_shift
+            elif raw_num_nodes - num_shift in dict_num_nodes2indices:
+                num_nodes = raw_num_nodes - num_shift
+            else:
+                assert (
+                    num_shift < 30
+                ), f"num_shift: {num_shift} too large, break the loop!"
+        ls_candidate_index = dict_num_nodes2indices[num_nodes]  # np.array
+        if len(ls_candidate_index) >= cnt:
+            ls_chosen_index = rng.choice(
+                ls_candidate_index, size=cnt, replace=False
+            ).tolist()
+        else:
+            ls_chosen_index = (
+                rng.choice(
+                    ls_candidate_index, size=cnt - len(ls_candidate_index), replace=True
+                ).tolist()
+                + ls_candidate_index.tolist()
+            )
+        assert (
+            len(ls_chosen_index) == cnt
+        ), f"len(ls_chosen_index): {len(ls_chosen_index)} != cnt: {cnt}"
+        all_idx.extend(ls_chosen_index)
+    return all_idx
+
+
 class EnsembleGraphsMapDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -1013,9 +1464,9 @@ class EnsembleGraphsMapDataset(torch.utils.data.Dataset):
         random.shuffle(self.sampler)
         self.reset_samples()
 
-    def reset_samples(self, epoch: Optional[int] = None):
+    def reset_samples(self, epoch: Optional[int] = None, seed: Optional[int] = None):
         for ds in self.datasets:
-            ds.reset_samples(epoch)
+            ds.reset_samples(epoch, seed)
 
     def __len__(self):
         return self.num_graphs

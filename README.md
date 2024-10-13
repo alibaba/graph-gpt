@@ -8,6 +8,13 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 
 ## Update:
 
+***10/13/2024***
+1. v0.4.0 released. Check `CHANGELOG.md` for details.
+2. Archiving SOTA in 3 large scale ogb datasets:
+   - PCQM4M-v2 (no 3D): 0.0802 (previous SOTA 0.0821)
+   - ogbl-ppa: 68.76 (previous SOTA 65.24)
+   - ogbl-citation2: 91.15 (previous SOTA 90.72)
+
 ***08/18/2024***
 1. v0.3.1 released. Check `CHANGELOG.md` for details.
 
@@ -64,21 +71,20 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 
 
 ## Overview:
-![Alt text](pic/architect.png?raw=true "Model Overview")
+![Alt text](pic/pre-train-fine-tune.png?raw=true "Model Overview")
 
-GraphGPT is a novel model for Graph learning by self-supervised Generative Pre-training Transformers.
-Our model transforms each graph or sampled subgraph into a sequence of tokens representing the node,
-edge and attributes reversibly using the Eulerian path first.
-Then we feed the tokens into a standard transformer decoder and pre-train it with the next-token-prediction (NTP) task.
-Lastly, we fine-tune the GraphGPT model with the supervised tasks.
-This intuitive, yet effective model achieves superior or close results to the state-of-the-art methods
-for the graph-, edge- and node-level tasks on the large scale molecular dataset PCQM4Mv2,
-the protein-protein association dataset ogbl-ppa and the ogbn-proteins dataset from the Open Graph Benchmark (OGB).
-Furthermore, the generative pre-training enables us to train GraphGPT up to 400M+ parameters
-with consistently increasing performance, which is beyond the capability of GNNs and previous graph transformers.
-The source code and pre-trained checkpoints will be released in this repository to pave the way for the
-graph foundation model research, and also to assist the scientific discovery in pharmaceutical,
-chemistry, material and bio-informatics domains, etc.
+We propose GraphGPT, a novel model for Graph learning by self-supervised Generative Pre-training Graph Eulerian Transformers (GET).
+We first introduce GET, which consists of a vanilla transformer encoder/decoder backbone and a transformation that 
+turns each graph or sampled subgraph into a sequence of tokens representing the node, edge and attributes reversibly 
+using the Eulerian path. 
+Then we pre-train the GET with either the next-token-prediction (NTP) task or scheduled 
+masked-token-prediction (SMTP) task. 
+Lastly, we fine-tune the model with the supervised tasks.
+This intuitive, yet effective model achieves superior or close results to the state-of-the-art methods for the graph-, 
+edge- and node-level tasks on the large scale molecular dataset PCQM4Mv2, the protein-protein association dataset 
+ogbl-ppa, citation network dataset ogbl-citation2 and the ogbn-proteins dataset from the Open Graph Benchmark (OGB).
+Furthermore, the generative pre-training enables us to train GraphGPT up to 2B+ parameters with consistently 
+increasing performance, which is beyond the capability of GNNs and previous graph transformers.
 
 ### Graph to Sequences
 
@@ -88,20 +94,29 @@ the sequences. We name these methods as `short`, `long` and `prolonged`.
 Given the graph, we Eulerize it first, and then turn it into an equivalent sequence. And then, we re-index the nodes
 cyclically.
 
-<img src="pic/cyclic-re-index.png" width="50%" height="50%" />
+<img src="pic/serializing.png" width="100%" height="100%" />
 
-Assume the graph has two node attributes and one edge attributes, and then the `short` method attaches the attributes
-as follows:
+Assume the graph has one node attributes and one edge attributes, and then the `short`, `long` and `prolong` method 
+are shown above.
 
-<img src="pic/short.png" width="50%" height="50%" />
+[//]: # (attaches the attributes)
 
-And the `long` method as follows:
+[//]: # (as follows:)
 
-<img src="pic/long.png" width="80%" height="80%" />
+[//]: # ()
+[//]: # (<img src="pic/short.png" width="50%" height="50%" />)
 
-And the `prolong` method as below:
+[//]: # ()
+[//]: # (And the `long` method as follows:)
 
-![prolong](pic/prolong.png)
+[//]: # ()
+[//]: # (<img src="pic/long.png" width="80%" height="80%" />)
+
+[//]: # ()
+[//]: # (And the `prolong` method as below:)
+
+[//]: # ()
+[//]: # (![prolong]&#40;pic/prolong.png&#41;)
 
 In the above figures, `n1`, `n2` and `e1` represents the tokens of node and edge attributes, and `[p]` represents the
 padding token.
@@ -116,6 +131,8 @@ After hitting the boundary, e.g., `255`, the next node index will be 0.
 <img src="pic/re-index.png" width="70%" height="70%" />
 
 ## Results
+
+Outdated. To be updated soon. 
 
 ### Graph-level-task: PCQM4M-v2 dataset
 
@@ -162,14 +179,14 @@ to download and preprocess dataset separately.
 
 ## Run
 
-1. Modify parameters in `./examples/ggpt_pretrain.sh`, e.g., `dataset_name`, `model_name`,
-  `batch_size`, `workerCount` and etc, and then run `./examples/ggpt_pretrain.sh` to pretrain
-  the model with the dataset. 
-   - To run toy example, run `./examples/toy_examples/ggpt_pretrain.sh` directly.
-2. Modify parameters in `./examples/ggpt_supervised.sh`, e.g., `dataset_name`, `model_name`,
-  `batch_size`, `workerCount`, `pretrain_cpt` and etc, and then run `./examples/ggpt_supervised.sh`
+1. Pre-train: Modify parameters in `./examples/graph_lvl/pcqm4m_v2_pretrain.sh`, e.g., `dataset_name`, `model_name`,
+  `batch_size`, `workerCount` and etc, and then run `./examples/graph_lvl/pcqm4m_v2_pretrain.sh` to pretrain
+  the model with the PCQM4M-v2 dataset. 
+   - To run toy example, run `./examples/toy_examples/reddit_pretrain.sh` directly.
+2. Fine-tune: Modify parameters in `./examples/graph_lvl/pcqm4m_v2_supervised.sh`, e.g., `dataset_name`, `model_name`,
+  `batch_size`, `workerCount`, `pretrain_cpt` and etc, and then run `./examples/graph_lvl/pcqm4m_v2_supervised.sh`
   to fine-tune with downstream tasks.
-   - To run toy example, run `./examples/toy_examples/ggpt_supervised.sh` directly.
+   - To run toy example, run `./examples/toy_examples/reddit_supervised.sh` directly.
 
 
 ## Code Norm

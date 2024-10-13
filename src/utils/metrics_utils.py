@@ -41,6 +41,9 @@ class SingleLabelClassificationMetrics:
             self.auroc_metric.update(y_pred, labels)
         else:
             y_pred = torch.argmax(logits, dim=-1)  # [bz, vocab] -> [bz]
+            labels = labels.reshape(y_pred.shape)
+            idx = idx.reshape(y_pred.shape)
+        assert y_pred.shape == labels.shape, f"{y_pred.shape} != {labels.shape}"
         self.acc_metric.update(y_pred, labels)
 
         # cpu_device = torch.device("cpu")

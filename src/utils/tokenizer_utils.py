@@ -3,8 +3,10 @@ import math
 
 import numpy as np
 import torch
-from typing import List, Union, Tuple, Dict, Iterable
+from typing import List, Union, Tuple, Dict, Iterable, Optional
 from torch_geometric.data import Data
+from dataclasses import dataclass
+from transformers.utils import ModelOutput
 from . import control_flow
 
 TASK_TYPES = {
@@ -203,12 +205,16 @@ def _pad_stacked_targets(i, ls_token_ids, node_attr_dim=9, padding_val=-100):
 
 
 @_inputs_deco("pretrain-mlm")
-def prepare_inputs_for_pretrain(in_dict, *, graph: Data, gtokenizer, **kwargs):
+def prepare_inputs_for_pretrain_mlm(
+    in_dict, *, graph: Data, gtokenizer, ls_len: List[int], **kwargs
+):
     # add eos to input_ids
     add_eos = True
     input_ids = in_dict["input_ids"] + in_dict["labels"][-1:]  # add eos
     len_extended_tokens = 1
-    if len(gtokenizer.config["ensemble_datasets"]) >= 2:
+    ls_len[-1] = ls_len[-1] + 1
+    if len(gtokenizer.config.get("ensemble_datasets", [])) >= 2:
+        assert gtokenizer.mpe is None, "NOT implemented for packed token sequence"
         reserved_semantics_token = gtokenizer.get_common_semantics()[graph.idx_of_ds]
         token_id = gtokenizer._map_tokens_to_ids(reserved_semantics_token)
         ls_extend_tokens = [token_id]
@@ -220,6 +226,7 @@ def prepare_inputs_for_pretrain(in_dict, *, graph: Data, gtokenizer, **kwargs):
         input_ids.extend(ls_extend_tokens)
         len_extended_tokens += len(ls_extend_tokens)
 
+    # 1. set-up parameters for SMTP: scheduled masked token prediction
     mask_token_id = gtokenizer.get_mask_token_id()
     pad_token_id = gtokenizer.pad_token_id
     assert mask_token_id != pad_token_id
@@ -238,27 +245,44 @@ def prepare_inputs_for_pretrain(in_dict, *, graph: Data, gtokenizer, **kwargs):
     mask_token_precent = conf["params"]["mtp"]
     # [MASK] token 80% of the time, i.e., (0.8, 0.1, 0.1) -> BERT paper
     all_vocab_ids = gtokenizer.get_all_vocab_ids()
-    if isinstance(input_ids[0], Iterable):
-        input_ids, labels_mask = _mask_stacked_input_ids(
-            input_ids,
-            mask_token_id,
-            all_vocab_ids,
-            mask_ratio,
-            mask_token_precent=mask_token_precent,
-            pad_token_id=pad_token_id,
-            has_eos=add_eos,
-            stack_method=gtokenizer.stack_method,
-        )
-    else:
-        assert isinstance(input_ids[0], int)
-        input_ids, labels_mask = _mask_input_ids(
-            input_ids,
-            mask_token_id,
-            all_vocab_ids,
-            mask_ratio,
-            mask_token_precent,
-            pad_token_id,
-        )
+    # 2. mask input_ids and generate corresponding labels for training
+    new_input_ids, new_labels_mask = [], []
+    idx_left = 0
+    for idx_right in ls_len:
+        _input_ids = input_ids[idx_left:idx_right]
+        idx_left = idx_right
+        if isinstance(input_ids[0], Iterable):
+            last_token_id = _input_ids[-1][0]
+            assert (
+                last_token_id == gtokenizer.get_eos_token_id()
+            ), f"{last_token_id}!={gtokenizer.get_eos_token_id()}\nls_len:{ls_len}\nidx_right:{idx_right},\ninput_ids:{input_ids}\n_input_ids:{_input_ids}"
+            _input_ids, _labels_mask = _mask_stacked_input_ids(
+                _input_ids,
+                mask_token_id,
+                all_vocab_ids,
+                mask_ratio,
+                mask_token_precent=mask_token_precent,
+                pad_token_id=pad_token_id,
+                has_eos=add_eos,
+                stack_method=gtokenizer.stack_method,
+            )
+        else:
+            assert isinstance(input_ids[0], int)
+            last_token_id = _input_ids[-1]
+            assert (
+                last_token_id == gtokenizer.get_eos_token_id()
+            ), f"{last_token_id}!={gtokenizer.get_eos_token_id()}\nls_len:{ls_len}\nidx_right:{idx_right},\ninput_ids:{input_ids}\n_input_ids:{_input_ids}"
+            _input_ids, _labels_mask = _mask_input_ids(
+                _input_ids,
+                mask_token_id,
+                all_vocab_ids,
+                mask_ratio,
+                mask_token_precent,
+                pad_token_id,
+            )
+        new_input_ids.extend(_input_ids)
+        new_labels_mask.extend(_labels_mask)
+    input_ids, labels_mask = new_input_ids, new_labels_mask
     if hasattr(gtokenizer, "stack_method") and gtokenizer.stack_method == "long":
         node_attr_dim = gtokenizer.config["semantics"]["node"]["dim"]
         labels_mask = [
@@ -279,6 +303,13 @@ def prepare_inputs_for_pretrain(in_dict, *, graph: Data, gtokenizer, **kwargs):
         )
     )
     in_dict["attention_mask"].extend([1] * len_extended_tokens)
+    if "embed" in in_dict:
+        dim = len(in_dict["embed"][0])
+        extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
+        in_dict["embed"].extend(extended_embed)
+        assert len(in_dict["embed"]) == len(
+            in_dict["input_ids"]
+        ), f"{len(in_dict['embed'])} != {len(in_dict['input_ids'])}"
     return in_dict
 
 
@@ -473,44 +504,69 @@ def prepare_inputs_for_graph_lvl_task(
 
 @_inputs_deco("edge")
 def prepare_inputs_for_edge_lvl_task(
-    in_dict: Dict[str, List[int]],
+    in_dict: Dict[str, List[Union[int, List[int]]]],
     *,
     graph: Data,
-    eos_token_id: int,
+    gtokenizer,
     tgt_edge_src_token_id: Union[int, Tuple, List],
     tgt_edge_dst_token_id: Union[int, Tuple, List],
+    tgt_edge_attr_token_id: Union[Tuple[int], List[int]],
     **kwargs,
 ):
     ls_src_dst = [tgt_edge_src_token_id, tgt_edge_dst_token_id]
-    random.shuffle(ls_src_dst)
+    if not tgt_edge_attr_token_id:
+        random.shuffle(ls_src_dst)
     if isinstance(tgt_edge_dst_token_id, Tuple) or isinstance(
         tgt_edge_dst_token_id, List
     ):
         ls_src_dst = [item for row in ls_src_dst for item in row]
-    extended_token_len = len(ls_src_dst) + 1  # +1 for eos token
+    raw_ls_extend_tokens = list(ls_src_dst)
+    ls_extend_tokens = list(ls_src_dst)
+    ls_extend_emb = []
+    if isinstance(in_dict["input_ids"][0], List):
+        dict_mapping = {x[0]: x for x in in_dict["input_ids"]}
+        ls_extend_tokens = [list(dict_mapping[x]) for x in raw_ls_extend_tokens]
+        if tgt_edge_attr_token_id:
+            # use `default edge-attr` as src-node's edge attr, and `tgt_edge_attr` as dst-node's edge attr
+            assert len(ls_extend_tokens) == 2
+            default_edge_attr_id = gtokenizer.get_default_edge_attr_id()
+            edge_dim = gtokenizer.config["semantics"]["edge"]["dim"]
+            assert len(default_edge_attr_id) == len(tgt_edge_attr_token_id) == edge_dim
+            ls_extend_tokens[0] = ls_extend_tokens[0][:-edge_dim] + list(
+                default_edge_attr_id
+            )
+            ls_extend_tokens[1] = ls_extend_tokens[1][:-edge_dim] + list(
+                tgt_edge_attr_token_id
+            )
+        if "embed" in in_dict:
+            assert len(in_dict["input_ids"]) == len(in_dict["embed"])
+            dict_emb_mapping = {
+                x[0]: y for x, y in zip(in_dict["input_ids"], in_dict["embed"])
+            }
+            ls_extend_emb = [list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens]
+    in_dict = _extend_input_dict(
+        in_dict,
+        ls_extend_tokens,
+        cmpe=gtokenizer.cmpe,
+    )
     in_dict["idx"] = (
         graph.seed_node.tolist() if hasattr(graph, "seed_node") else ls_src_dst
     )
-    in_dict["input_ids"].extend([eos_token_id] + ls_src_dst)
-    in_dict["position_ids"].extend(
-        list(
-            range(
-                len(in_dict["position_ids"]),
-                len(in_dict["position_ids"]) + extended_token_len,
-            )
-        )
-    )
-    in_dict["labels"].extend([-100] * extended_token_len)
-    in_dict["attention_mask"].extend([1] * extended_token_len)
     in_dict["edge_labels"] = graph.y.item()
+    if "embed" in in_dict:
+        in_dict["embed"].extend(ls_extend_emb)
+        assert len(in_dict["input_ids"]) == len(in_dict["embed"])
+    if hasattr(graph, "wgt"):
+        in_dict["wgt"] = graph.wgt.item()
     return in_dict
 
 
 @_inputs_deco("node")
 def prepare_inputs_for_node_lvl_task(
-    in_dict: Dict[str, List[int]],
+    in_dict: Dict[str, List[Union[int, List[int]]]],
     *,
     graph: Data,
+    gtokenizer,
     eos_token_id: int,
     tgt_node_token_id: Union[int, Tuple],
     **kwargs,
@@ -520,19 +576,31 @@ def prepare_inputs_for_node_lvl_task(
     else:
         # for node identity encoding with multiple tokens
         ls_token_ids = list(tgt_node_token_id)
-    extended_token_len = len(ls_token_ids) + 1  # +1 for eos token
-    in_dict["idx"] = ls_token_ids
-    in_dict["input_ids"].extend([eos_token_id] + ls_token_ids)
-    in_dict["position_ids"].extend(
-        [
-            len(in_dict["position_ids"]),
-            len(in_dict["position_ids"]) + extended_token_len,
-        ]
+    raw_ls_extend_tokens = list(ls_token_ids)
+    ls_extend_tokens = list(ls_token_ids)
+    ls_extend_emb = []
+    if isinstance(in_dict["input_ids"][0], List):
+        dict_mapping = {x[0]: x for x in in_dict["input_ids"]}
+        ls_extend_tokens = [list(dict_mapping[x]) for x in raw_ls_extend_tokens]
+        if "embed" in in_dict:
+            assert len(in_dict["input_ids"]) == len(in_dict["embed"])
+            dict_emb_mapping = {
+                x[0]: y for x, y in zip(in_dict["input_ids"], in_dict["embed"])
+            }
+            ls_extend_emb = [list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens]
+    in_dict = _extend_input_dict(
+        in_dict,
+        ls_extend_tokens,
+        cmpe=gtokenizer.cmpe,
     )
-    in_dict["labels"].extend([-100] * extended_token_len)
-    in_dict["attention_mask"].extend([1] * extended_token_len)
+    in_dict["idx"] = ls_token_ids
     assert graph.num_nodes == graph.y.shape[0]
     in_dict["node_labels"] = graph.y[graph.root_n_id].tolist()
+    if "embed" in in_dict:
+        in_dict["embed"].extend(ls_extend_emb)
+        assert len(in_dict["input_ids"]) == len(in_dict["embed"])
+    if hasattr(graph, "wgt"):
+        in_dict["wgt"] = graph.wgt.item()
     return in_dict
 
 
@@ -545,13 +613,19 @@ def prepare_inputs_for_node_v2_token_lvl_task(
     tgt_node_token_id: Union[int, Tuple],
     num_labels: int = 10,
     loss_type: str = "token_ce",
+    permute_label: bool = True,  # disable when inferring
     **kwargs,
 ):
-    assert hasattr(graph, "y") and graph.y.shape[0] == graph.num_nodes
-    nodev2_labels = graph.y[:, 0].tolist()
+    if (
+        hasattr(graph, "y")
+        and (graph.y is not None)
+        and (graph.y.shape[0] == graph.num_nodes)
+    ):
+        nodev2_labels = graph.y[:, 0].tolist()
+    else:  # in inference mode
+        nodev2_labels = [-100] * graph.x.shape[0]
     assert len(tgt_node_token_id) == len(nodev2_labels)
-    permute_label = True
-    # if permute_label:  # NOT WORKING
+    # if permute_label:  # NOT WORKING, model CANNOT be trained!
     #     ls = list(range(num_labels))
     #     random.shuffle(ls)
     #     nodev2_labels = [ls[x] if x != -100 else -100 for x in nodev2_labels]
@@ -600,7 +674,8 @@ def _extend_input_dict(
     inputs_instance = in_dict["input_ids"][0]
     if isinstance(inputs_instance, List):
         ls_extend_tokens = [
-            [token_id] * len(inputs_instance) for token_id in ls_extend_tokens
+            [token_id] * len(inputs_instance) if isinstance(token_id, int) else token_id
+            for token_id in ls_extend_tokens
         ]
     in_dict["input_ids"].extend(ls_extend_tokens)
     in_dict["position_ids"].extend(
@@ -624,3 +699,36 @@ def _extend_input_dict(
     for key, val in zip(keys, vals):
         in_dict[key].extend([val] * len_extended_tokens)
     return in_dict
+
+
+@dataclass
+class TokenizationOutput(ModelOutput):
+    """
+    Base class for tokenizer's outputs
+
+    Args:
+        ls_tokens (`List`):
+            List of input tokens.
+        ls_labels (`List`):
+            List of label tokens.
+        tgt_node_token (`str`):
+            node => target node token for node-level tasks.
+        tgt_edge_src_token (`str`):
+            edge => target src node token for edge-level tasks.
+        tgt_edge_dst_token (`str`):
+            edge => target dst node token for edge-level tasks.
+        tgt_edge_attr_token (`str`):
+            edge => target edge attr token for edge-level tasks.
+        tgt_pos (`int`):
+            For UniBi attention mixed model
+    """
+
+    ls_tokens: List[Union[str, List[str]]] = None
+    ls_labels: List[Union[str, List[str]]] = None
+    tgt_node_token: Union[str, List[str], Tuple[str]] = None
+    tgt_edge_src_token: Union[str, List[str], Tuple[str]] = None
+    tgt_edge_dst_token: Union[str, List[str], Tuple[str]] = None
+    tgt_edge_attr_token: List[str] = None
+    tgt_pos: Optional[torch.Tensor] = None
+    ls_embed: List[List[float]] = None
+    ls_len: List[int] = None

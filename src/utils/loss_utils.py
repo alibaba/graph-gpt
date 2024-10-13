@@ -2,6 +2,9 @@ from typing import Dict, Optional, Tuple
 import math
 import numpy as np
 import torch
+import torch.distributed as dist
+from torch import nn
+from torch.nn.functional import cosine_similarity as cos_sim
 from torch.optim.lr_scheduler import (
     CyclicLR,
     CosineAnnealingLR,
@@ -82,6 +85,43 @@ def convert_prior_cnt_to_logits(prior: Optional[np.ndarray], extra_dims, device)
     prior_f = np.log(prior_f) - np.log(prior_f.sum())
     logits_adjust = prior_f.reshape([1] * extra_dims + [-1])
     return torch.tensor(logits_adjust).float().to(device)
+
+
+class GatherLayer(torch.autograd.Function):
+    """Gather tensors from all process, supporting backward propagation."""
+
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        output = [torch.zeros_like(input) for _ in range(dist.get_world_size())]
+        dist.all_gather(output, input)
+        return tuple(output)
+
+    @staticmethod
+    def backward(ctx, *grads):
+        (input,) = ctx.saved_tensors
+        grad_out = torch.zeros_like(input)
+        grad_out[:] = grads[dist.get_rank()]
+        return grad_out
+
+
+def _dist_infonce(output_embeds, tb_output_embeds, temperature=20.0):
+    # refer to Alibaba internal doc: https://aliyuque.antfin.com/amils0/interest/zcnufr
+    # whether to use barrier?
+    # torch.distributed.barrier()
+    output_embeds = GatherLayer.apply(output_embeds)
+    tb_output_embeds = GatherLayer.apply(tb_output_embeds)
+
+    output_embeds = torch.cat(output_embeds, dim=0)
+    tb_output_embeds = torch.cat(tb_output_embeds, dim=0)
+
+    scores = cos_sim(output_embeds, tb_output_embeds) * temperature
+    batch_size = len(output_embeds)
+    _labels = torch.tensor(range(batch_size), dtype=torch.long, device=scores.device)
+
+    cross_entropy_loss = nn.CrossEntropyLoss()
+    loss = cross_entropy_loss(scores, _labels)
+    return loss
 
 
 @_ds_scheduler("WarmupLR")

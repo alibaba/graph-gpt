@@ -1,0 +1,42 @@
+{
+    "train_micro_batch_size_per_gpu": 256,
+    "bf16": {
+       "enabled": true
+     },
+    "optimizer": {
+        "type": "Adam",
+        "params": {
+            "lr": 3e-4,
+            "weight_decay": 0.01,
+            "bias_correction": true,
+            "eps": 1e-6
+        }
+    },
+    "scheduler": {
+      "type": "WarmupDecayLR",
+      "params": {
+          "warmup_min_lr": 0,
+          "warmup_max_lr": 3e-4,
+          "warmup_num_steps": 60000,
+          "total_num_steps": 1000000
+      }
+    },
+    "zero_optimization": {
+        "stage": 2,
+        "overlap_comm": true
+    },
+    "flops_profiler": {
+        "enabled": true,
+        "profile_step": 1,
+        "module_depth": -1,
+        "top_modules": 1,
+        "detailed": true,
+        "output_file": null
+    },
+    "activation_checkpointing": {
+      "partition_activations": true,
+      "contiguous_memory_optimization": true,
+      "cpu_checkpointing": false
+    },
+    "wall_clock_breakdown": false
+}
