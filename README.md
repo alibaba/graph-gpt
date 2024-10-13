@@ -10,7 +10,7 @@ This repository is the official implementation of “[GraphGPT: Graph Learning w
 
 ***10/13/2024***
 1. v0.4.0 released. Check `CHANGELOG.md` for details.
-2. Archiving SOTA in 3 large scale ogb datasets:
+2. Achieving SOTA in 3 large scale ogb datasets:
    - PCQM4M-v2 (no 3D): 0.0802 (previous SOTA 0.0821)
    - ogbl-ppa: 68.76 (previous SOTA 65.24)
    - ogbl-citation2: 91.15 (previous SOTA 90.72)
