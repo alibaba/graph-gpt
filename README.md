@@ -1,4 +1,4 @@
-# GraphGPT: Generative Pre-trained Graph Eulerian Transformer
+# GraphGPT: Generative Pre-trained Graph Eulerian Transformer [ICML2025]
 
 This repository is the official implementation of “[GraphGPT: Generative Pre-trained Graph Eulerian Transformer](https://arxiv.org/abs/2401.00529)” in [PyTorch](https://github.com/pytorch/pytorch).
 
