@@ -16,7 +16,7 @@ This repository is the official implementation of “[GraphGPT: Generative Pre-t
    - PCQM4M-v2 (use 3D): 0.0709 (current SOTA 0.0683)
    - ogbl-ppa: 76.55 (previous SOTA 73.74)
    - ogbl-citation2: 93.05 (previous SOTA 90.72)
-4. Paper updated to [v2](https://arxiv.org/abs/2401.00529).
+4. Paper accepted by **ICML2025**, updated to [v2](https://arxiv.org/abs/2401.00529) in arxiv.
 
 ***10/13/2024***
 1. v0.4.0 released. Check `CHANGELOG.md` for details.
