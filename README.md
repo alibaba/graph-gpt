@@ -144,17 +144,17 @@ After hitting the boundary, e.g., `255`, the next node index will be 0.
 
 ### Graph-level task: PCQM4M-v2 and ogbg-molpcba
 
-![](pic/graph-lvl-exp.png)
+<img src="pic/graph-lvl-exp.png" width="70%" height="70%" />
 
-![](pic/graph-lvl-exp-pcba.png)
+<img src="pic/graph-lvl-exp-pcba.png" width="70%" height="70%" />
 
 ### Edge-level tasks: ogbl-ppa and ogbl-citation2
 
-![](pic/edge-lvl-exp.png)
+<img src="pic/edge-lvl-exp.png" width="70%" height="70%" />
 
 ### Node-level-task: ogbn-proteins and ogbn-products
 
-![](pic/node-lvl-exp.png)
+<img src="pic/node-lvl-exp.png" width="70%" height="70%" />
 
 ## Installation
 
