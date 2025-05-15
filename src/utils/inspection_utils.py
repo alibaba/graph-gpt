@@ -107,6 +107,7 @@ def print_trainable_parameters(model):
     print(
         f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
     )
+    return trainable_params
 
 
 def inspect_nodes(dataset):
@@ -168,7 +169,9 @@ def inspect_tokenization_results(
         print(f"Inspecting tokenization results!\nTokenize graph:\n{data}")
         token_res = gtokenizer.tokenize(graph)
         print(
-            f"\nTokens:\n{pformat(token_res.ls_tokens)}\nLabels:\n{pformat(token_res.ls_labels)}\nembed:{np.array(token_res.ls_embed)}\n"
+            f"\nTokens:\n{pformat(token_res.ls_tokens)}\nLabels:\n{pformat(token_res.ls_labels)}\n"
+            f"embed:{torch.tensor(token_res.ls_embed) if token_res.ls_embed is not None else None}\n"
+            f"embed==0:{torch.tensor(token_res.ls_embed)==0 if token_res.ls_embed is not None else None}\n"
         )
         tokens, labels, ls_embed, ls_len = (
             gtokenizer.pack_token_seq(token_res, idx)
@@ -181,12 +184,18 @@ def inspect_tokenization_results(
             )
         )
         print(
-            f"Packed Tokens:\n{pformat(tokens)}\nPacked Labels:\n{pformat(labels)}\nPacked embed:\n{np.array(ls_embed).shape}\n{np.array(ls_embed)}\nPacked len:\n{pformat(ls_len)}"
+            f"Packed Tokens:\n{pformat(tokens)}\nPacked Labels:\n{pformat(labels)}\n"
+            f"Packed embed:\n{torch.tensor(ls_embed).shape if ls_embed is not None else None}\n"
+            f"{torch.tensor(ls_embed) if ls_embed is not None else None}\n"
+            f"embed==0:{torch.tensor(ls_embed)==0 if ls_embed is not None else None}\n"
+            f"Packed len:\n{pformat(ls_len)}"
         ) if gtokenizer.mpe is not None else None
         in_dict = gtokenizer.convert_tokens_to_ids(tokens, labels)
         if ls_embed:  # for pretty print purpose ONLY
-            in_dict["embed"] = np.array(ls_embed)
-        print(f"Tokenized results:\n{pformat(in_dict)}\n")
+            in_dict["embed"] = torch.tensor(ls_embed)
+        print(
+            f"Tokenized results:\n{pformat({k: torch.tensor(v) if k in ('attention_mask', 'position_ids') else v for k,v in in_dict.items()})}\n"
+        )
         if ls_embed:
             in_dict["embed"] = ls_embed
         token_res.ls_tokens = tokens
@@ -203,8 +212,11 @@ def inspect_tokenization_results(
     else:
         raise ValueError(f"Type {type(data)} of data {data} is NOT implemented yet!")
     if ls_embed:  # for pretty print purpose ONLY
-        inputs["embed"] = np.array(ls_embed)
-    print(f"Inputs for model:\n{pformat(inputs)}\n")
+        inputs["embed"] = torch.tensor(ls_embed)
+    print(
+        f"Inputs for model:\n{pformat({k: torch.tensor(v) if k in ('attention_mask', 'position_ids') else v for k,v in inputs.items()})}\n"
+        f"Inputs for model -> shape:\n{pformat({'shape-'+k: torch.tensor(v).shape for k,v in inputs.items() if k in ('attention_mask', 'position_ids')})}"
+    )
     gtokenizer.set_eos_idx(inputs["input_ids"])
 
 

@@ -13,18 +13,16 @@
   "sampling": null,
   "label_tokens_to_pad": ["<icl>"],
   "semantics": {
-    "attr_assignment": "first",
-    "attr_shuffle": false,
     "node": {
       "discrete": "x",
+      "dim": 9,
       "continuous": null,
-      "ignored_val": "0",
-      "dim": 9
+      "ignored_val": null
     },
     "edge": {
       "discrete": "edge_attr",
       "continuous": null,
-      "ignored_val": "0",
+      "ignored_val": null,
       "dim": 3
     },
     "graph": {

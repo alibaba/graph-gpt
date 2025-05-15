@@ -34,8 +34,9 @@ eps=1e-10
 weight_decay=0
 max_grad_norm=1
 
-epochs_actual=16
-epochs_warmup_actual=$(bc <<<"scale=2;${epochs_actual}*0.3")
+epochs=16
+#epochs_warmup=$(bc <<<"scale=2;${epochs}*0.3")
+epochs_warmup=4.8
 batch_size_sv=256
 workerCount=1
 num_cpus=4
@@ -68,7 +69,7 @@ model_config="./examples/toy_examples/reddit_model_config.json"
 pretrain_cpt=""
 
 let batch_size_actual=batch_size_sv*workerCount*gradient_accumulation_steps
-output_folder_raw="sv_h${hidden_size}_l${num_hidden_layers}_b${batch_size_actual}_mpe${max_position_embeddings_sv}_e${epochs_actual}"
+output_folder_raw="sv_h${hidden_size}_l${num_hidden_layers}_b${batch_size_actual}_mpe${max_position_embeddings_sv}_e${epochs}"
 
 if [ "$pretrain_cpt" = "" ]
 then
@@ -102,8 +103,8 @@ raw_udf="
   --max_grad_norm=${max_grad_norm}
   --freeze=${freeze}
   --k_samplers=${k_samplers}
-  --epochs=${epochs_actual}
-  --warmup_epochs=${epochs_warmup_actual}
+  --epochs=${epochs}
+  --warmup_epochs=${epochs_warmup}
   --model_config='${model_config}'
   --num_hidden_layers=${num_hidden_layers}
   --hidden_size=${hidden_size}

@@ -103,6 +103,7 @@ def parse_model_config(
     max_position_embeddings,
     initializer_range,
     rope_theta,
+    rope_range,
     tie_word_embeddings,
     causal_attention,
     attention_dropout,
@@ -110,7 +111,9 @@ def parse_model_config(
     path_dropout,
     mlp_dropout,
     layer_scale_init_value,
+    smtp_inside,
     next_n_token,
+    focal_gamma,
     stacked_feat,
     stack_method,
     stacked_feat_agg_method,
@@ -146,6 +149,7 @@ def parse_model_config(
             "max_position_embeddings": max_position_embeddings,
             "initializer_range": initializer_range,
             "rope_theta": rope_theta,
+            "rope_range": rope_range,
             "tie_word_embeddings": bool(tie_word_embeddings),
             "bos_token_id": gtokenizer.get_bos_token_id(),
             "eos_token_id": gtokenizer.get_eos_token_id(),
@@ -155,7 +159,9 @@ def parse_model_config(
             "path_pdrop": path_dropout,
             "mlp_pdrop": mlp_dropout,
             "layer_scale_init_value": layer_scale_init_value,
+            "smtp_inside": smtp_inside,
             "next_n_token": next_n_token,
+            "focal_gamma": focal_gamma,
             "stacked_feat": stacked_feat,
             "stack_method": stack_method,
             "stacked_feat_agg_method": stacked_feat_agg_method,
@@ -199,7 +205,7 @@ def parse_model_config_for_ft(
     loss_type,
     loss_utils,
     tokenizer_config,
-    ntp_ratio,
+    aux_ratio,
     **kwargs,
 ):
     if len(pretrain_cpt) > 0:
@@ -210,9 +216,15 @@ def parse_model_config_for_ft(
         stacked_feat = tmp_config.stacked_feat
         stacked_feat_agg_method = tmp_config.stacked_feat_agg_method
         rope_theta = tmp_config.rope_theta
+        rope_range = tmp_config.rope_range
+        focal_gamma = tmp_config.focal_gamma
+        smtp_inside = tmp_config.smtp_inside
     else:
         num_key_value_heads = num_attention_heads
         rope_theta = 10000
+        rope_range = 0
+        focal_gamma = 0
+        smtp_inside = False
     tie_word_embeddings = False
     next_n_token = 1
 
@@ -229,6 +241,7 @@ def parse_model_config_for_ft(
         max_position_embeddings=max_position_embeddings,
         initializer_range=initializer_range,
         rope_theta=rope_theta,
+        rope_range=rope_range,
         tie_word_embeddings=tie_word_embeddings,
         causal_attention=causal_attention,
         attention_dropout=attention_dropout,
@@ -236,7 +249,9 @@ def parse_model_config_for_ft(
         path_dropout=path_dropout,
         mlp_dropout=mlp_dropout,
         layer_scale_init_value=layer_scale_init_value,
+        smtp_inside=smtp_inside,
         next_n_token=next_n_token,
+        focal_gamma=focal_gamma,
         stacked_feat=stacked_feat,
         stack_method=stack_method,
         stacked_feat_agg_method=stacked_feat_agg_method,
@@ -254,7 +269,7 @@ def parse_model_config_for_ft(
             "problem_type": problem_type,
             "loss_type": loss_type if len(loss_type) > 0 else None,
             "num_neg": loss_utils.get_neg_ratio(tokenizer_config["sampling"]),
-            "use_ntp": ntp_ratio > 0,
+            "use_aux": aux_ratio > 0,
         }
     )
     return config

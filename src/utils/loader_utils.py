@@ -80,7 +80,8 @@ def obtain_deterministic_sampler_by_ratio(
     idx_test = sample_idx[indices_test].tolist()
 
     print(
-        f"[obtain_deterministic_sampler][seed {seed}] raw-idx {len(sample_idx)}, idx_train {len(idx_train)}, idx_valid {len(idx_valid)}, idx_test {len(idx_test)}"
+        f"[obtain_deterministic_sampler][seed {seed}] raw-idx {len(sample_idx)}, idx_train {len(idx_train)}, idx_valid {len(idx_valid)}, idx_test {len(idx_test)}\n"
+        f"TOP 10 sample_idx: {sample_idx[:10]}"
     )
     return idx_train, idx_valid, idx_test
 
@@ -133,17 +134,21 @@ def load_from_ckp_with_try(
     config,
     skip_keys=True,
     strict=False,
+    use_ema=False,
 ):
     print(f"Loading pretrained weights from ckp {ckp}")
     try:
-        # fn_model = os.path.join(ckp, "../model_ema_best.pt")
-        # if not os.path.isfile(fn_model):
-        fn_model = os.path.join(ckp, "model.pt")
+        if use_ema:
+            fn_model = os.path.join(ckp, "../model_ema_best.pt")
+            # if not os.path.isfile(fn_model):
+        else:
+            fn_model = os.path.join(ckp, "model.pt")
+        print(f"[{datetime.now()}] loading ckp using torch API from:\n{fn_model} ...")
         stat_dict = torch.load(fn_model)
         stat_dict = {
             (k[7:] if k.startswith("module.") else k): v for k, v in stat_dict.items()
         }
-        print(f"[{datetime.now()}] load ckp using torch API from:\n{fn_model}")
+        print(f"[{datetime.now()}] ckp loaded:\n{fn_model}")
     except Exception as inst:
         # print(type(inst))
         # print(inst.args)
@@ -166,7 +171,7 @@ def load_from_ckp_with_try(
         f"[{datetime.now()}] init model params using pytorch `load_state_dict`\n"
         f"missing keys: {missing_keys}\n"
         f"unexpected_keys: {unexpected_keys}\n"
-        f"After loading weights from ckp:\n{model.config}\nnum_labels: {model.num_labels}\nmodel-type: {model.dtype}\n\n{model}"
+        f"After loading weights from ckp:\n{model.config}\nnum_labels: {model.num_labels if hasattr(model, 'num_labels') else None}\nmodel-type: {model.dtype}\n\n{model}"
     )
     return model
 

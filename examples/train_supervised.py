@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Optional, List
 from pprint import pprint, pformat
 from torch.utils.data import DataLoader, IterableDataset
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
@@ -27,14 +28,12 @@ sys.path.insert(0, ".")  # for submit to PAI
 from src.data import collator, vocab_builder, tokenizer, read_dataset
 from src.models import (
     GraphGPTConfig,
-    GraphGPTDoubleHeadsModel,
-    GraphGPT2Config,
-    GraphGPT2DoubleHeadsModel,
+    GraphGPTTaskModel,
+    GraphGPTDenoisingRegressionDoubleHeadsModel,
 )
 from src.utils import (
     patch_utils,
     conf_utils,
-    tokenizer_utils,
     loader_utils,
     modules_utils,
     misc_utils,
@@ -53,8 +52,8 @@ from src.utils import (
 ModelEmaV3 = patch_utils.ModelEmaV3
 
 dict_models = {
-    "graphgpt2": (GraphGPT2DoubleHeadsModel, GraphGPT2Config),
-    "graphgpt": (GraphGPTDoubleHeadsModel, GraphGPTConfig),
+    "graphgpt": (GraphGPTTaskModel, GraphGPTConfig),
+    "graphgpt-denoise": (GraphGPTDenoisingRegressionDoubleHeadsModel, GraphGPTConfig),
 }
 
 
@@ -71,6 +70,11 @@ def evaluate(
     ds_split="train",
 ):
     model.eval()
+    # model.train()
+    # print(f"Enabling dropout during inference ... ")
+    # if model.embed_dropout is not None:
+    #     model.embed_dropout.train()  # no use for pcqm4m-v2
+    #     print(f"Enabling embed dropout: {model.embed_dropout} during inference ... ")
     if not metric_type:
         metric_type = problem_type
     cls_metrics = get_metrics(metric_type, device, num_labels=num_labels)
@@ -78,22 +82,30 @@ def evaluate(
     for j, test_data in enumerate(loader, 1):
         input_ids = test_data["input_ids"].to(device)
         attention_mask = test_data["attention_mask"].to(device)
+        position_ids = test_data["position_ids"].to(device)
         task_labels = test_data[f"{task_level}_labels"].to(device)
         task_labels = (
             task_labels.float()
             if problem_type == "multi_label_classification"
             else task_labels
         )
+        pretrain_labels = test_data["labels"].to(device)
         cls_idx = test_data["cls_idx"].to(device) if "cls_idx" in test_data else None
         inputs_raw_embeds = None
         if "embed" in test_data:
             inputs_raw_embeds = test_data["embed"].to(device)
+        sample_wgt = None
+        if "wgt" in test_data:
+            sample_wgt = test_data["wgt"].to(device)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             task_labels=task_labels,
+            pretrain_labels=pretrain_labels,
             cls_idx=cls_idx,
             inputs_raw_embeds=inputs_raw_embeds,
+            sample_wgt=sample_wgt,
+            position_ids=position_ids,
         )  # Perform a single forward pass.
         # record loss
         test_loss += res.task_loss
@@ -207,11 +219,11 @@ def train(
     outputs: str = "",  # ODPS output table names
     # others
     samples_per_eval: int = 0,
-    seed: Optional[int] = None,
+    seed: int = -1,
 ):
     if infer_only:
         eval_only = 1
-    if seed is None:
+    if seed < 0:
         seed = int(datetime.now().date().strftime("%Y%m%d")[::-1])
     use_tb_writer = False
     use_ema = bool(use_ema)
@@ -230,7 +242,7 @@ def train(
         ) = modules_utils.set_up_model_architect(
             hidden_size=hidden_size, num_hidden_layers=num_hidden_layers
         )
-    ntp_ratio, task_ratio = 1 - task_ratio, task_ratio
+    aux_ratio, task_ratio = 1 - task_ratio, task_ratio
     gpu_name = torch.cuda.get_device_name()
 
     GraphModel, GraphModelConfig = dict_models[model_type]
@@ -265,10 +277,17 @@ def train(
         attr_assignment=attr_assignment,
         attr_shuffle=attr_shuffle,
     )
-    assert (
-        tokenizer_config["semantics"]["attr_assignment"]
-        in tokenizer_utils.ATTR_ASSIGNMENT_TYPES
-    )
+    if "pcqm4m" in tokenizer_config["name_or_path"]:
+        if model_type == "graphgpt-denoise":
+            tokenizer_config["semantics"]["node"].update(
+                {"embed": "pos", "embed_dim": 3}
+            )
+            aux_ratio, task_ratio = 0.5, 0.5
+        else:
+            tokenizer_config["semantics"]["node"].pop("embed", None)
+            tokenizer_config["semantics"]["node"].pop("embed_dim", None)
+            tokenizer_config["semantics"]["edge"].pop("embed", None)
+            tokenizer_config["semantics"]["edge"].pop("embed_dim", None)
     pprint(tokenizer_config)
     if tokenizer_config["tokenizer_class"] == "StackedGSTTokenizer":
         attr_dim = (
@@ -368,7 +387,7 @@ def train(
     model.config.use_cache = False
     if freeze > -1:  # 0->freeze embedding; 1->embed+1st layer
         modules_utils.freeze_llama_layers(model, freeze)
-    print_trainable_parameters(model)
+    model.config.num_params = print_trainable_parameters(model)
     # 2.21 load from ckp IF provided existing ckp and NOT resume from the ckp
     model = loader_utils.load_from_ckp(
         misc_utils=misc_utils,
@@ -376,6 +395,7 @@ def train(
         output_dir=output_dir,
         model=model,
         config=config,
+        skip_keys=False,
     )
     print(model)
     model_ema = None
@@ -420,9 +440,8 @@ def train(
         scaler = GradScaler()
     if use_ema:
         model_ema.module.to(device=device)
-        print(
-            f"[Debug] model-ema embedding_params:\n{model_ema.module.model.embed_tokens.weight.data}"
-        )
+        emb = model_ema.module.model.embed_tokens.weight.data
+        print(f"[Debug] model-ema embedding_params:\n{emb}\n{emb.shape}")
     # 2.4 Load model parameters and optimizer stats from ckp IF resuming from current ckp
     if (len(pretrain_cpt) > 0) and (pretrain_cpt == output_dir) and (not eval_only):
         ckp, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt)
@@ -535,7 +554,7 @@ def train(
             )
         ema_best_res = val_ogb_eval_res
     if eval_only:
-        ep_init = min(ep_init, epochs - 1)
+        ep_init = max(ep_init - 1, epochs - 1)
         print(
             f"[{datetime.now()}] In eval only mode, ep_init: {ep_init}, epochs: {epochs}!"
         )
@@ -578,6 +597,7 @@ def train(
                 ) if i == 0 else None
                 input_ids = data["input_ids"].to(device)
                 attention_mask = data["attention_mask"].to(device)
+                position_ids = data["position_ids"].to(device)
                 labels = data["labels"].to(device)
                 task_labels = data[f"{task_level}_labels"].to(device)
                 task_labels = (
@@ -592,24 +612,28 @@ def train(
                 sample_wgt = None
                 if "wgt" in data:
                     sample_wgt = data["wgt"].to(device)
+                if "noise" in data:
+                    labels = data["noise"].to(device)
 
                 if use_deepspeed:
                     output = model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        pretrain_labels=labels if ntp_ratio > 0 else None,
+                        pretrain_labels=labels if aux_ratio > 0 else None,
                         task_labels=task_labels,
                         cls_idx=cls_idx,
                         inputs_raw_embeds=inputs_raw_embeds,
                         sample_wgt=sample_wgt,
+                        position_ids=position_ids,
                     )  # Perform a single forward pass.
-                    ntp_loss = output.pretrain_loss
+                    aux_loss = output.pretrain_loss
                     task_loss = output.task_loss
-                    if ntp_ratio > 0:
-                        loss = (
-                            ntp_loss.float() * ntp_ratio
-                            + task_loss.float() * task_ratio
-                        )
+                    if aux_loss is not None:
+                        # loss = (
+                        #     aux_loss.float() * aux_ratio
+                        #     + task_loss.float() * task_ratio
+                        # )
+                        loss = aux_loss.float() + task_loss.float()
                     else:
                         loss = task_loss.float()
                     model.backward(loss)  # Derive gradients.
@@ -625,16 +649,18 @@ def train(
                         output = model(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
-                            pretrain_labels=labels if ntp_ratio > 0 else None,
+                            pretrain_labels=labels if aux_ratio > 0 else None,
                             task_labels=task_labels,
                             cls_idx=cls_idx,
                             inputs_raw_embeds=inputs_raw_embeds,
                             sample_wgt=sample_wgt,
+                            position_ids=position_ids,
                         )  # Perform a single forward pass.
-                        ntp_loss = output.pretrain_loss
+                        aux_loss = output.pretrain_loss
                         task_loss = output.task_loss
-                        if ntp_ratio > 0:
-                            loss = ntp_loss * ntp_ratio + task_loss * task_ratio
+                        if aux_loss is not None:
+                            # loss = aux_loss * aux_ratio + task_loss * task_ratio
+                            loss = aux_loss + task_loss
                         else:
                             loss = task_loss
                     # Scales loss.  Calls backward() on scaled loss to create scaled gradients.
@@ -663,16 +689,19 @@ def train(
                 if j % logging_steps == 0:
                     t_interval = (datetime.now() - t_start).total_seconds()
                     samples_per_second = round(i * batch_size / t_interval)
+                    if aux_loss is not None:
+                        loss_log = f"\n{' ' * 8}loss: {round(loss.item(), 6)}, aux_Loss {round(aux_loss.item(), 6)}, task_Loss {round(task_loss.item(), 6)}"
+                    else:
+                        loss_log = f"loss: {round(loss.item(), 6)}"
                     print(
-                        f"[{datetime.now()}][epoch {epoch}][local {i}][global {j}] processed {samples_per_second} samples per second!\n"
-                        f"{' ' * 8}loss: {round(loss.item(), 7)}, ntp_Loss {ntp_loss}, task_Loss {round(task_loss.item(), 7)}\n"
-                        f"{' ' * 8}{lr_scheduler.get_last_lr() if hasattr(lr_scheduler, 'get_last_lr') else 'lr ...'}"
+                        f"[{datetime.now()}][epoch {epoch}][local {i}][global {j}] processed {samples_per_second} samples per second; {loss_log}"
+                        # f"{' ' * 8}{lr_scheduler.get_last_lr() if hasattr(lr_scheduler, 'get_last_lr') else 'lr ...'}"
                     )
                     # Reduce SUM to get the loss from all the GPUs to RANK=0
                     # refer: https://github.com/microsoft/DeepSpeed/discussions/2377#discussioncomment-3765282
                     dist.reduce(loss, 0)
                     loss = loss / world_size
-                    ls_loss.append(f"{epoch},{i},{j},{ntp_loss},{task_loss},{loss}\n")
+                    ls_loss.append(f"{epoch},{i},{j},{aux_loss},{task_loss},{loss}\n")
 
                     tb_writer.add_scalar(
                         "loss", loss.item(), j
@@ -686,11 +715,19 @@ def train(
                 )
             else:
                 print(f"ckp {ckp} doesn't exists, skip it!")
+            model_ema = None
         if (epoch + 1) % epoch_per_eval == 0 and (not infer_only):
-            print(
-                f"[{datetime.now()}][end of epoch {epoch}][local {i}][global {j}] Evaluate on partial train data "
-                f"{k_samplers*world_size} -> {k_samplers}!"
-            )
+            print(f"[{datetime.now()}][end of epoch {epoch}][local {i}][global {j}] Save ckp ...")
+            if not eval_only:
+                misc_utils.save_ckp(
+                    output_dir,
+                    model,
+                    epoch,
+                    use_deepspeed,
+                    optimizer=optimizer,
+                    lr_scheduler=lr_scheduler,
+                )
+            print(f"[{datetime.now()}] Evaluate on partial train data {k_samplers*world_size} -> {k_samplers}!")
             tr_loss, tr_cls_metrics, tr_ogb_eval_res, tr_triplet = (
                 evaluate(
                     model,
@@ -770,6 +807,7 @@ def train(
                 f"valid_loss: {val_loss}, test_loss: {test_loss}, {test_cls_metrics.results_in_details()},\n"
                 f"train ogb_eval: {tr_ogb_eval_res}, valid ogb_eval: {val_ogb_eval_res}, "
                 f"EMA valid ogb_eval: {val_ogb_eval_res_ema}, test ogb_eval: {test_ogb_eval_res}"
+                f"\nSaved in {output_dir}"
             )
             ls_log.append(
                 f"{epoch},{i},{j},{tr_loss},{val_loss},{test_loss},"
@@ -786,15 +824,6 @@ def train(
                 f"{format_ogb_output_for_csv(test_ogb_eval_res)},"
                 f"{format_ogb_output_for_csv(val_ogb_eval_res_ema)}\n"
             )
-            if not eval_only:
-                misc_utils.save_ckp(
-                    output_dir,
-                    model,
-                    epoch,
-                    use_deepspeed,
-                    optimizer=optimizer,
-                    lr_scheduler=lr_scheduler,
-                )
             if int(os.environ.get("RANK", 0)) == 0:
                 misc_utils.save_all(
                     output_dir,

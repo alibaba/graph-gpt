@@ -43,6 +43,9 @@ def _get_vocab(ls_arr, ignored_val: str = None):
         semantics_arr = np.vstack(ls_arr)
         raw_vocab = np.unique(semantics_arr, axis=0).astype(str)
         vocab = ["#".join(ele) for ele in raw_vocab if ele[-1] != str(ignored_val)]
+        vocab = sorted(
+            vocab, key=lambda x: ("#".join(x.split("#")[:-1]), int(x.split("#")[-1]))
+        )
         raw_vocab = np.unique(raw_vocab[:, :-1], axis=0)  # remove last col of val
         vocab_default = ["#".join(ele) for ele in raw_vocab]
         vocab = vocab_default + vocab
@@ -211,5 +214,5 @@ def load_vocab(fn) -> Dict[str, int]:
         ls = [ele.strip().split() for ele in ls if len(ele) > 0]
         vocab_map = {k: int(v) for k, v in ls}
     vocab_map.update({"<label_pad>": -100})
-    print(f"[{datetime.now()}]\n{pformat(vocab_map, indent=4)[:10000]} ......")
+    print(f"[{datetime.now()}]\n{pformat(vocab_map, indent=4)[:2000]} ......")
     return vocab_map

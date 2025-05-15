@@ -1,20 +1,20 @@
 #!/bin/bash
 
 dataset_name="PCQM4Mv2"  # PCQM4Mv2  ogbg-molpcba  ogbl-ddi  ogbl-ppa  ogbn-proteins
-true_valid=-1  # -1  30000  10000  5000  512  128  32  0
+true_valid=10000  # -1  30000  10000  5000  512  128  32  0
 
 # i. data config
 tokenizer_class="StackedGSTTokenizer"  # GSTTokenizer|StackedGSTTokenizer
 tokenization_config_file="graph_lvl/pcqm4m-v2_tokenization_config.json"
-sampling_conf_sv="ns"
 
 epochs=32
 warmup_rate=0.3
-epochs_warmup=$(bc <<<"scale=2;${epochs}*${warmup_rate}")
+#epochs_warmup=$(bc <<<"scale=2;${epochs}*${warmup_rate}")
+epochs_warmup=9.6
 
-num_cpus=12  # -> consume too much cpu memory
+num_cpus=8  # -> consume too much cpu memory
 batch_size=256
-workerCount=4
+workerCount=1
 # dataset-specific config
 batch_size_eval=16
 epoch_per_eval=1
@@ -24,10 +24,11 @@ save_pred=1
 eval_only=0
 # directories
 ds_prefix="pcqm4m-v2"
-mid_dir="202409/"
+mid_dir="202408/"
 
 # ii. model config
-model_name="base24"  # tiny mini small small12 medium medium24 medium48 base base24 base48 base64 large large48 xlarge xxlarge
+model_type="graphgpt"  # graphgpt-denoise|graphgpt
+model_name="base"  # tiny mini small small12 medium medium24 medium48 base base24 base48 base64 large large48 xlarge xxlarge
 stack_method="short"
 stacked_feat_agg_method="gated"
 hidden_act="gelu"  # llama -> `silu`, graphformer -> `gelu`
@@ -44,7 +45,7 @@ attention_dropout=0.1
 path_dropout=0.1
 embed_dropout=0
 mlp_dropout=0
-layer_scale_init_val=1
+layer_scale_init_val=0
 # optimizer hps
 weight_decay=0.02
 beta2=0.99
@@ -57,8 +58,7 @@ ema_decay=0.9999
 deepspeed_config="./examples/ds_config2.json"
 
 ## iv. optimization objective
-ntp_ratio=0
-task_ratio=$(bc <<<"scale=2;1-${ntp_ratio}")
+task_ratio=1
 ## dataset-specific supervised-task
 task_level="graph"
 problem_type="regression"
@@ -158,7 +158,7 @@ tokenization_config="./examples/${tokenization_config_file}"
 
 
 let batch_size_actual=batch_size*workerCount
-output_folder_raw="sv_${sampling_conf_sv}_h${hidden_size}_l${num_hidden_layers}_b${batch_size_actual}_mpe${max_position_embeddings_sv}_e${epochs}${suffix_sv}"
+output_folder_raw="sv_h${hidden_size}_l${num_hidden_layers}_b${batch_size_actual}_mpe${max_position_embeddings_sv}_e${epochs}${suffix_sv}"
 
 if [ "$pretrain_cpt" = "" ]
 then
@@ -195,6 +195,7 @@ raw_udf="
   --epochs=${epochs}
   --warmup_epochs=${epochs_warmup}
   --num_hidden_layers=${num_hidden_layers}
+  --model_type='${model_type}'
   --hidden_size=${hidden_size}
   --intermediate_size=${intermediate_size}
   --num_attention_heads=${num_attention_heads}
@@ -204,6 +205,7 @@ raw_udf="
   --num_labels=${num_labels}
   --problem_type=${problem_type}
   --loss_type='${loss_type}'
+  --task_ratio=${task_ratio}
   --deepspeed_config='${deepspeed_config}'
   --epoch_per_eval=${epoch_per_eval}
   --eval_only=${eval_only}

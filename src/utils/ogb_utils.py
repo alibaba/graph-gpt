@@ -1,4 +1,6 @@
 from typing import Dict
+import numpy as np
+from sklearn.metrics import roc_auc_score
 import torch
 from torch import Tensor
 from . import control_flow
@@ -6,6 +8,51 @@ from . import control_flow
 _eval = control_flow.Register()
 evaluate_ogb = _eval.build  # return func results
 get_ogb_evaluator = _eval.get  # return the func
+
+
+def _eval_rocauc(y_true, y_pred):
+    rocauc_list = []
+
+    for i in range(y_true.shape[1]):
+        # AUC is only defined when there is at least one positive data.
+        if np.sum(y_true[:, i] == 1) > 0 and np.sum(y_true[:, i] == 0) > 0:
+            is_labeled = y_true[:, i] == y_true[:, i]
+            rocauc_list.append(
+                roc_auc_score(y_true[is_labeled, i], y_pred[is_labeled, i])
+            )
+
+    if len(rocauc_list) == 0:
+        raise RuntimeError(
+            "No positively labeled data available. Cannot compute ROC-AUC."
+        )
+
+    return {"rocauc": sum(rocauc_list) / len(rocauc_list)}
+
+
+@_eval("reddit_threads")
+def _eval_reddit_threads(input_dict: Dict[str, Tensor]):
+    # In most cases, input_dict is
+    # input_dict = {"y_true": y_true, "y_pred": y_pred}
+    input_dict = {k: v.reshape((-1, 1)) for k, v in input_dict.items()}
+    y_true, y_pred = input_dict["y_true"], input_dict["y_pred"]
+    y_true = y_true.detach().cpu().numpy()
+    y_pred = y_pred.detach().cpu().numpy()
+    result_dict = _eval_rocauc(y_true, y_pred)
+    result_dict["ema_rocauc"] = result_dict.pop("rocauc")
+    return result_dict
+
+
+@_eval("ogbn-arxiv")
+def _eval_ogbn_arxiv(input_dict: Dict[str, Tensor]):
+    from ogb.nodeproppred import Evaluator
+
+    evaluator = Evaluator(name="ogbn-arxiv")
+    # In most cases, input_dict is
+    # input_dict = {"y_true": y_true, "y_pred": y_pred}
+    input_dict = {k: v.reshape((-1, 1)) for k, v in input_dict.items()}
+    result_dict = evaluator.eval(input_dict)
+    result_dict["ema_acc"] = result_dict.pop("acc")
+    return result_dict
 
 
 @_eval("ogbn-products")

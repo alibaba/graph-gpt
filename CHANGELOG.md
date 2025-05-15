@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2025-05-15
+
+### Model
+- Refactor model architectures
+- Release 4 checkpoints for the PCQM4M-v2 dataset in [ModelScope](https://www.modelscope.cn/organization/Alibaba-DT) 
+
+### Other
+- Code refactoring.
+- Update paper.
+
 ## [0.4.0] - 2024-10-13
 
 ### Dataset

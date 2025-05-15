@@ -122,3 +122,34 @@ def _prepare_4d_attention_mask(
     return inverted_mask.masked_fill(
         inverted_mask.to(torch.bool), torch.finfo(dtype).min
     )
+
+
+# check https://aliyuque.antfin.com/james.zqf/ssqcu1/dexa1q0g8givelio?singleDoc# for implementation details
+def _prepare_4d_bi_causal_attention_mask(
+    causal_len: Union[int, torch.Tensor],
+    attention_mask: Optional[torch.Tensor],
+    dtype: torch.dtype,
+    tgt_len: Optional[int] = None,
+):
+    """
+    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
+    """
+    # causal_len as 1st arg for using `partial` to create a new func when it's int
+    device = attention_mask.device
+    bsz, tgt_len = attention_mask.shape
+    src_len = tgt_len
+
+    mask = torch.arange(tgt_len, device=device)[None, :]
+    # 1. create bi-attn mask
+    bi_mask = mask < attention_mask.sum(dim=-1, keepdim=True) - causal_len
+    bi_mask_4d = bi_mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len)
+    # 2. create causal mask
+    causal_mask = mask < mask.view((-1, 1)) + 1
+    causal_mask_4d = causal_mask[None, None, :, :].expand(bsz, 1, tgt_len, src_len)
+    # 3. merge bi-/causal- masks
+    bi_causal_mask_4d = (
+        bi_mask_4d | causal_mask_4d & attention_mask.to(bool)[:, None, None, :]
+    )
+    # 4. to dtype
+    inverted_mask = 1.0 - bi_causal_mask_4d.to(dtype)
+    return inverted_mask.masked_fill(~bi_causal_mask_4d, torch.finfo(dtype).min)

@@ -62,6 +62,7 @@ class GraphGPTConfig(LlamaConfig):
         tie_word_embeddings=False,
         pooling_method="last",
         causal_attention: bool = True,
+        rope_range: int = 0,
         # For transformer backbone's dropout -> embed layer, attn & attn residue, mlp layer
         embed_pdrop: float = 0,
         path_pdrop: float = 0,
@@ -71,10 +72,14 @@ class GraphGPTConfig(LlamaConfig):
         stacked_feat: int = 1,
         stack_method: str = None,  # short|long
         stacked_feat_agg_method: str = "sum",
+        pos_agg_method: str = "sum",  # for mol's 3D positions
+        pos_bins: int = 512,  # for mol's 3D positions
         # For input with embed features
         embed_dim: int = 0,
         # For pre-train task
         next_n_token: int = 1,
+        focal_gamma: float = 0,  # param for focal-loss
+        smtp_inside: bool = False,  # whether to prepare SMTP inputs and labels inside `model::forward`
         # For downstream tasks
         cls_token_id=None,
         mlp: Optional[List[int]] = None,
@@ -83,8 +88,11 @@ class GraphGPTConfig(LlamaConfig):
         num_neg: Optional[int] = None,
         **kwargs,
     ):
+        self.smtp_inside = smtp_inside
+        self.focal_gamma = focal_gamma
         self.next_n_token = next_n_token
         self.causal_attention = causal_attention
+        self.rope_range = rope_range
         # 1. For dropout in transformer backbone
         self.embed_pdrop = embed_pdrop
         self.path_pdrop = path_pdrop
@@ -93,6 +101,8 @@ class GraphGPTConfig(LlamaConfig):
         self.stacked_feat = stacked_feat
         self.stack_method = stack_method
         self.stacked_feat_agg_method = stacked_feat_agg_method
+        self.pos_agg_method = pos_agg_method
+        self.pos_bins = pos_bins
         self.embed_dim = embed_dim
         # 2. For downstream tasks
         self.cls_token_id = cls_token_id
@@ -102,6 +112,7 @@ class GraphGPTConfig(LlamaConfig):
         self.dropout = dropout
         self.loss_type = loss_type
         self.num_neg = num_neg
+        self.rope_3d = False
         super().__init__(
             vocab_size=vocab_size,
             hidden_size=hidden_size,

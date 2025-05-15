@@ -1,7 +1,7 @@
 {
   "name_or_path": "reddit_threads",
   "dataset": "reddit_threads",
-  "attr_world_identifier": "reddit_threads",
+  "attr_world_identifier": "struct",
   "task_type": "pretrain",
   "vocab_file": "vocab",
   "sampling": null,

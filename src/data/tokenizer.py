@@ -3,7 +3,6 @@ import random
 import math
 import numpy as np
 from typing import Dict, List, Callable, Tuple, Optional, Union, Iterable, Set
-import sentencepiece as spm
 
 import torch
 from torch_geometric.data import Data
@@ -20,22 +19,11 @@ from ..utils import (
 )
 from .vocab_builder import load_vocab
 
-# Below for SP tokenizer
-DICT_col2repr = {
-    "node": {i: chr(65 + i) for i in range(26)},
-    "edge": {i: chr(97 + i) for i in range(26)},
-    "graph": {0: "="},
-}
 
-DICT_edge_type2repr = {
-    "<edge_jump>": ":",
-    "<edge_in>": "<",
-    "<edge_out>": ">",
-    "<edge_bi>": "&",
+DICT_pos_func = {
+    "trans_rotate": mol_utils.trans_rotate_3d_random,
+    "anchor_rotate": mol_utils.rotate_3d_v3,
 }
-
-NODE_repr = "#"
-# above for SP tokenizer
 
 
 class GSTTokenizer(object):
@@ -67,7 +55,6 @@ class GSTTokenizer(object):
         self.token_components = None
         self.random_ratio = 1
         self.label_to_be_padded = self.get_label_token_id_to_be_padded()
-        self.attr_mask_ratio = self.config["semantics"].get("attr_mask_ratio", 0)
         # cyclic mpe
         self.cmpe = 100000
         self.cyclic_mpe = False
@@ -306,6 +293,9 @@ class GSTTokenizer(object):
             feature["labels"] = _merge_two_ls(
                 feature["labels"], padded_labels, self.padding_side
             )
+            assert isinstance(
+                feature["attention_mask"], List
+            ), f"attention_mask type: {type(feature['attention_mask'])}"
             feature["attention_mask"] = _merge_two_ls(
                 feature["attention_mask"], padded_attention_mask, self.padding_side
             )
@@ -323,22 +313,16 @@ class GSTTokenizer(object):
                     padded_attention_mask,
                     self.padding_side,
                 )
-            if "embed" in feature:
-                dim = len(feature["embed"][0])
-                padded_embeds = np.zeros((padding_len, dim), dtype=np.float32).tolist()
-                feature["embed"] = _merge_two_ls(
-                    feature["embed"], padded_embeds, self.padding_side
-                )
-            set_3d = {"pos", "noise"}
-            for name in set_3d:
+            set_vectors = {"embed", "noise"}
+            for name in set_vectors:
                 if name in feature:
-                    padded_pos = torch.zeros(padding_len, 3, dtype=torch.float32)
-                    tensors = (
-                        [feature[name], padded_pos]
-                        if self.padding_side == "right"
-                        else [padded_pos, feature[name]]
+                    dim = len(feature[name][0])
+                    padded_vecs = np.zeros(
+                        (padding_len, dim), dtype=np.float32
+                    ).tolist()
+                    feature[name] = _merge_two_ls(
+                        feature[name], padded_vecs, self.padding_side
                     )
-                    feature[name] = torch.cat(tensors, dim=0).tolist()
         else:
             keys_set = {
                 "input_ids",
@@ -349,6 +333,7 @@ class GSTTokenizer(object):
                 "attention_mask",
                 "attention_mask_bi",
                 "embed",
+                "noise",
             }
             # eos_idx<0 or eos_idx=1e8
             # the design of negative `eos_idx` is to keep the task-specific tails
@@ -357,15 +342,15 @@ class GSTTokenizer(object):
             # tail `<eos> <gsum>` for graph task -> eos_idex=-2
             mid_idx = pad_to + self.eos_idx if self.eos_idx < 0 else pad_to
             for key, val in feature.items():
-                feature[key] = (
-                    val[:mid_idx] + val[self.eos_idx :] if key in keys_set else val
-                )
+                if key in keys_set:
+                    if isinstance(val, np.ndarray):
+                        # For 2D block-wise attention mask in pre-train with packed sequence
+                        assert key == "attention_mask", f"NOT for {key}"
+                        feature[key] = val[:pad_to, :pad_to].tolist()
+                    else:
+                        feature[key] = val[:mid_idx] + val[self.eos_idx :]
             if ("cls_idx" in feature) and (self.eos_idx < 0):
                 feature["cls_idx"] = [pad_to + self.eos_idx + 1]
-            set_3d = {"pos", "noise"}
-            for name in set_3d:
-                if name in feature:
-                    feature[name] = feature[name][:pad_to].tolist()
         return feature
 
     def pack_token_seq(
@@ -440,10 +425,7 @@ class GSTTokenizer(object):
     def raw_tokenize(self, graph: Data):
         # input: raw small/medium graph OR subgraph sampled from big graphs
         # output: sequence of tokens from vocab
-        # 1. decide whether to mask attr
-        if random.random() < self.attr_mask_ratio:
-            graph = mask_semantics_raw_node_edge_attr(graph, self.config)
-        # 2. transform graph to Eulerian sequence
+        # 1~2. transform graph to Eulerian sequence
         assert (
             graph.num_nodes <= self.config["structure"]["node"]["node_scope"]
         ), f"num_nodes: {graph.num_nodes} > node_scope: {self.config['structure']['node']['node_scope']}"
@@ -485,7 +467,7 @@ class GSTTokenizer(object):
                 )
         # 4. decorate node/edge/graph with above mapping
         raw_seq = nx_utils.get_raw_seq_from_path(path)
-        mask = get_mask_of_raw_seq(raw_seq, self.mask_type)
+        mask = tokenizer_utils.get_mask_of_raw_seq(raw_seq, self.mask_type)
         (
             ls_tokens,
             ls_node_regression_labels,
@@ -501,16 +483,7 @@ class GSTTokenizer(object):
             graph_semantics_mapping,
             attr_shuffle=self.config["semantics"].get("attr_shuffle", False),
         )
-        # 4.5 special decoration for molecule data with 3d coordinates
-        added_tokens = (
-            decorate_molecules_with_3d_positions(graph, self, node_structure_mapping)
-            if self.config["semantics"].get("add_3d", False)
-            else []
-        )
-        ls_tokens.extend(added_tokens)
-        tgt_pos = None
-        if self.config["semantics"].get("3d_regression", False):
-            tgt_pos, _ = _trans_rot_pos(graph, node_structure_mapping)  # [num_nodes, 3]
+        # 4.5 DEPRECATED@2024-10-22:: special decoration for molecule data with 3d coordinates
         # 5. remove bidirectional edge-type token, because it is treated as default edge-type,
         # keeping it will produce lots of redundant tokens
         dict_edge = self.config["structure"]["edge"]
@@ -546,18 +519,16 @@ class GSTTokenizer(object):
         ls_tokens.extend(ls_instruct_tokens)
         ls_labels.extend(ls_instruct_labels)
         # 6.3 add special tokens, e.g., eos
-        ls_tokens = (
-            self.add_eos_token(ls_tokens)
-            if (self.add_eos and ls_labels is None)
-            else ls_tokens
-        )
+        if self.add_eos and ("pretrain" not in self.task_type):
+            ls_tokens = self.add_eos_token(ls_tokens)
+            ls_labels = self.add_eos_token(ls_labels)
         return tokenizer_utils.TokenizationOutput(
             ls_tokens=ls_tokens,
             ls_labels=ls_labels,
             tgt_node_token=tgt_node_token,
             tgt_edge_src_token=tgt_edge_src_token,
             tgt_edge_dst_token=tgt_edge_dst_token,
-            tgt_pos=tgt_pos,  # TODO: implement ls_embed for GSTTokenizer
+            tgt_pos=None,  # TODO: implement ls_embed for GSTTokenizer
         )
 
     def convert_tokens_to_ids(self, seq_tokens, seq_labels):
@@ -603,7 +574,8 @@ class GSTTokenizer(object):
             tgt_pos=token_res.tgt_pos,
             gsum_token_id=self.get_gsum_token_id(),
             gtokenizer=self,
-            is_training=is_training,
+            ls_len=token_res.ls_len,
+            ls_raw_node_idx=token_res.ls_raw_node_idx,
         )
         return in_dict
 
@@ -622,12 +594,17 @@ class GSTTokenizer(object):
         )
         # 7~8. self.convert_tokens_to_ids
         in_dict = self.convert_tokens_to_ids(ls_tokens, ls_labels)
+        if ls_embed:
+            in_dict["embed"] = ls_embed
         # 9. prepare for tasks
+        token_res.ls_tokens = ls_tokens
+        token_res.ls_labels = ls_labels
+        token_res.ls_embed = ls_embed
+        token_res.ls_len = ls_len
         in_dict = self.prepare_inputs_for_task(
             in_dict,
             graph,
             token_res=token_res,
-            is_training=is_training,
         )
         return in_dict
 
@@ -869,7 +846,9 @@ def get_semantics_attr_mapping(
     embed_attr = config["semantics"][node_or_edge].get("embed", None)
     if embed_attr is not None:
         tmp_map = func_attr_mapping(path, data, embed_attr)
-        dict_map["embed"] = {k: v.tolist() for k, v in tmp_map.items()}
+        dict_map["embed"] = (
+            {k: v.tolist() for k, v in tmp_map.items()} if tmp_map else {(-1, -1): None}
+        )
     return dict_map
 
 
@@ -912,279 +891,6 @@ def mask_semantics_raw_node_edge_attr(data: Data, config: Dict):
     return data
 
 
-def _obtain_all_idx_of_each_element(seq: List):
-    dict_idx = {}
-    for i, ele in enumerate(seq):
-        if ele not in dict_idx:
-            dict_idx[ele] = []
-        dict_idx[ele].append(i)
-    return dict_idx
-
-
-def _obtain_first_appearance_idx(dict_idx):
-    return [val[0] for val in dict_idx.values()]
-
-
-def _obtain_last_appearance_idx(dict_idx):
-    return [val[-1] for val in dict_idx.values()]
-
-
-def _obtain_random_appearance_idx(dict_idx):
-    return [random.choice(val) for val in dict_idx.values()]
-
-
-def _obtain_all_appearance_idx(dict_idx):
-    return [idx for val in dict_idx.values() for idx in val]
-
-
-def get_mask_of_raw_seq(raw_seq, mask_type="first"):
-    deco_seq = [
-        (min(ele), max(ele)) if isinstance(ele, tuple) else ele for ele in raw_seq
-    ]
-    dict_deco_idx = _obtain_all_idx_of_each_element(deco_seq)
-    dict_mask_func = {
-        "first": _obtain_first_appearance_idx,
-        "last": _obtain_last_appearance_idx,
-        "random": _obtain_random_appearance_idx,
-        "all": _obtain_all_appearance_idx,
-    }
-    mask_type = (
-        random.choice(("first", "last", "random")) if mask_type == "mix" else mask_type
-    )
-    mask_func = dict_mask_func[mask_type]
-    idx = mask_func(dict_deco_idx)
-    idx = sorted(idx)
-
-    seq_len = len(raw_seq)
-    mask = np.zeros(seq_len, dtype=int)
-    mask[idx] = 1
-    return mask
-
-
-def _trans_rot_pos(
-    graph,
-    node_structure_mapping: Dict[int, Tuple[str]],
-):
-    # 1. get the coord of nodes in the order of euler sequence
-    idx_euler_order = [
-        old_idx
-        for old_idx, new_idx in sorted(
-            node_structure_mapping.items(), key=lambda x: eval("+".join(x[1]))
-        )
-    ]
-    if (
-        hasattr(graph, "pos")
-        and isinstance(graph.pos, torch.Tensor)
-        and (not torch.isnan(graph.pos).any().item())
-    ):
-        pos = graph.pos[idx_euler_order]
-
-        # 2. reset the coord by subtracting 1st node's coord in euler sequence
-        pos = pos - pos[0:1]  # [N, 3]  translational invariant
-    else:
-        pos = torch.tensor([0, 0, 0], dtype=torch.float32)
-
-    if torch.abs(pos).sum() > 1e-8:
-        pos = mol_utils.rotate_3d_v3(pos)  # [N,3]  rotational invariant
-    return pos, idx_euler_order
-
-
-def decorate_molecules_with_3d_positions(
-    graph,
-    gtokenizer: GSTTokenizer,
-    node_structure_mapping: Dict[int, Tuple[str]],
-    trim_zeros: bool = True,
-):
-    # 1. define two special tokens: icl_token, sep_token
-    eos_token = gtokenizer.get_eos_token()
-    icl_token = gtokenizer.get_icl_token()
-    sep_token = gtokenizer.get_sep_token()
-
-    # 2&3. translational & rotational invariant transformation of 3d-pos
-    pos, idx_euler_order = _trans_rot_pos(graph, node_structure_mapping)
-
-    # 4. obtain the tokens if the graph has 3d coordinate
-    def _process_each_col(col_val: str):
-        ls_col_val = list(col_val)
-        # ls_col_val = _remove_lead_zero(ls_col_val)
-        return [f"<{x}>" for x in ls_col_val]
-
-    if torch.abs(pos).sum() > 1e-8:
-        decimals = gtokenizer.config["semantics"].get("3d_decimals", 2)
-        ls_coords = []
-        pos_str = pos.round(decimals=decimals).numpy().astype(str)
-        for idx, node_pos in enumerate(
-            pos_str[1:], 1
-        ):  # 1st node is translated to (0,0,0), so ignore it
-            coords = [[sep_token] + _process_each_col(col_val) for col_val in node_pos]
-            # 2nd node is rotated to (0,0,z), so ignore x,y coords
-            # 3rd node is rotated to (0,y,z), so ignore x coords
-            trim = max(0, 3 - idx) if trim_zeros else 0
-            coords = coords[trim:]
-            coords_flat = [token for each_coord in coords for token in each_coord]
-            coords_flat = coords_flat[1:]  # remove the leading sep_token
-
-            old_idx = idx_euler_order[idx]
-            new_idx = node_structure_mapping[old_idx]
-
-            node_with_coords = list(new_idx) + coords_flat
-            ls_coords.append(node_with_coords)
-            # print(node_with_coords)
-        ls_coords = [token for each in ls_coords for token in each]
-        ls_coords = [eos_token, icl_token] + ls_coords
-    else:
-        ls_coords = []
-    return ls_coords
-
-
-class SPGSTTokenizer(GSTTokenizer):
-    def __init__(
-        self, config: Dict, *, padding_side: str = "right", add_eos: bool = True
-    ):
-        super().__init__(config, padding_side=padding_side, add_eos=add_eos)
-        self.config["structure"]["node"]["scope_base"] = 0
-        self.semantics2tokens_mapping = (
-            get_sp_semantics_raw_node_edge_graph2attr_mapping
-        )
-        self.sp = self.vocab_map
-
-    def load_vocab(self):
-        fn = os.path.join(
-            self.config["name_or_path"], self.config.get("vocab_file", "vocab")
-        )  # 'triangles-sp-90k-hash-sep-v400-uds.model'
-        print(f"load sp tokenizer from {fn}")
-        return spm.SentencePieceProcessor(model_file=fn)
-
-    def get_vocab_size(self):
-        assert isinstance(self.vocab_map, spm.SentencePieceProcessor)
-        return self.vocab_map.vocab_size()
-
-    def get_edge_dir_tokens(self):
-        return [
-            token
-            for token in self.config["structure"]["edge"].values()
-            if isinstance(token, str)
-        ]
-
-    def get_all_special_tokens(self):
-        return (
-            self.get_common_structure()
-            + self.get_edge_dir_tokens()
-            + [self.get_gsum_token(), self.get_icl_token(), self.get_sep_token()]
-            + self.get_common_semantics()
-        )
-
-    def get_bos_token(self):
-        return self.sp.id_to_piece(self.sp.bos_id())
-
-    def get_eos_token(self):
-        return self.sp.id_to_piece(self.sp.eos_id())
-
-    def get_bos_token_id(self):
-        return self.sp.bos_id()
-
-    def get_eos_token_id(self):
-        return self.sp.eos_id()
-
-    def get_gsum_token_id(self):
-        return self.sp.piece_to_id(self.get_gsum_token())
-
-    def tokenize(self, graph: Data):
-        token_res = super().tokenize(graph)
-        seq = "#".join(token_res.ls_tokens)
-        # ls_tokens = self.sp.encode_as_pieces(seq)
-        ls_tokens = self.sp.encode(
-            seq, out_type=str, enable_sampling=True, alpha=0.1, nbest_size=-1
-        )
-        return tokenizer_utils.TokenizationOutput(
-            ls_tokens=ls_tokens,
-            tgt_node_token=token_res.tgt_node_token,
-            tgt_edge_src_token=token_res.tgt_edge_src_token,
-            tgt_edge_dst_token=token_res.tgt_edge_dst_token,
-            tgt_pos=token_res.tgt_pos,
-        )
-
-    def convert_tokens_to_ids(self, seq_tokens):
-        # 7. map tokens to token-id
-        seq_tokens_id = self.sp.piece_to_id(seq_tokens)
-        # 8. add labels, attention mask, position_ids and etc
-        in_dict = get_input_dict_from_seq_tokens_id(
-            seq_tokens_id,
-            None,
-            self.label_to_be_padded,
-            self.label_pad_token_id,
-            self.cmpe,
-            self.cyclic_mpe,
-        )
-        return in_dict
-
-    def _map_tokens_to_ids(self, tokens: str):
-        if tokens is None:
-            token_ids = None
-        elif isinstance(tokens, str):
-            token_ids = self.sp.encode(tokens)
-        else:
-            raise NotImplementedError(
-                f"Not implement for type {type(tokens)} of tokens {tokens}!"
-            )
-        return token_ids
-
-
-def _sp_tokenize_attr(
-    raw_attr: List[str],
-    node_edge_identifier: str,
-    ignored_val: str = None,
-    shuffle: bool = False,
-):
-    # input:: raw_attr: e.g., ['500', '0', '380']
-    # output:: e.g., ['A500', 'C380']
-    dict_col2repr = DICT_col2repr[node_edge_identifier]
-    tokens = [
-        dict_col2repr[col_idx] + col_val
-        for col_idx, col_val in enumerate(raw_attr)
-        if col_val != str(ignored_val)
-    ]
-    if shuffle:
-        random.shuffle(tokens)
-    return tokens
-
-
-def get_sp_semantics_attr_mapping(
-    path, data: Data, config: Dict, node_or_edge: str, func_attr_mapping: Callable
-):
-    # input: path
-    # output: a mapping of each node/edge to its attr, and each node to its global-idx if exists
-    assert node_or_edge in {"node", "edge", "graph"}
-
-    attr_shuffle = config["semantics"].get("attr_shuffle", False)
-
-    attr = config["semantics"][node_or_edge]["continuous"]
-    if attr is not None:
-        ignored_val = config["semantics"][node_or_edge]["ignored_val"]
-        tmp_map = func_attr_mapping(path, data, attr)
-        dict_map = {
-            k: _sp_tokenize_attr(v, node_or_edge, ignored_val, attr_shuffle)
-            for k, v in tmp_map.items()
-        }
-    else:
-        # print(f"[Warning]attr {attr} is None") if attr is None else None
-        dict_map = {}
-    return {"discrete": dict_map, "continuous": {}}
-
-
-def get_sp_semantics_raw_node_edge_graph2attr_mapping(path, data: Data, config: Dict):
-    dict_map_node = get_sp_semantics_attr_mapping(
-        path, data, config, "node", _get_node2attr_mapping
-    )
-    dict_map_edge = get_sp_semantics_attr_mapping(
-        path, data, config, "edge", _get_edge2attr_mapping
-    )
-    dict_map_graph = get_sp_semantics_attr_mapping(
-        path, data, config, "graph", _get_graph2attr_mapping
-    )
-    return dict_map_node, dict_map_edge, dict_map_graph
-
-
 class StackedGSTTokenizer(GSTTokenizer):
     def __init__(
         self,
@@ -1193,6 +899,7 @@ class StackedGSTTokenizer(GSTTokenizer):
         padding_side: str = "right",
         add_eos: bool = True,
         stack_method: str = "short",
+        rotation: str = "anchor_rotate",
         **kwargs,
     ):
         super().__init__(config, padding_side=padding_side, add_eos=add_eos, **kwargs)
@@ -1205,6 +912,11 @@ class StackedGSTTokenizer(GSTTokenizer):
         self.default_edge_attr_id = None
         self.config["semantics"]["node"]["ignored_val"] = None
         self.config["semantics"]["edge"]["ignored_val"] = None
+        assert rotation in DICT_pos_func.keys(), f"your rotation: {rotation}"
+        self.rotation = rotation
+        print(
+            f"[StackedGSTTokenizer] stack_method: {stack_method}, rotation: {rotation}"
+        )
 
     def get_default_node_attr(self, graph: Optional[Data] = None):
         if self.default_node_attr is None:
@@ -1272,6 +984,11 @@ class StackedGSTTokenizer(GSTTokenizer):
     def tokenize(self, graph: Data):
         # input: raw small/medium graph OR subgraph sampled from big graphs
         # output: sequence of tokens from vocab
+        if hasattr(graph, "pos") and graph.pos is not None:
+            graph.pos = DICT_pos_func[self.rotation](graph.pos)
+        if hasattr(graph, "rdkit_pos"):
+            graph.rdkit_pos = DICT_pos_func[self.rotation](graph.rdkit_pos)
+            graph.pos = torch.hstack([graph.pos, graph.rdkit_pos])
         # 1 & 2. get eulerian path
         path = graph2path(graph, prioritize=self.task_type != "pretrain")
         # 3. obtain node/edge structure and semantics mapping
@@ -1333,7 +1050,7 @@ class StackedGSTTokenizer(GSTTokenizer):
                 [node_structure_mapping[ele] for ele in range(graph.num_nodes)]
             )
         # 4. remove bidirectional edge-type token, because it is treated as default edge-type,
-        # keeping it will produce lots of redundant tokens
+        # keeping it will produce redundant tokens
         if self.config["structure"]["edge"]["remove_edge_type_token"]:
             edge_structure_mapping = None
         # 5. stack node/edge/graph attr to nodes, so that total seq is Eulerian path len
@@ -1342,7 +1059,7 @@ class StackedGSTTokenizer(GSTTokenizer):
             if self.stack_method == "short"
             else stack_attr_to_node_and_edge
         )
-        ls_tokens, ls_embed = stack_func(
+        ls_tokens, ls_embed, ls_raw_node_idx = stack_func(
             self,
             path,
             node_structure_mapping,
@@ -1354,6 +1071,7 @@ class StackedGSTTokenizer(GSTTokenizer):
         # 6. add special tokens, e.g., eos
         ls_tokens = self.add_eos_token(ls_tokens) if self.add_eos else ls_tokens
         ls_embed = add_eos_embed(ls_embed) if self.add_eos else ls_embed
+        ls_raw_node_idx.append(-1) if self.add_eos else None
         token_compontens = self.get_token_components(ls_tokens)
         ls_labels = ls_tokens[1:] + [[self.get_eos_token()] * token_compontens]
         # 6.1 enable nx func to enhance structure understanding
@@ -1385,6 +1103,7 @@ class StackedGSTTokenizer(GSTTokenizer):
             tgt_edge_dst_token=tgt_edge_dst_token,
             tgt_edge_attr_token=tgt_edge_attr_token,
             ls_embed=ls_embed,
+            ls_raw_node_idx=ls_raw_node_idx,
         )
 
     def convert_tokens_to_ids(self, seq_tokens: List[List[str]], seq_labels: List[str]):
@@ -1434,6 +1153,7 @@ class StackedGSTTokenizer(GSTTokenizer):
                     ls_token_ids,
                     node_attr_dim=node_attr_dim,
                     padding_val=self.pad_token_id,
+                    eos_token_id=self.get_eos_token_id(),
                 )
                 for i, ls_token_ids in enumerate(ids)
             ] + eos
@@ -1450,36 +1170,8 @@ class StackedGSTTokenizer(GSTTokenizer):
             gsum_token_id=self.get_gsum_token_id(),
             gtokenizer=self,
             ls_len=token_res.ls_len,
+            ls_raw_node_idx=token_res.ls_raw_node_idx,
             **self.kwargs,
-        )
-        return in_dict
-
-    def __call__(self, graph: Data, is_training: Optional[bool] = None):
-        # 1~6. self.tokenize
-        token_res = self.tokenize(graph)
-        ls_tokens, ls_labels, ls_embed, ls_len = (
-            self.pack_token_seq(token_res, graph.idx)
-            if self.mpe is not None
-            else (
-                token_res.ls_tokens,
-                token_res.ls_labels,
-                token_res.ls_embed,
-                [len(token_res.ls_tokens)],
-            )
-        )
-        # 7~8. self.convert_tokens_to_ids
-        in_dict = self.convert_tokens_to_ids(ls_tokens, ls_labels)
-        if ls_embed:
-            in_dict["embed"] = ls_embed
-        # 9. prepare for tasks
-        token_res.ls_tokens = ls_tokens
-        token_res.ls_labels = ls_labels
-        token_res.ls_embed = ls_embed
-        token_res.ls_len = ls_len
-        in_dict = self.prepare_inputs_for_task(
-            in_dict,
-            graph,
-            token_res=token_res,
         )
         return in_dict
 
@@ -1502,6 +1194,80 @@ def stack_node_edge_graph_attr_to_node(
 ):
     ls_tokens = []  # For next/masked-token-prediction
     ls_embed = []  # Embed features as input only
+    ls_raw_node_idx = []  # raw node-idx for 3D position labeling
+
+    # 1. work on 1st node in the path
+    # 1.1 For discrete feature as tokens
+    if path:
+        node, _ = path[0]
+    else:  # For graph with single node, path == []
+        node = 0
+    edge = (-1, -1)
+    ls = instruct_tuning_utils._get_all_node_feats(
+        node,
+        edge,
+        node_structure_mapping=node_structure_mapping,
+        edge_structure_mapping=edge_structure_mapping,
+        node_semantics_mapping=node_semantics_mapping,
+        edge_semantics_mapping=edge_semantics_mapping,
+    )
+    ls_tokens.append(ls)
+
+    # 1.2 For embed features
+    ls_e = instruct_tuning_utils._get_all_node_feats(
+        node,
+        edge,
+        node_semantics_mapping=node_semantics_mapping,
+        edge_semantics_mapping=edge_semantics_mapping,
+        edge_semantics_default=gtokenizer.get_default_edge_embed(),
+        attr_type="embed",
+    )
+    ls_embed.append(ls_e)
+
+    # 1.3 For raw node-idx
+    ls_raw_node_idx.append(node)
+
+    # 2. work on subsequent edges & nodes in the path
+    for edge in path:
+        _, node = edge
+        # 2.1 For discrete feature as tokens
+        ls = instruct_tuning_utils._get_all_node_feats(
+            node,
+            edge,
+            node_structure_mapping=node_structure_mapping,
+            edge_structure_mapping=edge_structure_mapping,
+            node_semantics_mapping=node_semantics_mapping,
+            edge_semantics_mapping=edge_semantics_mapping,
+            edge_semantics_default=gtokenizer.get_default_edge_attr(),
+        )
+        ls_tokens.append(ls)
+        # 2.2 For embed feature
+        ls_e = instruct_tuning_utils._get_all_node_feats(
+            node,
+            edge,
+            node_semantics_mapping=node_semantics_mapping,
+            edge_semantics_mapping=edge_semantics_mapping,
+            edge_semantics_default=gtokenizer.get_default_edge_embed(),
+            attr_type="embed",
+        )
+        ls_embed.append(ls_e)
+        # 2.3 For raw node-idx
+        ls_raw_node_idx.append(node)
+    return ls_tokens, ls_embed, ls_raw_node_idx
+
+
+def stack_attr_to_node_and_edge(
+    gtokenizer: StackedGSTTokenizer,
+    path: List[Tuple[int, int]],
+    node_structure_mapping,
+    edge_structure_mapping,
+    node_semantics_mapping,
+    edge_semantics_mapping,
+    graph_semantics_mapping,
+):
+    ls_tokens = []  # For next/masked-token-prediction
+    ls_embed = []  # Embed features as input only
+    ls_raw_node_idx = []  # raw node-idx for 3D position labeling
 
     # 1. work on 1st node in the path
     # 1.1 For discrete feature as tokens
@@ -1529,62 +1295,14 @@ def stack_node_edge_graph_attr_to_node(
         attr_type="embed",
     )
     ls_embed.append(ls_e)
+    pad_embed = tuple([0] * len(ls_e))
 
-    # 2. work on subsequent edges & nodes in the path
-    for edge in path:
-        _, node = edge
-        # 2.1 For discrete feature as tokens
-        ls = instruct_tuning_utils._get_all_node_feats(
-            node,
-            edge,
-            node_structure_mapping=node_structure_mapping,
-            edge_structure_mapping=edge_structure_mapping,
-            node_semantics_mapping=node_semantics_mapping,
-            edge_semantics_mapping=edge_semantics_mapping,
-            edge_semantics_default=gtokenizer.get_default_edge_attr(),
-        )
-        ls_tokens.append(ls)
-        # 2.2 For embed feature
-        ls_e = instruct_tuning_utils._get_all_node_feats(
-            node,
-            edge,
-            node_semantics_mapping=node_semantics_mapping,
-            edge_semantics_mapping=edge_semantics_mapping,
-            edge_semantics_default=gtokenizer.get_default_edge_embed(),
-            attr_type="embed",
-        )
-        ls_embed.append(ls_e)
-    return ls_tokens, ls_embed
-
-
-def stack_attr_to_node_and_edge(
-    gtokenizer: StackedGSTTokenizer,
-    path: List[Tuple[int, int]],
-    node_structure_mapping,
-    edge_structure_mapping,
-    node_semantics_mapping,
-    edge_semantics_mapping,
-    graph_semantics_mapping,
-):
-    ls_tokens = []  # For next/masked-token-prediction
-    ls_embed = []  # Embed features as input only
-
-    if path:
-        node, _ = path[0]
-    else:  # For graph with single node, path == []
-        node = 0
-    edge = (-1, -1)
-    ls = instruct_tuning_utils._get_all_node_feats(
-        node,
-        edge,
-        node_structure_mapping=node_structure_mapping,
-        edge_structure_mapping=edge_structure_mapping,
-        node_semantics_mapping=node_semantics_mapping,
-        edge_semantics_mapping=edge_semantics_mapping,
-    )
-    ls_tokens.append(ls)
+    # 1.3 For raw node-idx
+    ls_raw_node_idx.append(node)
 
     for edge in path:
+        # 2. obtain ls-tokens/embeds/node_idx from `edge`
+        # 2.1 discrete features
         node = -1
         ls = instruct_tuning_utils._get_all_node_feats(
             node,
@@ -1597,9 +1315,15 @@ def stack_attr_to_node_and_edge(
             edge_semantics_default=gtokenizer.get_default_edge_attr(),
         )
         ls_tokens.append(ls)
+        # 2.2 embed features
+        ls_embed.append(list(pad_embed))
+        # 2.3 raw node-idx
+        ls_raw_node_idx.append(node)
 
+        # 3. obtain ls-tokens/embeds/node_idx from `node`
         _, node = edge
         edge = (-1, -1)
+        # 3.1 discrete fatures
         ls = instruct_tuning_utils._get_all_node_feats(
             node,
             edge,
@@ -1611,7 +1335,18 @@ def stack_attr_to_node_and_edge(
             edge_semantics_default=gtokenizer.get_default_edge_attr(),
         )
         ls_tokens.append(ls)
-    return ls_tokens, ls_embed
+        # 3.2 embed features
+        ls_e = instruct_tuning_utils._get_all_node_feats(
+            node,
+            edge,
+            node_semantics_mapping=node_semantics_mapping,
+            edge_semantics_mapping=edge_semantics_mapping,
+            attr_type="embed",
+        )
+        ls_embed.append(ls_e)
+        # 3.3 raw node-idx
+        ls_raw_node_idx.append(node)
+    return ls_tokens, ls_embed, ls_raw_node_idx
 
 
 def get_default_semantics_attr_mapping(graph: Data, config: Dict, node_or_edge: str):
@@ -1624,7 +1359,13 @@ def get_default_semantics_attr_mapping(graph: Data, config: Dict, node_or_edge: 
     world_identifier = config["attr_world_identifier"]
     ls_tokens = []
     if discrete_attr is not None:
-        raw_attr = graph[discrete_attr][0].numpy().astype(str)
+        assert (
+            len(graph[discrete_attr].shape) == 2
+        ), f"{len(graph[discrete_attr].shape)} != 2"
+        dim = graph[discrete_attr].shape[1]
+        raw_attr = torch.zeros((1, dim)).to(graph[discrete_attr])
+        # above is in case of graph[discrete_attr].shape[0] == 0, usually for single node, i.e., 0 edges
+        raw_attr = raw_attr[0].numpy().astype(str)
         ls_tokens = _tokenize_discrete_attr(
             raw_attr,
             world_identifier,
@@ -1643,5 +1384,9 @@ def get_default_semantics_embed_mapping(graph: Data, config: Dict, node_or_edge:
     embed_attr = config["semantics"][node_or_edge].get("embed", None)
     default_embed = None
     if embed_attr is not None:
-        default_embed = np.zeros_like(graph[embed_attr][0].numpy())
+        assert len(graph[embed_attr].shape) == 2, f"{len(graph[embed_attr].shape)} != 2"
+        dim = graph[embed_attr].shape[1]
+        raw_attr = torch.zeros((1, dim)).to(graph[embed_attr])
+        # above is in case of graph[embed_attr].shape[0] == 0, usually for single node, i.e., 0 edges
+        default_embed = np.zeros_like(raw_attr[0].numpy()).tolist()
     return default_embed

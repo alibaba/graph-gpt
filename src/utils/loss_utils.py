@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from torch import nn
-from torch.nn.functional import cosine_similarity as cos_sim
 from torch.optim.lr_scheduler import (
     CyclicLR,
     CosineAnnealingLR,
@@ -105,23 +104,67 @@ class GatherLayer(torch.autograd.Function):
         return grad_out
 
 
-def _dist_infonce(output_embeds, tb_output_embeds, temperature=20.0):
+def _dist_infonce(
+    output_embeds: torch.Tensor,
+    tb_output_embeds: torch.Tensor,
+    *,
+    temperature: float = 20.0,
+    world_size: int = None,
+):
     # refer to Alibaba internal doc: https://aliyuque.antfin.com/amils0/interest/zcnufr
+    # output_embeds: l2-normalized, [bz, dim]
+    # tb_output_embeds: l2-normalized, [bz, dim]
     # whether to use barrier?
     # torch.distributed.barrier()
-    output_embeds = GatherLayer.apply(output_embeds)
-    tb_output_embeds = GatherLayer.apply(tb_output_embeds)
+    if world_size != 1:
+        output_embeds = GatherLayer.apply(output_embeds)
+        tb_output_embeds = GatherLayer.apply(tb_output_embeds)
 
-    output_embeds = torch.cat(output_embeds, dim=0)
-    tb_output_embeds = torch.cat(tb_output_embeds, dim=0)
+        output_embeds = torch.cat(output_embeds, dim=0)
+        tb_output_embeds = torch.cat(tb_output_embeds, dim=0)
 
-    scores = cos_sim(output_embeds, tb_output_embeds) * temperature
-    batch_size = len(output_embeds)
-    _labels = torch.tensor(range(batch_size), dtype=torch.long, device=scores.device)
+    # print(f"output_embeds: {output_embeds.shape}, tb_output_embeds: {tb_output_embeds.shape}")
+    scores, batch_size = cos_sim(output_embeds, tb_output_embeds, temperature)
+    # print(f"scores: {scores.shape}\n{scores}")
+    _labels = torch.arange(batch_size, dtype=torch.long, device=scores.device)
+    # print(f"_labels: {_labels.shape}\n{_labels}")
 
-    cross_entropy_loss = nn.CrossEntropyLoss()
-    loss = cross_entropy_loss(scores, _labels)
+    loss_fct = nn.CrossEntropyLoss()
+    # if cos_sim with `expand==True`, then no need below symmetric loss calculation
+    loss = 0.5 * (
+        loss_fct(scores.float(), _labels) + loss_fct(scores.T.float(), _labels)
+    )
     return loss
+
+
+def cos_sim(
+    left_embeds: torch.Tensor,
+    right_embeds: torch.Tensor,
+    temperature: float,
+    expand: bool = True,
+):
+    assert (
+        left_embeds.size() == right_embeds.size()
+    ), f"{left_embeds.size()} != {right_embeds.size()}"
+    if expand:
+        dim = left_embeds.size(1)
+        left_new = torch.hstack([left_embeds, right_embeds]).reshape((-1, dim))
+        right_new = torch.hstack([right_embeds, left_embeds]).reshape((-1, dim))
+        scores = torch.mm(left_new, right_new.T) * temperature
+
+        bz = left_new.size(0)
+        dtype = left_new.dtype
+        device = left_new.device
+        # BELOW mask the entries with score == 1*temperature
+        x_idx = torch.arange(bz, dtype=torch.long, device=device)
+        y_idx = x_idx + 1 - (x_idx % 2) * 2
+        # print(f"[DEBUG] before mask: {scores[x_idx, y_idx]}")
+        scores[x_idx, y_idx] = torch.finfo(dtype).min
+        # print(f"[DEBUG] after mask: {scores[x_idx, y_idx]}\nscores:\n{scores}")
+    else:
+        scores = torch.mm(left_embeds, right_embeds.T) * temperature
+        bz = left_embeds.size(0)
+    return scores, bz
 
 
 @_ds_scheduler("WarmupLR")

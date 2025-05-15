@@ -5,6 +5,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 from typing import Optional, Dict, Iterable, Callable, List
+
 try:
     NDArray = np.typing.NDArray
 except AttributeError:
@@ -21,7 +22,7 @@ from torch_geometric.utils import negative_sampling, add_self_loops
 from torch_geometric.loader.cluster import ClusterData
 
 from ..utils import control_flow
-from ..utils import dataset_utils, nx_utils
+from ..utils import dataset_utils, nx_utils, mol_utils
 
 
 _map_dataset = control_flow.Register()
@@ -1295,6 +1296,7 @@ class GraphsMapDataset(torch.utils.data.Dataset):
             )
         else:
             self.sampler = sorted(self.sampler)
+            self.num_graphs = len(self.sampler)
             print(
                 f"[{datetime.now()}] NOT RESET samples of {self.__class__.__name__} of {self.num_graphs} graphs for epoch {epoch}!"
             )

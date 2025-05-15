@@ -32,8 +32,12 @@ def get_latest_ckp(pretrain_cpt, eval_only=0):
     dirs_scan = [dir_.split("/")[-1] for dir_ in dirs_scan]
     dirs_scan = [dir_.split("_")[-1] for dir_ in dirs_scan]
     dirs_scan = [int(dir_) for dir_ in dirs_scan if dir_.isnumeric()]
-    ep = min(dirs_scan) if eval_only else max(dirs_scan)
-    ckp = os.path.join(pretrain_cpt, f"epoch_{ep}")
+    if dirs_scan:
+        ep = min(dirs_scan) if eval_only else max(dirs_scan)
+        ckp = os.path.join(pretrain_cpt, f"epoch_{ep}")
+    else:
+        ep = None
+        ckp = pretrain_cpt
     return ckp, ep
 
 

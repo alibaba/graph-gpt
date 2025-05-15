@@ -11,18 +11,20 @@ tokenization_config_file="graph_lvl/pcqm4m-v2_tokenization_config.json"
 sampling_conf="ns"
 
 num_cpus=12
-batch_size=1024  # 256/512 for pack_tokens=0, 64 for pk=1
-workerCount=8
-total_tokens=4e9  # 1e11  1e9
+batch_size=256  # 256/512 for pack_tokens=0, 64 for pk=1
+workerCount=1
+total_tokens=1e9  # 1e11  1e9
 warmup_tokens=1e8  # 1e9  1e8
 max_position_embeddings=1024
 samples_per_saving=1000000
 
 ds_prefix="pcqm4m-v2"
-mid_dir="202409/"
+mid_dir="202408/"
+pretrain_cpt="pt_base_202505"
 
 # ii. model config
-model_name="base24"  # tiny mini small medium base base24 base48 base64 large xlarge xxlarge
+model_type="graphgpt"
+model_name="base"  # tiny mini small medium base base24 base48 base64 large xlarge xxlarge
 stack_method="short"
 stacked_feat_agg_method="gated"  # gated|sum
 tie_word_embeddings=0
@@ -41,23 +43,24 @@ mlp_dropout=0
 layer_scale_init_val=0
 # optimizer hps
 weight_decay=0.1
-max_grad_norm=5
+max_grad_norm=1
 eps=1e-8
 use_ema=0
+do_valid=1
 ## deep-speed config; set it to empty to enable native DDP training
 deepspeed_config="./examples/ds_config2_pt.json"
 
 ## iv. optimization objective
-task_type="pretrain-mlm"  # pretrain  pretrain-mlm  pretrain-ltp  pretrain-euler
+task_type="pretrain-mlm"  # pretrain  pretrain-mlm
 
-suffix="_${hidden_act}_3.3m_nmlm_mrlinear_mtp0.8_0_0.2_lr${lr}_adp${attention_dropout}_pdp${path_dropout}_edp${embed_dropout}_mdp${mlp_dropout}_lsi${layer_scale_init_val}_${stack_method}_${stacked_feat_agg_method}_wd${weight_decay}"
+suffix="_${hidden_act}_3.3m_nmlm_lr${lr}_adp${attention_dropout}_pdp${path_dropout}_edp${embed_dropout}_mdp${mlp_dropout}_lsi${layer_scale_init_val}_${stack_method}_${stacked_feat_agg_method}_wd${weight_decay}"
 #===================================== ABOVE is config for producing our best results ==================================
 
 #=================== BELOW FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
 #model_name="tiny"
 #batch_size=128
 #workerCount=1
-#num_cpus=10
+#num_cpus=4
 #total_tokens=1e9
 #warmup_tokens=1e8
 #=================== ABOVE FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
@@ -171,6 +174,7 @@ raw_udf="
   --total_tokens=${total_tokens}
   --warmup_tokens=${warmup_tokens}
   --model_config='${model_config}'
+  --model_type='${model_type}'
   --num_hidden_layers=${num_hidden_layers}
   --hidden_size=${hidden_size}
   --intermediate_size=${intermediate_size}
@@ -185,6 +189,7 @@ raw_udf="
   --mlp_dropout=${mlp_dropout}
   --layer_scale_init_value=${layer_scale_init_val}
   --use_ema=${use_ema}
+  --do_valid=${do_valid}
 "
 
 udf=${raw_udf//$'\n'/}

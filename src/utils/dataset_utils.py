@@ -8,7 +8,6 @@ import tarfile
 import time
 from typing import List, Optional
 import numpy as np
-import networkx as nx
 import pandas as pd
 import torch
 from torch import Tensor
@@ -22,64 +21,165 @@ from torch_geometric.loader.cluster import ClusterData
 from torch_geometric.data import InMemoryDataset, Data
 from torch_sparse.metis import weight2metis
 from ogb.lsc import PygPCQM4Mv2Dataset
-from ogb.utils import smiles2graph, features
 from ogb.utils.torch_util import replace_numpy_with_torchtensor
 from ogb.utils.url import decide_download, download_url, extract_zip
 from ogb.utils.features import atom_to_feature_vector, bond_to_feature_vector
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
 from multiprocessing import Pool
 
+CHIRAL_CENTERS = ["R", "S"]
+NUM_CONFS = 40
 
-def mol2graph(mol):
-    # refer to: https://github.com/lsj2408/Transformer-M/blob/main/Transformer-M/data/wrapper.py
+
+def mol2coords(mol: Chem.Mol) -> np.ndarray:
+    """
+    Generate 3D RDKIT coordinates from the molecule.
+    (Adapted from https://github.com/PaddlePaddle/PaddleHelix/blob/dev/apps/pretrained_compound/ChemRL/GEM-2/pahelix/utils/compound_tools.py)
+
+    Args:
+        mol (Chem.Mol): The molecule object.
+
+    Returns:
+        np.ndarray: The 3D coordinates of the molecule.
+    """
+    dtype = np.float32
+    num_threads = 1  # 0: use all threads
     try:
-        # atoms
-        atom_features_list = []
-        for atom in mol.GetAtoms():
-            atom_features_list.append(atom_to_feature_vector(atom))
-        x = np.array(atom_features_list, dtype=np.int64)
+        new_mol = Chem.AddHs(mol)
+        res = AllChem.EmbedMultipleConfs(
+            new_mol, numConfs=NUM_CONFS, numThreads=num_threads
+        )
+        ### MMFF generates multiple conformations
+        res = AllChem.MMFFOptimizeMoleculeConfs(new_mol, numThreads=num_threads)
+        new_mol = Chem.RemoveHs(new_mol)
+        index, _ = min(enumerate(res), key=lambda x: x[1])
+        conf = new_mol.GetConformer(id=index)
+    except Exception:
+        new_mol = mol
+        AllChem.Compute2DCoords(new_mol)
+        conf = new_mol.GetConformer()
 
-        # bonds
-        num_bond_features = 3  # bond type, bond stereo, is_conjugated
-        if len(mol.GetBonds()) > 0:  # mol has bonds
-            edges_list = []
-            edge_features_list = []
-            for bond in mol.GetBonds():
-                i = bond.GetBeginAtomIdx()
-                j = bond.GetEndAtomIdx()
+    if new_mol.GetAtomWithIdx(0).GetAtomicNum() == 0:
+        return np.zeros((new_mol.GetNumAtoms(), 3), dtype=dtype)
+    coords = conf.GetPositions()
+    coords = coords[: new_mol.GetNumAtoms()].astype(dtype)
+    return coords
 
-                edge_feature = bond_to_feature_vector(bond)
 
-                # add edges in both directions
-                edges_list.append((i, j))
-                edge_features_list.append(edge_feature)
-                edges_list.append((j, i))
-                edge_features_list.append(edge_feature)
+def chiral_centers_feature(x_num, mol):
+    # https://github.com/graphcore/ogb-lsc-pcqm4mv2/blob/9c206603eab62f09d61e649a778ac8efe251dede/data_utils/pcq_dataset_28features.py#L235
+    # Is chiral center (+1)
+    features = np.zeros([x_num], dtype=np.int64)
+    for idx, type_ in Chem.FindMolChiralCenters(mol):
+        # 0 for not center
+        features[idx] = CHIRAL_CENTERS.index(type_) + 1
+    return features
 
-            # data.edge_index: Graph connectivity in COO format with shape [2, num_edges]
-            edge_index = np.array(edges_list, dtype=np.int64).T
 
-            # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
-            edge_attr = np.array(edge_features_list, dtype=np.int64)
+def mol2graph_basic(mol):
+    # copied from `ogb/utils/mol.py::smiles2graph`
+    # atoms
+    atom_features_list = []
+    for atom in mol.GetAtoms():
+        atom_features_list.append(atom_to_feature_vector(atom))
+    x = np.array(atom_features_list, dtype=np.int64)
 
-        else:  # mol has no bonds
-            edge_index = np.empty((2, 0), dtype=np.int64)
-            edge_attr = np.empty((0, num_bond_features), dtype=np.int64)
+    # bonds
+    num_bond_features = 3  # bond type, bond stereo, is_conjugated
+    if len(mol.GetBonds()) > 0:  # mol has bonds
+        edges_list = []
+        edge_features_list = []
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
 
+            edge_feature = bond_to_feature_vector(bond)
+
+            # add edges in both directions
+            edges_list.append((i, j))
+            edge_features_list.append(edge_feature)
+            edges_list.append((j, i))
+            edge_features_list.append(edge_feature)
+
+        # data.edge_index: Graph connectivity in COO format with shape [2, num_edges]
+        edge_index = np.array(edges_list, dtype=np.int64).T
+
+        # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
+        edge_attr = np.array(edge_features_list, dtype=np.int64)
+
+    else:  # mol has no bonds
+        edge_index = np.empty((2, 0), dtype=np.int64)
+        edge_attr = np.empty((0, num_bond_features), dtype=np.int64)
+
+    graph = dict()
+    graph["edge_index"] = edge_index
+    graph["edge_feat"] = edge_attr
+    graph["node_feat"] = x
+    graph["num_nodes"] = len(x)
+
+    return graph
+
+
+def mol2graph_cc(mol):
+    # compared to `mol2graph_basic`, replace `chiral-tag` with `chiral-center`
+    graph = mol2graph_basic(mol)
+    x = graph["node_feat"]
+    features = chiral_centers_feature(x.shape[0], mol)
+    x[:, 1] = features
+    graph["node_feat"] = x.copy()
+    return graph
+
+
+def mol2graph_pos(mol):
+    # refer to: https://github.com/lsj2408/Transformer-M/blob/main/Transformer-M/data/wrapper.py
+    # add 3D position
+    try:
+        graph = mol2graph_basic(mol)
         # positions
-        positions = mol.GetConformer().GetPositions()
-
-        graph = dict()
-        graph["edge_index"] = edge_index
-        graph["edge_feat"] = edge_attr
-        graph["node_feat"] = x
-        graph["num_nodes"] = len(x)
-        graph["position"] = positions
-
+        graph["position"] = mol.GetConformer().GetPositions()
         return graph
     except:
         return None
+
+
+def mol2graph_pos_cc(mol):
+    try:
+        graph = mol2graph_cc(mol)
+        # positions
+        graph["position"] = mol.GetConformer().GetPositions()
+        return graph
+    except:
+        return None
+
+
+def mol2graph_pos_cc_rdkit_pos(mol):
+    try:
+        graph = mol2graph_cc(mol)
+        # positions
+        graph["position"] = mol.GetConformer().GetPositions()
+        graph["pos_rdkit"] = mol2coords(mol)
+        return graph
+    except:
+        return None
+
+
+def smiles2graph_basic(smiles_string):
+    mol = Chem.MolFromSmiles(smiles_string)
+    return mol2graph_basic(mol)
+
+
+def smiles2graph_cc(smiles_string):
+    mol = Chem.MolFromSmiles(smiles_string)
+    return mol2graph_cc(mol)
+
+
+def smiles2graph_cc_rdkit_pos(smiles_string):
+    mol = Chem.MolFromSmiles(smiles_string)
+    graph = mol2graph_cc(mol)
+    graph["pos_rdkit"] = mol2coords(mol)
+    return graph
 
 
 def smiles2graph_extra(smiles_string):
@@ -241,7 +341,8 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
     def __init__(
         self,
         root="dataset",
-        smiles2graph=smiles2graph,
+        smiles2graph=None,
+        sdf2graph=None,
         transform=None,
         pre_transform=None,
     ):
@@ -254,7 +355,14 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
         """
 
         self.original_root = root
-        self.smiles2graph = smiles2graph
+        if smiles2graph is None:
+            self.smiles2graph = smiles2graph_basic
+        else:
+            self.smiles2graph = smiles2graph
+        if sdf2graph is None:
+            self.sdf2graph = mol2graph_pos
+        else:
+            self.sdf2graph = sdf2graph
         self.folder = osp.join(root, "pcqm4m-v2")
         self.version = 1
 
@@ -277,9 +385,7 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
             if input("Will you update the dataset now? (y/N)\n").lower() == "y":
                 shutil.rmtree(self.folder)
 
-        super(PygPCQM4Mv2PosDataset, self).__init__(
-            self.folder, transform, pre_transform
-        )
+        super().__init__(self.folder, transform, pre_transform)
 
         fn_processed = self.processed_paths[0]
         print(f"Loading data from {fn_processed}")
@@ -323,12 +429,14 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
                 print(f"sleep for RANK {os.environ.get('RANK', 0)} ...")
                 time.sleep(3)
 
-    def process(self):
-        processes = 10
+    def _preprocess(self):
+        max_len, max_len2 = int(1e8), int(1e8)  # int(1e4)  For local testing
+        processes = 20
         data_df = pd.read_csv(osp.join(self.raw_dir, "data.csv.gz"))
         graph_pos_list = Chem.SDMolSupplier(
-            osp.join(self.raw_dir, "pcqm4m-v2-train.sdf")
-        )
+            osp.join(self.raw_dir, "pcqm4m-v2-train.sdf"), removeHs=True
+        )  # BE CAREFUL of `rdkit` version:: MAY cause incompatibility between `SMILES` and `SDF`
+        # First 10k mol, 3.9% has different feat between `SMILES` and `SDF`
         homolumogap_list = data_df["homolumogap"]
         num_3d = len(graph_pos_list)
         num_all = len(homolumogap_list)
@@ -339,9 +447,12 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
         )
         train_data_with_position_list = []
         with Pool(processes=processes) as pool:
-            iter = pool.imap(mol2graph, graph_pos_list)
+            iter = pool.imap(self.sdf2graph, graph_pos_list)
 
-            for i, graph in tqdm(enumerate(iter), total=len(graph_pos_list)):
+            for i, graph in tqdm(enumerate(iter), total=num_3d):
+                if i >= max_len:
+                    print(f"break at {i}")
+                    break
                 try:
                     data = Data()
                     homolumogap = homolumogap_list[i]
@@ -367,14 +478,14 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
             f"Done extracting 3D positions of {len(train_data_with_position_list)}/{num_3d}!"
         )
 
-        smiles_list = data_df["smiles"][num_3d:].tolist()
-        homolumogap_list = homolumogap_list[num_3d:].tolist()
+        smiles_list = data_df["smiles"][num_3d:].tolist()[:max_len2]
+        homolumogap_list = homolumogap_list[num_3d:].tolist()[:max_len2]
         print(
             f"Converting SMILES strings of {len(smiles_list)} molecules into graphs..."
         )
         data_list = []
         with Pool(processes=processes) as pool:
-            iter = pool.imap(smiles2graph, smiles_list)
+            iter = pool.imap(self.smiles2graph, smiles_list)
 
             for i, graph in tqdm(enumerate(iter), total=len(homolumogap_list)):
                 try:
@@ -418,6 +529,10 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
         if self.pre_transform is not None:
             data_list = [self.pre_transform(data) for data in data_list]
 
+        return data_list
+
+    def process(self):
+        data_list = self._preprocess()
         data, slices = self.collate(data_list)
 
         print("Saving...")
@@ -430,9 +545,169 @@ class PygPCQM4Mv2PosDataset(InMemoryDataset):
         return split_dict
 
 
+class PygPCQM4Mv2CCDataset(PygPCQM4Mv2Dataset):
+    def __init__(
+        self,
+        root="dataset",
+        smiles2graph=None,
+        transform=None,
+        pre_transform=None,
+    ):
+        super().__init__(root, smiles2graph_cc, transform, pre_transform)
+
+    @property
+    def processed_file_names(self):
+        return "geometric_data_processed_cc.pt"
+
+    def process(self):
+        max_len = 10000
+        data_df = pd.read_csv(osp.join(self.raw_dir, "data.csv.gz"))
+        smiles_list = data_df["smiles"][:max_len]
+        homolumogap_list = data_df["homolumogap"]
+
+        print("Converting SMILES strings into graphs...")
+        data_list = []
+        for i in tqdm(range(len(smiles_list))):
+            data = Data()
+
+            smiles = smiles_list[i]
+            homolumogap = homolumogap_list[i]
+            graph = self.smiles2graph(smiles)
+
+            assert len(graph["edge_feat"]) == graph["edge_index"].shape[1]
+            assert len(graph["node_feat"]) == graph["num_nodes"]
+
+            data.__num_nodes__ = int(graph["num_nodes"])
+            data.edge_index = torch.from_numpy(graph["edge_index"]).to(torch.int64)
+            data.edge_attr = torch.from_numpy(graph["edge_feat"]).to(torch.int64)
+            data.x = torch.from_numpy(graph["node_feat"]).to(torch.int64)
+            data.y = torch.Tensor([homolumogap])
+
+            data_list.append(data)
+
+        # double-check prediction target
+        split_dict = self.get_idx_split()
+        # assert (all([not torch.isnan(data_list[i].y)[0] for i in split_dict['train']]))
+        # assert (all([not torch.isnan(data_list[i].y)[0] for i in split_dict['valid']]))
+        # assert (all([torch.isnan(data_list[i].y)[0] for i in split_dict['test-dev']]))
+        # assert (all([torch.isnan(data_list[i].y)[0] for i in split_dict['test-challenge']]))
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        data, slices = self.collate(data_list)
+
+        print("Saving...")
+        torch.save((data, slices), self.processed_paths[0])
+
+
+class PygPCQM4Mv2PosCCDataset(PygPCQM4Mv2PosDataset):
+    def __init__(
+        self,
+        root="dataset",
+        smiles2graph=None,
+        sdf2graph=None,
+        transform=None,
+        pre_transform=None,
+    ):
+        super().__init__(root, smiles2graph=smiles2graph_cc, sdf2graph=mol2graph_pos_cc)
+
+    @property
+    def processed_file_names(self):
+        # `cc` means `Chiral-center` as the 2nd atomic feature
+        return "geometric_data_processed_3d_cc.pt"
+
+
+class PygPCQM4Mv2RdkitPosCCDataset(PygPCQM4Mv2PosDataset):
+    def __init__(
+        self,
+        root="dataset",
+        smiles2graph=None,
+        sdf2graph=None,
+        transform=None,
+        pre_transform=None,
+    ):
+        self.original_root = root
+        self.download_rdkit_pos()
+        super().__init__(root, smiles2graph=smiles2graph_cc, sdf2graph=mol2graph_pos_cc)
+
+    def download_rdkit_pos(self):
+        fn = os.path.join(
+            self.original_root, "pcqm4m-v2", "processed", "rdkit_coords.parquet"
+        )
+        if int(os.environ.get("RANK", 0)) == 0:
+            if not os.path.exists(fn):
+                # This is for multiple GPUs in one machine. The data is shared!
+                rdkit_url = "https://huggingface.co/datasets/shamim-hussain/pcqm/resolve/main/rdkit_coords.parquet"
+                if decide_download(rdkit_url):
+                    path = download_url(rdkit_url, self.processed_dir)
+                    os.unlink(path)
+                else:
+                    print(f"Stop download {rdkit_url}.")
+                    # exit(-1)
+                # OR `wget -O rdkit_coords.parquet https://huggingface.co/datasets/shamim-hussain/pcqm/resolve/main/rdkit_coords.parquet?download=true`
+                # refer to: https://github.com/shamim-hussain/tgt/blob/697657b9806ba4c52642c80d4674291f41be5bc5/download_data.sh#L15C1-L15C129
+            else:
+                print(f"rdkit pos already exists: {fn}")
+        else:
+            while not os.path.exists(fn):
+                print(f"sleep for RANK {os.environ.get('RANK', 0)} ...")
+                time.sleep(3)
+
+    @property
+    def processed_file_names(self):
+        # `cc` means `Chiral-center` as the 2nd atomic feature
+        # use rdkit generated 3D position as additional inputs
+        return "geometric_data_processed_rdkit_3d_cc.pt"
+
+    def _process_rdkit_pos(self, data_list):
+        import pyarrow.dataset as pds
+
+        max_len = int(1e8)
+        coords_file = os.path.join(self.processed_dir, "rdkit_coords.parquet")
+        coords_tab = pds.dataset(coords_file).to_table()
+        ls_all_idx = []
+        ls_inconsistent_idx = []
+        for idx, pos in tqdm(zip(coords_tab["idx"], coords_tab["rdkit_coords"])):
+            idx = int(idx.as_py())
+            if idx >= max_len:
+                print(f"break at {idx}")
+                break
+            pos = pos.values.to_numpy().reshape((-1, 3))
+            nodes1 = data_list[idx].x.shape[0]
+            nodes2 = pos.shape[0]
+            if nodes1 != nodes2:
+                print(f"idx: {idx}, {nodes1} != {nodes2}")
+                ls_inconsistent_idx.append((idx, nodes1, nodes2))
+                assert nodes1 < nodes2
+            data_list[idx].rdkit_pos = torch.from_numpy(pos[:nodes1, :]).to(
+                torch.float32
+            )
+            ls_all_idx.append(idx)
+        print(
+            f"Totally {len(ls_inconsistent_idx)} molecules have different number of atoms compare to our processed files"
+        )
+
+        # below mols in test-challenge, rdkit-pos not calculated yet
+        remaining_mols = list(set(list(range(len(data_list)))) - set(ls_all_idx))
+        for idx in tqdm(sorted(remaining_mols)):
+            nodes1 = data_list[idx].x.shape[0]
+            data_list[idx].rdkit_pos = torch.zeros(nodes1, 3).to(torch.float32)
+        print(f"Set {len(remaining_mols)} mols' rdkit_pos to all 0's!")
+
+    def process(self):
+        data_list = self._preprocess()
+        self._process_rdkit_pos(data_list)
+
+        data, slices = self.collate(data_list)
+
+        print("Saving...")
+        torch.save((data, slices), self.processed_paths[0])
+
+
 def smiles2graph_with_try(smiles_string):
     try:
-        graph = smiles2graph(smiles_string)
+        graph = smiles2graph_basic(smiles_string)
     except Exception as inst:
         print(type(inst))
         print(inst.args)
@@ -445,7 +720,7 @@ class PygCEPDBDataset(InMemoryDataset):
     def __init__(
         self,
         root="dataset",
-        smiles2graph=smiles2graph,
+        smiles2graph=None,
         transform=None,
         pre_transform=None,
     ):
@@ -458,7 +733,7 @@ class PygCEPDBDataset(InMemoryDataset):
         """
 
         self.original_root = root
-        self.smiles2graph = smiles2graph
+        self.smiles2graph = smiles2graph_with_try
         self.folder = osp.join(root, "cepdb")
         self.version = 1
 
@@ -508,7 +783,7 @@ class PygCEPDBDataset(InMemoryDataset):
         print("Converting SMILES strings into graphs...")
         data_list = []
         with Pool(processes=processes) as pool:
-            iter = pool.imap(smiles2graph_with_try, smiles_list)
+            iter = pool.imap(self.smiles2graph, smiles_list)
 
             for i, graph in tqdm(enumerate(iter), total=len(vals)):
                 try:
@@ -549,7 +824,7 @@ class PygANI1Dataset(InMemoryDataset):
     def __init__(
         self,
         root="dataset",
-        smiles2graph=smiles2graph,
+        smiles2graph=None,
         transform=None,
         pre_transform=None,
     ):
@@ -562,7 +837,7 @@ class PygANI1Dataset(InMemoryDataset):
         """
 
         self.original_root = root
-        self.smiles2graph = smiles2graph
+        self.smiles2graph = smiles2graph_with_try
         self.folder = osp.join(root, "ani-1")
         self.version = 1
 
@@ -617,7 +892,7 @@ class PygANI1Dataset(InMemoryDataset):
 
             print(f"Converting SMILES strings into graphs for {hdf5file}...")
             with Pool(processes=processes) as pool:
-                iter = pool.imap(smiles2graph_with_try, smiles_list)
+                iter = pool.imap(self.smiles2graph, smiles_list)
 
                 for i, graph in tqdm(enumerate(iter), total=len(energy_list)):
                     try:
@@ -662,7 +937,7 @@ class PygZINCDataset(InMemoryDataset):
     def __init__(
         self,
         root="dataset",
-        smiles2graph=smiles2graph,
+        smiles2graph=None,
         transform=None,
         pre_transform=None,
         subset=11,
@@ -681,7 +956,7 @@ class PygZINCDataset(InMemoryDataset):
         """
 
         self.original_root = root
-        self.smiles2graph = smiles2graph
+        self.smiles2graph = smiles2graph_with_try
         self.folder = osp.join(root, "zinc")
         self.version = 1
         self.subset = subset
@@ -766,7 +1041,7 @@ class PygZINCDataset(InMemoryDataset):
             print(f"Converting SMILES strings from {raw_file} into graphs ...")
 
             with Pool(processes=processes) as pool:
-                iter = pool.imap(smiles2graph_with_try, smiles_list)
+                iter = pool.imap(self.smiles2graph, smiles_list)
 
                 for i, graph in tqdm(enumerate(iter), total=len(smiles_list)):
                     try:
@@ -1031,10 +1306,12 @@ class OneIDSmallDataset(InMemoryDataset):
 
 
 class StructureDataset(InMemoryDataset):
-    def __init__(self, root="dataset", transform=None, pre_transform=None):
+    def __init__(
+        self, root="dataset", transform=None, pre_transform=None, *, data_ver=None
+    ):
         self.original_root = root
         self.folder = osp.join(root, "struct_cogn")
-        self.data_ver = "v5"
+        self.data_ver = data_ver
         super(StructureDataset, self).__init__(self.folder, transform, pre_transform)
         fn_processed = self.processed_paths[0]
         print(f"Loading data from {fn_processed}")
@@ -1057,7 +1334,9 @@ class StructureDataset(InMemoryDataset):
         pass
 
     def process(self):
-        if self.data_ver in {"v1", "v2", "v3", "v4", "v5"}:
+        if self.data_ver == "v00":
+            data_list, split_dict = self._process_tri_reddit()
+        elif self.data_ver in {"v01", "v02", "v03", "v04", "v05"}:
             data_list, split_dict = self._process_odps()
         else:
             data_list, split_dict = self._process_random_graphs()
@@ -1079,11 +1358,14 @@ class StructureDataset(InMemoryDataset):
         from torch_geometric.utils import erdos_renyi_graph
 
         dict_ = {
-            "v6": 0.1,
-            "v7": 0.05,
-            "v8": 0.15,
-            "v9": 0.01,
-            "v10": 0.03,
+            "v06": 0.15,
+            "v07": 0.1,
+            "v08": 0.05,
+            "v09": 0.03,
+            "v10": 0.01,
+            "v18": 0.05,
+            "v19": 0.03,
+            "v20": 0.01,
         }
 
         def get_random_graphs(num_nodes, p):
@@ -1095,6 +1377,8 @@ class StructureDataset(InMemoryDataset):
         split_dict = {}
         data_list = []
         count = 3000000
+        if self.data_ver in ("v18", "v19", "v20"):
+            count = 3112359
         num_nodes_low, num_nodes_high = 4, 101
         vec_num_nodes = np.array(range(num_nodes_low, num_nodes_high))
         vec_num_nodes_cnt = vec_num_nodes
@@ -1113,12 +1397,16 @@ class StructureDataset(InMemoryDataset):
                 split_dict[dtype] = []
             split_dict[dtype].append(i)
 
+        if self.data_ver in ("v18", "v19", "v20"):
+            srt = count
+            data_list, split_dict, srt = _add_reddit_threads_data(
+                data_list, split_dict, srt
+            )
+            data_list, split_dict, _ = _add_triangles_data(data_list, split_dict, srt)
         return data_list, split_dict
 
     def _process_odps(self):
         # data_df = pd.read_csv(osp.join(self.raw_dir, self.raw_file_names))
-        from torch_geometric.datasets import TUDataset
-
         # 1. initialize env: in odps
         from odps.types import Record
         import base64
@@ -1167,25 +1455,21 @@ class StructureDataset(InMemoryDataset):
                 split_dict[dtype].append(i)
 
         srt = count
-        tu_dataset = TUDataset(root="../../data/TUDataset", name="reddit_threads")
-        split_dict["reddit_threads"] = []
-        for i, dp in tqdm(enumerate(tu_dataset, srt)):
-            graph = Data(edge_index=dp.edge_index, num_nodes=dp.num_nodes)
-            # G = to_networkx(graph, to_undirected="upper").to_undirected()
-            # graph.g = sum(nx.triangles(G).values()) // 3
-            data_list.append(graph)
-            split_dict["reddit_threads"].append(i)
+        data_list, split_dict, srt = _add_reddit_threads_data(
+            data_list, split_dict, srt
+        )
+        data_list, split_dict, _ = _add_triangles_data(data_list, split_dict, srt)
 
-        srt = count + len(tu_dataset)
-        tu_dataset = TUDataset(root="../../data/TUDataset", name="TRIANGLES")
-        split_dict["triangles"] = []
-        for i, dp in tqdm(enumerate(tu_dataset, srt)):
-            graph = Data(edge_index=dp.edge_index, num_nodes=dp.x.shape[0])
-            # G = to_networkx(graph, to_undirected="upper").to_undirected()
-            # graph.g = sum(nx.triangles(G).values()) // 3
-            data_list.append(graph)
-            split_dict["triangles"].append(i)
+        return data_list, split_dict
 
+    def _process_tri_reddit(self):
+        split_dict = {}
+        data_list = []
+        srt = 0
+        data_list, split_dict, srt = _add_reddit_threads_data(
+            data_list, split_dict, srt
+        )
+        data_list, split_dict, _ = _add_triangles_data(data_list, split_dict, srt)
         return data_list, split_dict
 
     def get_idx_split(self):
@@ -1196,18 +1480,61 @@ class StructureDataset(InMemoryDataset):
         return self.idx_split_dict
 
 
+def _add_reddit_threads_data(data_list, split_dict, srt):
+    from torch_geometric.datasets import TUDataset
+
+    tu_dataset = TUDataset(root="../../data/TUDataset", name="reddit_threads")
+    split_dict["reddit_threads"] = []
+    for i, dp in tqdm(enumerate(tu_dataset, srt)):
+        graph = Data(edge_index=dp.edge_index, num_nodes=dp.num_nodes)
+        # G = to_networkx(graph, to_undirected="upper").to_undirected()
+        # graph.g = sum(nx.triangles(G).values()) // 3
+        data_list.append(graph)
+        split_dict["reddit_threads"].append(i)
+    print(f"top 10 reddit_threads index: {split_dict['reddit_threads'][:10]}")
+    return data_list, split_dict, srt + len(tu_dataset)
+
+
+def _add_triangles_data(data_list, split_dict, srt):
+    from torch_geometric.datasets import TUDataset
+
+    tu_dataset = TUDataset(root="../../data/TUDataset", name="TRIANGLES")
+    split_dict["triangles-small"] = []
+    split_dict["triangles-large"] = []
+    for i, dp in tqdm(enumerate(tu_dataset, srt)):
+        num_nodes = dp.x.shape[0]
+        graph = Data(edge_index=dp.edge_index, num_nodes=num_nodes)
+        # G = to_networkx(graph, to_undirected="upper").to_undirected()
+        # graph.g = sum(nx.triangles(G).values()) // 3
+        data_list.append(graph)
+        if num_nodes <= 25:
+            split_dict["triangles-small"].append(i)
+        else:
+            split_dict["triangles-large"].append(i)
+    print(
+        f"top 10 triangles-small: {split_dict['triangles-small'][:10]}, tot: {len(split_dict['triangles-small'])}"
+    )
+    print(
+        f"top 10 triangles-large: {split_dict['triangles-large'][:10]}, tot: {len(split_dict['triangles-large'])}"
+    )
+    return data_list, split_dict, srt + len(tu_dataset)
+
+
 if __name__ == "__main__":
     # import pyanitools as pya
     from ogb.lsc import PygPCQM4Mv2Dataset
 
     # dataset = PygPCQM4Mv2ExtraDataset(root="../../data/OGB")
-    # dataset = StructureDataset(root="../../data/Struct")
+    # dataset = PygPCQM4Mv2RdkitPosCCDataset(root="../../data/OGB")
+    # dataset = PygPCQM4Mv2CCDataset(root="../../data/OGB")
+    # dataset = PygPCQM4Mv2PosCCDataset(root="../../data/OGB")
+    dataset = StructureDataset(root="../../data/Struct", data_ver="v00")
     # dataset = OneIDSmallDataset(root="../../data/OneID")
     # dataset = PygPCQM4Mv2Dataset(root="../../data/OGB")
     # dataset = PygPCQM4Mv2PosDataset(root="../../data/OGB")
     # dataset = PygCEPDBDataset(root="../../data/OGB")
     # dataset = PygANI1Dataset(root="../../data/OGB")
-    dataset = PygZINCDataset(root="../../data/OGB", subset=11)
+    # dataset = PygZINCDataset(root="../../data/OGB", subset=11)
     print(dataset)
     data_ = dataset._data
     print(data_)

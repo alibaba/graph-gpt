@@ -13,13 +13,14 @@ from datetime import datetime
 from typing import Optional
 from pprint import pprint, pformat
 from torch.utils.data import DataLoader, IterableDataset
-from timm.utils import ModelEmaV3
-from timm.models import load_checkpoint
-from timm.utils.model import unwrap_model, get_state_dict
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
     from tensorboardX import SummaryWriter
+from timm.utils import ModelEmaV3
+from timm.models import load_checkpoint
+from timm.utils.model import unwrap_model, get_state_dict
 
 import sys
 
@@ -36,12 +37,10 @@ from src.data import (
 from src.models import (
     GraphGPTConfig,
     GraphGPTCausal,
-    GraphGPT2Config,
-    GraphGPT2Causal,
-    GraphBertConfig,
-    GraphBertForMaskedLM,
+    GraphGPTPosPred,
 )
 from src.utils import (
+    metrics_utils,
     conf_utils,
     loss_utils,
     loader_utils,
@@ -54,12 +53,95 @@ from src.utils import (
     set_up_shuffle_and_sampler,
     worker_init_fn_seed,
 )
+from torchmetrics.classification import Accuracy
+
+# `import Accuracy` must be put here to avoid common-io import error
 
 dict_models = {
-    "graphgpt2": (GraphGPT2Causal, GraphGPT2Config),
     "graphgpt": (GraphGPTCausal, GraphGPTConfig),
-    "graphbert": (GraphBertForMaskedLM, GraphBertConfig),
+    "graphgpt-pos": (GraphGPTPosPred, GraphGPTConfig),
 }
+
+
+@torch.no_grad()
+def evaluate(
+    model,
+    device,
+    loader,
+):
+    try:
+        world_size = dist.get_world_size()
+        rank = int(dist.get_rank())
+    except ValueError:
+        print("In local test setting!!!\n" * 5)
+        world_size = 1
+        rank = 0
+    model.eval()
+    print("Running test data eval ...")
+    ls_loss = []
+    ls_aux_loss = []
+    for test_data in loader:
+        input_ids = test_data["input_ids"].to(device)
+        attention_mask = test_data["attention_mask"].to(device)
+        position_ids = test_data["position_ids"].to(device)
+        labels = test_data["labels"].to(device)
+        inputs_raw_embeds = None
+        if "embed" in test_data:
+            inputs_raw_embeds = test_data["embed"].to(device)
+        res = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+            inputs_raw_embeds=inputs_raw_embeds,
+            position_ids=position_ids,
+        )  # Perform a single forward pass.
+        loss = res.head1_loss
+        aux_loss = res.head2_loss
+        if world_size > 1:
+            dist.reduce(loss, 0)
+            if aux_loss is not None:
+                dist.reduce(aux_loss, 0)
+            if rank == 0:
+                loss = loss / world_size
+                if aux_loss is not None:
+                    aux_loss = aux_loss / world_size
+        ls_loss.append(loss)
+        if aux_loss is not None:
+            if not torch.isnan(aux_loss).item():
+                ls_aux_loss.append(aux_loss)
+
+    loss = sum(ls_loss) / len(ls_loss)
+    if len(ls_aux_loss) > 0:
+        aux_loss = sum(ls_aux_loss) / len(ls_aux_loss)
+    print(
+        f"[eval mode] input_ids: {input_ids.shape}, loss: {loss}, aux_loss: {aux_loss}"
+    )
+    return loss, None
+
+
+def get_valid_test_loader(train_dataset, collator_fn, sampler_for_eval):
+    batch_size_eval = 128  # small to avoid OOM when evaluating
+    num_workers_eval = 8
+    loader_for_eval = DataLoader(
+        dataset=train_dataset,
+        batch_size=batch_size_eval,
+        sampler=sampler_for_eval,
+        num_workers=num_workers_eval,
+        collate_fn=collator_fn,
+        worker_init_fn=worker_init_fn_seed,
+        pin_memory=False,
+    )
+    return loader_for_eval
+
+
+def get_cl_sampler(sampler: list, dup: bool = False):
+    if dup:
+        tmp_len = len(sampler)
+    else:
+        tmp_len = len(sampler) // 2
+    sampler = [x for ele in zip(sampler[:tmp_len], sampler[:tmp_len]) for x in ele]
+    print(f"top 10 sampler for CL loss:\n{sampler[:10]}")
+    return sampler
 
 
 def train(
@@ -87,6 +169,10 @@ def train(
     max_grad_norm: float = 1.0,
     logging_steps: int = 100,
     num_workers: int = 8,  # num of workers for data processing in DataLoader
+    # loss config
+    focal_gamma: float = 0,  # 0 for CE; other vals for focal-loss
+    # eval config
+    do_valid: int = 0,
     # deepspeed config
     deepspeed_config: str = "",
     gradient_accumulation_steps: int = 1,
@@ -99,13 +185,14 @@ def train(
     num_hidden_layers: int = 2,
     intermediate_size: int = 0,
     num_attention_heads: int = 0,
-    hidden_act: str = "silu",  # defaults to "silu"
+    hidden_act: str = "gelu",  # defaults to "silu"
     stacked_feat_agg_method: str = "gated",
     max_position_embeddings: int = 128,
     initializer_range: float = 0.02,  # defaults to 0.02
     rope_theta: int = 10000,
+    rope_range: int = 0,
     tie_word_embeddings: int = 0,  # defaults to False
-    causal_attention: int = 1,  # 1 for causal, 0 for bi attention
+    causal_attention: int = 0,  # 1 for causal, 0 for bi attention
     attention_dropout: float = 0,
     embed_dropout: float = 0,
     path_dropout: float = 0,
@@ -190,6 +277,14 @@ def train(
     print(
         f"stacked_feat: {stacked_feat}, next_n_token: {next_n_token}, embed_dim: {embed_dim}"
     )
+    smtp_inside = False
+    tmp_method = tokenizer_config.get("pretrain_mlm", {}).get("method", None)
+    if tmp_method == "inside_model":
+        # perform SMTP mask inside the model's `forward` method
+        smtp_inside = True
+        assert tokenizer_config["task_type"] in {"pretrain-mlm", "pretrain-smtp"}
+        tokenizer_config["task_type"] = task_type = "pretrain-smtp"
+        print(f"set task_type = {task_type} for {tmp_method}")
 
     # 1.2 get graph dataset
     dataset, raw_dataset = read_dataset(
@@ -234,6 +329,35 @@ def train(
         train_cnt = len(train_dataset) * world_size
         train_sampler = None
         train_shuffle = False
+
+    sampler_for_eval = []
+    if do_valid:
+        # v1. split here
+        (
+            train_sampler,
+            sampler_eval,
+            _,
+        ) = loader_utils.obtain_deterministic_sampler_by_ratio(
+            train_dataset.sample_idx, seed=42, train=0.98, valid=0.02
+        )
+        # v2. split from idx
+        # train_sampler = raw_dataset.get_idx_split()["train"].tolist()
+        # sampler_for_eval = raw_dataset.get_idx_split()["valid"].tolist()
+        # sampler_for_eval = random.sample(
+        #     raw_dataset.get_idx_split()["valid"].tolist(), 10000
+        # )
+        print(
+            f"[{datetime.now()}] train samples reduced from {len(train_dataset.sampler)} -> {len(train_sampler)}"
+        )
+        train_dataset.sampler = train_sampler
+        sampler_for_eval = loader_utils.distribute_sampler(
+            sampler_eval, world_size, rank
+        )
+        if task_type.endswith("-cl"):
+            sampler_for_eval = get_cl_sampler(sampler_for_eval, True)
+        print(
+            f"[{datetime.now()}] sampler_for_eval: {len(sampler_eval)}, top 10: {sampler_for_eval[:10]}"
+        )
 
     if pack_tokens > 0:
         gtokenizer.mpe = max_position_embeddings
@@ -281,6 +405,8 @@ def train(
             dist_backend="nccl", rank=rank, world_size=world_size
         )
     model = GraphModel(config)
+    if hasattr(train_dataset, "dict_bounds"):  # for PCQM4M-v2 dataset ONLY
+        model.dict_bounds = train_dataset.dict_bounds
     model.gradient_checkpointing_enable()
     # silence the warnings. Please re-enable for inference!
     model.config.use_cache = False
@@ -370,6 +496,31 @@ def train(
         return_tensors="pt",
     )
     print(f"[{datetime.now()}] Finish -> 3.1 init collator")
+    if do_valid:
+        valid_tokenizer_config = copy.deepcopy(tokenizer_config)
+        # valid_tokenizer_config["structure"]["nx"]["func"] = [
+        #     {"name": "shortest_path_length", "valid": 1}
+        # ]
+        # gtokenizer_valid = tokenizer_cls(valid_tokenizer_config, add_eos=False)
+        # if valid_tokenizer_config["structure"]["nx"]["enable"]:
+        #     gtokenizer_valid.attr_mask_ratio = 1  # mask all attr
+        # inspect_tokenization_results(train_dataset, gtokenizer_valid)
+        # gtokenizer_valid = gtokenizer
+        gtokenizer_valid = tokenizer_cls(
+            valid_tokenizer_config, add_eos=add_eos, stack_method=stack_method
+        )
+        valid_loader = get_valid_test_loader(
+            train_dataset,
+            collator.DataCollatorForGSTCausal(
+                tokenizer=gtokenizer_valid,
+                max_length=max_position_embeddings,
+                pad_to_multiple_of=pad_to_multiple_of,
+                return_tensors="pt",
+            ),
+            sampler_for_eval,
+        )
+        evaluate(model, device, valid_loader)
+
     # 3.2 set-up loader
     tb_writer = None
     if int(os.environ.get("RANK", 0)) == 0:
@@ -402,6 +553,8 @@ def train(
             f"train_sampler for {epochs} epochs increase: {len(train_sampler)} -> {len(train_sampler_new)}"
         )
         train_sampler = train_sampler_new
+        if task_type.endswith("-cl"):
+            train_sampler = get_cl_sampler(train_sampler, False)
         epochs = 1
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -439,7 +592,8 @@ def train(
                 f"Re-initialize train-loader with shuffled sampler and reset dataset!"
             )
             train_dataset.reset_samples(epoch, rank)
-            train_sampler = train_dataset.sampler
+            if not do_valid:
+                train_sampler = train_dataset.sampler
             random.shuffle(train_sampler)
             print(f"train_sampler: {len(train_sampler)}")
             train_loader = DataLoader(
@@ -478,6 +632,7 @@ def train(
             # Iterate in batches over the training dataset
             input_ids = data["input_ids"].to(device)
             attention_mask = data["attention_mask"].to(device)
+            position_ids = data["position_ids"].to(device)
             labels = data["labels"].to(device)
             inputs_raw_embeds = None
             if embed_dim > 0:
@@ -489,8 +644,14 @@ def train(
                     attention_mask=attention_mask,
                     labels=labels,
                     inputs_raw_embeds=inputs_raw_embeds,
+                    position_ids=position_ids,
                 )  # Perform a single forward pass.
-                loss = output.loss
+                main_loss = output.head1_loss
+                aux_loss = output.head2_loss
+                if aux_loss is not None:
+                    loss = main_loss + aux_loss
+                else:
+                    loss = main_loss
                 model.backward(loss)  # Derive gradients.
                 model.step()
             else:
@@ -506,8 +667,14 @@ def train(
                         attention_mask=attention_mask,
                         labels=labels,
                         inputs_raw_embeds=inputs_raw_embeds,
+                        position_ids=position_ids,
                     )  # Perform a single forward pass.
-                    loss = output.loss
+                    main_loss = output.head1_loss
+                    aux_loss = output.head2_loss
+                    if aux_loss is not None:
+                        loss = main_loss + aux_loss
+                    else:
+                        loss = main_loss
                 # Scales loss.  Calls backward() on scaled loss to create scaled gradients.
                 # Backward passes under autocast are not recommended.
                 # Backward ops run in the same dtype autocast chose for corresponding forward ops.
@@ -535,6 +702,10 @@ def train(
                 tokens_per_second = round(
                     (i - i_local) * batch_size * tokens_per_sample / t_interval
                 )
+                if aux_loss is not None:
+                    loss_log = f"\n{' ' * 8}loss: {round(loss.item(), 6)}, aux_Loss {round(aux_loss.item(), 6)}, main_Loss {round(main_loss.item(), 6)}"
+                else:
+                    loss_log = f"loss: {round(loss.item(), 6)}"
                 print(
                     f"[{datetime.now()}][epoch {ep}][local {epoch}: {i}][global {j}] train_loss: {round(loss.item(),7)}, {samples_per_second} samples / {tokens_per_second} tokens per sec"
                 )
@@ -543,21 +714,19 @@ def train(
                 dist.reduce(loss, 0)
                 loss = loss / world_size
                 curr_lr = lr_scheduler.get_lr() if lr_scheduler is not None else [lr]
-                ls_log.append(f"{ep},{curr_lr[0]},{i},{j},{loss}\n")
+                ls_log.append(
+                    f"{ep},{curr_lr[0]},{i},{j},{aux_loss},{main_loss},{loss}\n"
+                )
 
                 tb_writer.add_scalar(
                     "loss", loss.item(), j
                 ) if tb_writer is not None else None
-            if j == total_num_steps:
-                print(
-                    f"Total number of steps {total_num_steps} reached, break inner loop!!!"
-                )
-                break
 
-            if (j % steps_per_saving == 0) and (j > j_init):
+            if ((j % steps_per_saving == 0) and (j > j_init)) or (j == total_num_steps):
                 ep += 1
                 print(
-                    f"[{datetime.now()}][end of epoch {ep}][local {epoch}: {i}][global {j}] Trained with {j*tokens_per_sample*batch_size*world_size} tokens! Saving ckp and logs!"
+                    f"[{datetime.now()}][end of epoch {ep}][local {epoch}: {i}][global {j}] "
+                    f"Trained with {int(j * tokens_per_sample * batch_size * world_size)} tokens! Saving ckp and logs!"
                 )
                 misc_utils.save_ckp(
                     output_dir,
@@ -568,6 +737,13 @@ def train(
                     lr_scheduler=lr_scheduler,
                 )
 
+                valid_acc = None
+                val_triplet = None
+                if do_valid:
+                    print(f"[{datetime.now()}] Evaluating Model on valid data")
+                    valid_acc, val_triplet = evaluate(model, device, valid_loader)
+                    model.train()
+
                 if int(os.environ.get("RANK", 0)) == 0:
                     # save ckp and logs
                     misc_utils.save_all(
@@ -576,6 +752,7 @@ def train(
                         ep,
                         save_model=False,
                         ls_log=ls_log,
+                        val_dict=val_triplet,
                     )
                     if model_ema is not None:
                         ema_state = get_state_dict(model_ema, unwrap_model)
@@ -586,38 +763,27 @@ def train(
                                 ema_state, os.path.join(output_dir, ema_file_best)
                             )
                 print(
-                    f"[{datetime.now()}][input_id] shape: {input_ids.shape}"
+                    f"[{datetime.now()}][input_id] shape: {input_ids.shape}\n"
+                    f"    valid eval results: {valid_acc}\n"
+                    f"    [inputs_raw_embeds(sliced)]:\n{inputs_raw_embeds[:2, :8] if inputs_raw_embeds is not None else None}"
                 )
                 if tb_writer is not None:
                     # Log histograms of model parameters
                     for name, param in model.named_parameters():
                         tb_writer.add_histogram(name, param, ep)
 
+            if j == total_num_steps:
+                print(
+                    f"Total number of steps {total_num_steps} reached, break inner loop!!!"
+                )
+                break
             j += 1
-        if j == total_num_steps:
+        if j >= total_num_steps:
             print(
                 f"Total number of steps {total_num_steps} reached, break outer loop!!!"
             )
             break
-    ep += 1
-    print(
-        f"[{datetime.now()}][end of training][epoch {ep}][local {epoch}: {i}][global {j}] Trained with {j*tokens_per_sample*batch_size*world_size} tokens! Saving ckp and logs!"
-    )
-    misc_utils.save_ckp(
-        output_dir,
-        model,
-        ep,
-        use_deepspeed,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-    )
-    if int(os.environ.get("RANK", 0)) == 0:
-        # save ckp and logs
-        misc_utils.save_all(output_dir, model, ep, save_model=False, ls_log=ls_log)
-    if tb_writer is not None:
-        # Log histograms of model parameters
-        for name, param in model.named_parameters():
-            tb_writer.add_histogram(name, param, ep)
+
     tb_writer.close() if tb_writer is not None else None
 
 
