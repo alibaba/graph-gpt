@@ -6,6 +6,18 @@ This repository is the official implementation of “[GraphGPT: Generative Pre-t
 >
 > Qifang Zhao, Weidong Ren, Tianyu Li, Hong Liu, Xingsheng He, Xiaoxiao Xu
 
+## Hiring
+
+We are hiring Research Interns in AI for Science.
+
+We are also seeking Ali-Star (阿里星) candidates in fields such as LLM, MLLM, AI4Sci, and more.
+
+Work place: Hangzhou, China
+
+If you are attending ICML 2025 in Vancouver Canada, we can have a meet up during the conference.
+
+Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.com) for more information.
+
 ## Update:
 
 ***05/08/2025***
