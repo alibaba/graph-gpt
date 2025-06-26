@@ -6,6 +6,21 @@ This repository is the official implementation of “[GraphGPT: Generative Pre-t
 >
 > Qifang Zhao, Weidong Ren, Tianyu Li, Hong Liu, Xingsheng He, Xiaoxiao Xu
 
+## Synergy with diffusion LLM (dLLM)
+
+- Recently Inception Labs' [Mercury Coder](https://chat.inceptionlabs.ai/) and Google's [Gemini Diffusion](https://deepmind.google/models/gemini-diffusion/) 
+  have shown some advantages of dLLM over AR LLM.
+- Open sourced dLLM models like LLaDA and Dream are catching eyes.
+- Various speeding up techniques like [dKV-Cache](https://arxiv.org/abs/2505.15781) and [Fast-dLLM](https://nvlabs.github.io/Fast-dLLM/) 
+  are being developed.
+- GraphGPT's pre-training objective SMTP is directly adopted from MaskGIT, which is deeply connected with dLLM's training objective.
+  We show that SMTP pre-training is better than NTP (employed by AR LLM) in most graph datasets and tasks.
+- Given the dominance of diffusion in images, audios, videos and graphs, it could serve as a promising candidate
+  for unifying majority modalities.
+- GraphGPT's results imply that dLLM can directly model the serialized graph data as in GraphGPT. This could help dLLM unify
+  the graph modality very easily, and also benefit the graph research community, since it naturally serves as the 
+  graph foundation model.
+
 ## Hiring
 
 We are hiring Research Interns in AI for Science.

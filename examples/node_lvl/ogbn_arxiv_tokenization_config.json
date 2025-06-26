@@ -1,38 +1,39 @@
 {
-  "name_or_path": "ogbn_proteins",
-  "dataset": "ogbn-proteins",
-  "attr_world_identifier": "ogbn-proteins",
-  "task_type": "pretrain",
+  "name_or_path": "ogbn_arxiv",
+  "dataset": "ogbn-arxiv",
+  "attr_world_identifier": "ogbn-arxiv",
+  "task_type": "pretrain-mlm",
   "pretrain_mlm": {
     "name": "polynomial",
-    "params": {"fixed_ratio": 0.7, "power": 1, "mtp": [0.8, 0, 0.2]},
+    "params": {"fixed_ratio": 0.7, "power": 1, "mtp": [1, 0, 0]},
     "info": "name->polynomial|cosine|fixed,power->3/2/1/0.5"
   },
-  "vocab_file": "vocab512_share",
+  "vocab_file": "vocab512",
   "sampling": {
     "node_ego": {
       "depth_neighbors": [
-        [20, 1]
+        [1, 40]
       ],
       "replace": false,
       "valid": 1
     }
   },
   "semantics": {
-    "attr_assignment": "random",
+    "attr_assignment": "first",
     "attr_shuffle": false,
     "node": {
       "discrete": "x",
+      "dim": 3,
       "continuous": null,
       "ignored_val": null,
-      "dim": 2
+      "embed": "x_embed",
+      "embed_dim": 128
     },
     "edge": {
       "discrete": "edge_attr",
+      "dim": 1,
       "continuous": null,
-      "ignored_val": null,
-      "dim": 8,
-      "share_vocab": false
+      "ignored_val": null
     },
     "graph": {
       "discrete": null,
