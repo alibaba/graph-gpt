@@ -54,6 +54,68 @@ def read_merge_molecule_datasets(data_dir):
     return [data]
 
 
+@_dataset("spice-circuit")
+def _read_spice_circuit(
+    data_dir,
+    sampling_config,
+    *,
+    pretrain_mode=False,
+    return_valid_test: bool = False,
+    **kwargs,
+):
+    dataset_name = "spice-circuit"
+    print(f"\nLoading dataset {dataset_name} ...")
+    dataset = dataset_utils.SpiceCircuitDataset(root=data_dir)
+    print(f"\ndataset._data -> {dataset._data}")
+    # dataset._data -> Data(x=[348319, 1], edge_index=[2, 3014676], y=[3350])
+    # dataset[0] -> Data(x=[8, 1], edge_index=[2, 18], y=[1])
+    # data_dir: e.g., "../data/Custom"
+    split_idx = dataset.get_idx_split()
+    if return_valid_test:
+        train_idx = split_idx["train"]
+        valid_idx = split_idx["valid"]
+        test_idx = split_idx["test"]
+
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=train_idx,
+            provide_sampler=True,
+        )
+        valid_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=valid_idx,
+            provide_sampler=True,
+        )
+        test_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=test_idx,
+            provide_sampler=True,
+        )
+        # train/valid/test
+        # xx/xx/xx
+        print(
+            f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
+        )
+        return (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            dataset,
+        )
+    else:
+        train_dataset = GraphsMapDataset(
+            dataset,
+            None,
+            sample_idx=torch.arange(len(dataset)),
+            # sample_idx=split_idx["train"],
+            provide_sampler=True,
+        )
+        return train_dataset, dataset
+
+
 @_dataset("structure")
 def _read_structure(
     data_dir,
@@ -687,9 +749,7 @@ def _read_pcqm4mv2(
             ).tolist()
             pretrain_idx = remove_special_molecules(pretrain_idx, non_pretrain_mols)
         # pretrain_idx = split_idx["train"]  # ONLY for PosPredict pre-train
-        print(
-            f"Use only {len(pretrain_idx)} samples for training!!!"
-        )
+        print(f"Use only {len(pretrain_idx)} samples for training!!!")
         train_dataset = GraphsMapDataset(
             dataset,
             None,

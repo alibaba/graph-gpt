@@ -29,6 +29,10 @@ from rdkit.Chem import AllChem
 
 from multiprocessing import Pool
 
+from . import spice2graph_full_utils as spice2graph
+
+# import spice2graph_full_utils as spice2graph  # when running this script only inside this dir
+
 CHIRAL_CENTERS = ["R", "S"]
 NUM_CONFS = 40
 
@@ -1520,6 +1524,135 @@ def _add_triangles_data(data_list, split_dict, srt):
     return data_list, split_dict, srt + len(tu_dataset)
 
 
+class SpiceCircuitDataset(InMemoryDataset):
+    def __init__(
+        self, root="dataset", transform=None, pre_transform=None, *, data_ver=None
+    ):
+        self.original_root = root
+        self.folder = osp.join(root, "spice_circuit")
+        self.data_ver = data_ver
+        super(SpiceCircuitDataset, self).__init__(self.folder, transform, pre_transform)
+        fn_processed = self.processed_paths[0]
+        print(f"Loading data from {fn_processed}")
+        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.idx_split_dict = None
+
+    @property
+    def raw_file_names(self):
+        return "dummy.csv"
+
+    @property
+    def processed_file_names(self):
+        return f"data.pt"
+
+    @property
+    def split_idx_file_name(self):
+        return f"split_dict.pt"
+
+    def download(self):
+        pass
+
+    def process(self):
+        data_list, split_dict = self._process_spice_3350()
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        print("Saving split dict ...")
+        split_dict = {k: torch.tensor(v) for k, v in split_dict.items()}
+        torch.save(split_dict, osp.join(self.root, self.split_idx_file_name))
+
+        print("Collating ...")
+        data, slices = self.collate(data_list)
+
+        print("Saving data ...")
+        torch.save((data, slices), self.processed_paths[0])
+
+    def _process_spice_3350(self):
+        rt = "/Users/zhaoqifang/Downloads/graph-gpt/Dataset/"
+        with open(os.path.join(rt, "graph-labels.csv"), "rb") as fp:
+            labels = fp.readlines()
+        labels = [int(x.strip()) for x in labels]
+        print(f"labels: {len(labels)}")
+
+        x_elements = []
+        data_list = []
+
+        start = 1
+        end = 3502
+        j = 0
+        for i in range(start, end + 1):
+            number = str(i)
+            # Define file names
+            netlist_file = os.path.join(rt, f"{number}/{number}.cir")
+            port_file = os.path.join(rt, f"{number}/Port{number}.txt")
+            if not os.path.isfile(netlist_file):
+                # If it doesn't exist, skip the rest of this loop iteration
+                print(f"{i}: Directory '{netlist_file}' does not exist. Skipping...")
+                continue
+
+            # Read netlist and ports
+            netlist = spice2graph.read_netlist(netlist_file)
+            ports = spice2graph.read_ports(port_file)
+
+            # Build the connection matrix
+            connection_matrix, net_connections = spice2graph.build_connection_matrix(
+                netlist, ports
+            )
+
+            # convert into edge_index
+            assert (
+                connection_matrix.index == connection_matrix.columns
+            ).all(), "row and col must be symmetric"
+            adj_t = connection_matrix.to_numpy()
+            assert (adj_t == adj_t.T).all(), "adj_t is NOT symmetric!"
+            edge_index = torch.tensor(adj_t).nonzero().t().contiguous()
+
+            # create x
+            # update x's elements
+            for ele in connection_matrix.index:
+                if ele not in x_elements:
+                    x_elements.append(ele)
+
+            x = torch.tensor(
+                [x_elements.index(ele) for ele in connection_matrix.index]
+            ).reshape((-1, 1))
+            label = labels[j]
+            num_nodes = len(connection_matrix.index)
+
+            data = Data(edge_index=edge_index, x=x, y=torch.tensor([label]))
+            data.__num_nodes__ = num_nodes
+            data_list.append(data)
+            j += 1
+
+        # save x's elements
+        fn_x_elements = osp.join(self.folder, "x-elements.txt")
+        with open(fn_x_elements, "wb") as fp:
+            fp.writelines([f"{ele}\n".encode("utf-8") for ele in x_elements])
+        print(f"Saving {len(x_elements)} x elements in fn {fn_x_elements}")
+
+        # 2. process data
+        split_dict = {}
+
+        num_samples = len(data_list)
+        seed = 42
+        g = torch.Generator()
+        g.manual_seed(seed)
+        indices = torch.randperm(num_samples, generator=g)
+
+        split_dict["train"] = indices[: int(num_samples * 0.8)]
+        split_dict["valid"] = indices[int(num_samples * 0.8) : int(num_samples * 0.9)]
+        split_dict["test"] = indices[int(num_samples * 0.9) :]
+        return data_list, split_dict
+
+    def get_idx_split(self):
+        if self.idx_split_dict is None:
+            fn = osp.join(self.root, self.split_idx_file_name)
+            print(f"loading idx split from {fn}")
+            self.idx_split_dict = torch.load(fn)
+        return self.idx_split_dict
+
+
 if __name__ == "__main__":
     # import pyanitools as pya
     from ogb.lsc import PygPCQM4Mv2Dataset
@@ -1528,13 +1661,14 @@ if __name__ == "__main__":
     # dataset = PygPCQM4Mv2RdkitPosCCDataset(root="../../data/OGB")
     # dataset = PygPCQM4Mv2CCDataset(root="../../data/OGB")
     # dataset = PygPCQM4Mv2PosCCDataset(root="../../data/OGB")
-    dataset = StructureDataset(root="../../data/Struct", data_ver="v00")
+    # dataset = StructureDataset(root="../../data/Struct", data_ver="v00")
     # dataset = OneIDSmallDataset(root="../../data/OneID")
     # dataset = PygPCQM4Mv2Dataset(root="../../data/OGB")
     # dataset = PygPCQM4Mv2PosDataset(root="../../data/OGB")
     # dataset = PygCEPDBDataset(root="../../data/OGB")
     # dataset = PygANI1Dataset(root="../../data/OGB")
     # dataset = PygZINCDataset(root="../../data/OGB", subset=11)
+    dataset = SpiceCircuitDataset(root="../../data/Custom")
     print(dataset)
     data_ = dataset._data
     print(data_)
