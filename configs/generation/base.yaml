@@ -1,0 +1,39 @@
+# @package _global_
+generation:
+  # copied and modified from https://huggingface.co/Dream-org/Dream-v0-Base-7B/blob/main/generation_utils.py
+  # --- Diffusion Specific Parameters ---
+  # These control the iterative "de-masking" process.
+  alg: 'origin' # Diffusion algorithm. Options: 'origin', 'maskgit_plus', 'topk_margin', 'entropy'
+  alg_temp: null # Temperature for confidence-based sampling in advanced algorithms.
+  steps: 512
+  eps: 1.0e-3
+  parallel_gen: true  # whether to do parallel generation
+
+  # --- Sampling Parameters ---
+  # Controls the randomness of token generation.
+  temperature: 0.0
+  top_p: null
+  top_k: null
+
+  # --- Length Control ---
+  # max_length is the final padded length of the sequence.
+  max_length: 20
+  # max_new_tokens can be used to dynamically set max_length = input_length + max_new_tokens.
+  # The original code handles this logic, so we keep the parameter.
+  max_new_tokens: null
+
+  # --- Output Control ---
+  # How many sequences to generate in parallel.
+  num_return_sequences: 1
+  # Whether to return a dictionary (ModelOutput) or just tensors.
+  return_dict_in_generate: false
+  # Whether to store the intermediate generation steps in the output.
+  output_history: false
+
+  # --- Special Token IDs ---
+  # These are often set dynamically from the tokenizer, but can be
+  # specified here as defaults. `null` means None in Python.
+  mask_token_id: null
+  pad_token_id: null
+  bos_token_id: null
+  eos_token_id: null

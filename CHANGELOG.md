@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2025-11-19
+
+### Model
+- Add generation functionality analogous to discrete diffusion LM after pre-trained with `pretrain-mlm` objective
+
+### Code Refactoring
+- Manage configurations using `omegaconf`, `hydra` and yaml files.
+
+### Dependencies upgrade
+- Upgrade `python` to 3.10
+- Upgrade `pytorch` to 2.5.1
+- Upgrade `transformers` to 4.53.3
+
 ## [0.5.0] - 2025-05-15
 
 ### Model

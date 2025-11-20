@@ -29,6 +29,7 @@ import warnings
 from typing import List, Optional, Tuple, Union, Callable
 import numpy as np
 import math
+from einops import repeat
 
 import torch
 from torch import nn, Tensor
@@ -39,6 +40,7 @@ from transformers.models.llama import modeling_llama
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.beit.modeling_beit import BeitDropPath
 from transformers.utils.import_utils import is_torch_fx_available
+from transformers.modeling_rope_utils import dynamic_rope_update
 from src.utils.attn_mask_utils import is_torch_greater_or_equal_than_1_13
 from src.utils.attn_mask_utils import (
     _prepare_4d_causal_bi_attention_mask,
@@ -111,6 +113,9 @@ class LlamaDecoderLayer(modeling_llama.LlamaDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[
+            tuple[torch.Tensor, torch.Tensor]
+        ] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> Tuple[
         torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]
@@ -129,17 +134,11 @@ class LlamaDecoderLayer(modeling_llama.LlamaDecoderLayer):
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
-        if "padding_mask" in kwargs:
-            warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
-            )
-
         residual = hidden_states
-
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
+        hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -147,6 +146,8 @@ class LlamaDecoderLayer(modeling_llama.LlamaDecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
         )
         # apply lambda_1 if present TODO: indicator of modification
         if self.lambda_1 is not None:
@@ -168,9 +169,6 @@ class LlamaDecoderLayer(modeling_llama.LlamaDecoderLayer):
 
         if output_attentions:
             outputs += (self_attn_weights,)
-
-        if use_cache:
-            outputs += (present_key_value,)
 
         return outputs
 
@@ -377,6 +375,91 @@ class FocalLoss(nn.Module):
             return loss.sum()
         elif self.reduction == "none":
             return loss
+
+
+# copied from https://github.com/sheryc/resonance_rope
+class ResonanceEmbedding(nn.Module):
+    # The base class of the Resonance RoPE technique.
+    def resonance_register(self):
+        # This function rounds the wavelengths of all RoPE features to their closest integer based on self.inv_freq.
+        r_wavelengths = torch.round(2 * math.pi / self.inv_freq).float()
+        r_inv_freq = 2 * math.pi / r_wavelengths
+        self.register_buffer("r_inv_freq", r_inv_freq, persistent=False)
+        self.register_buffer("r_wavelengths", r_wavelengths, persistent=False)
+
+    def compute_freqs(self, seq_len, device, dtype=None):
+        # This function ensures that the pre-critical dimensions repeats the computed values.
+        freqs_list = []
+        dtype = self.r_inv_freq.dtype if not dtype else dtype
+        for i in range(self.dim // 2):
+            if seq_len >= self.r_wavelengths[i].item():
+                t_i = torch.arange(self.r_wavelengths[i], device=device, dtype=dtype)
+                current_freq = repeat(
+                    t_i * self.r_inv_freq[i].to(dtype),
+                    "l -> (repeat l)",
+                    repeat=math.ceil(seq_len / self.r_wavelengths[i].item()),
+                ).reshape(-1)[:seq_len]
+            else:
+                t_i = torch.arange(seq_len, device=device, dtype=dtype)
+                current_freq = t_i * self.r_inv_freq[i].to(dtype)
+            freqs_list.append(current_freq)
+        freqs = torch.stack(freqs_list, dim=1)
+        return freqs
+
+
+class ResonanceLlamaRotaryEmbedding(
+    ResonanceEmbedding, modeling_llama.LlamaRotaryEmbedding
+):
+    def __init__(self, config: LlamaConfig, device=None):
+        super().__init__(config, device)
+        # see -> https://github.com/sheryc/resonance_rope?tab=readme-ov-file#the-implementation-of-resonance-rope
+        self.dim = config.head_dim
+        print(f"self.dim: {self.dim}")
+        # After each computation or update of `self.inv_freq`, rerun `self.resonance_register()`.
+        self.resonance_register()
+
+    @torch.no_grad()
+    @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
+    def forward(self, x, position_ids):
+        inv_freq_expanded = (
+            self.inv_freq[None, :, None]
+            .float()
+            .expand(position_ids.shape[0], -1, 1)
+            .to(x.device)
+        )
+        position_ids_expanded = position_ids[:, None, :].float()
+        # print(f"inv_freq: {self.inv_freq.shape}, inv_freq_expanded: {inv_freq_expanded.shape}, position_ids_expanded: {position_ids_expanded.shape}")
+        # inv_freq -> [dim]
+        # inv_freq_expanded -> [bz, dim//2, 1]
+        # position_ids_expanded -> [bz, 1, seq_len]
+
+        # modifications to `LlamaRotaryEmbedding` is based on:
+        # https://github.com/sheryc/resonance_rope?tab=readme-ov-file#the-implementation-of-resonance-rope
+        if ("dynamic" in self.rope_type) or (self.rope_type == "longrope"):
+            # `if` conditions are from decorator `dynamic_rope_update`
+            self.resonance_register()
+
+        bz, seq_len = position_ids.shape
+        device_type = (
+            x.device.type
+            if isinstance(x.device.type, str) and x.device.type != "mps"
+            else "cpu"
+        )
+        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
+            # [bz, dim//2, 1] & [bz, 1, seq_len] -> [bz, dim//2, seq_len] -> [bz, seq_len, dim//2]
+            freqs = (
+                inv_freq_expanded.float() @ position_ids_expanded.float()
+            ).transpose(1, 2)
+            print(f"[Original] freqs: {freqs.shape}\n{freqs[0,0,:]}\n{freqs[0,1,:]}")
+
+            freqs = self.compute_freqs(seq_len, device_type, self.r_inv_freq.dtype)
+            freqs = freqs[None, :, :].expand(bz, -1, -1).to(device_type)
+            print(f"[Resonance] freqs: {freqs.shape}\n{freqs[0,0,:]}\n{freqs[0,1,:]}")
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
+
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
 class RotaryEmbedding3D(nn.Module):

@@ -12,12 +12,14 @@ import torch.distributed as dist
 from torch_geometric.datasets import TUDataset
 from torch_geometric.data import Data
 from torch_geometric.utils.undirected import is_undirected
+from omegaconf import OmegaConf
 from ogb.nodeproppred import PygNodePropPredDataset
 from ogb.linkproppred import PygLinkPropPredDataset
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.lsc import PygPCQM4Mv2Dataset
 from ogb.utils import smiles2graph
 from src.utils import control_flow, dataset_utils, mol_utils
+from ..conf import DataConfig, TrainingConfig
 from .dataset_map import (
     EnsembleNodesEdgesMapDataset,
     ShaDowKHopSeqMapDataset,
@@ -41,12 +43,12 @@ get_dataset_reader = _dataset.get  # return the func
 _molecule = control_flow.Register()
 
 
-def read_merge_molecule_datasets(data_dir):
+def read_merge_molecule_datasets(data_cfg: DataConfig):
     ls_edge_attr = []
     ls_x = []
     for ds in _molecule._register_map.keys():
         print(f"load molecule dataset {ds}!\n")
-        _, raw_dataset = read_dataset(ds, data_dir, None, return_valid_test=False)
+        _, raw_dataset = read_dataset(ds, data_cfg)
         ls_edge_attr.append(raw_dataset._data.edge_attr)
         ls_x.append(raw_dataset._data.x)
     data = Data(edge_attr=torch.vstack(ls_edge_attr), x=torch.vstack(ls_x))
@@ -55,17 +57,12 @@ def read_merge_molecule_datasets(data_dir):
 
 
 @_dataset("spice-circuit")
-def _read_spice_circuit(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test: bool = False,
-    **kwargs,
-):
+def _read_spice_circuit(data_cfg: DataConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "spice-circuit"
     print(f"\nLoading dataset {dataset_name} ...")
-    dataset = dataset_utils.SpiceCircuitDataset(root=data_dir)
+    dataset = dataset_utils.SpiceCircuitDataset(root=data_dir, data_ver="v2")
     print(f"\ndataset._data -> {dataset._data}")
     # dataset._data -> Data(x=[348319, 1], edge_index=[2, 3014676], y=[3350])
     # dataset[0] -> Data(x=[8, 1], edge_index=[2, 18], y=[1])
@@ -117,15 +114,9 @@ def _read_spice_circuit(
 
 
 @_dataset("structure")
-def _read_structure(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test: bool = False,
-    with_prob: bool = False,
-    **kwargs,
-):
+def _read_structure(data_cfg: DataConfig, *, with_prob: bool = False, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "structure"
     data_ver = "v05"
     print(
@@ -220,15 +211,7 @@ def _read_structure(
 
 
 # @_dataset("structure")
-def _read_random_graph_structure(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test: bool = False,
-    with_prob: bool = False,
-    **kwargs,
-):
+def _read_random_graph_structure(data_cfg: DataConfig, **kwargs):
     print(f"\n[{datetime.now()}] Generating dataset randomly ...")
     dataset = GraphsIterableDataset(
         num_nodes_low=10,
@@ -239,14 +222,9 @@ def _read_random_graph_structure(
 
 
 @_dataset("oneid")
-def _read_oneid(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test: bool = False,
-    **kwargs,
-):
+def _read_oneid(data_cfg: DataConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "oneid"
     print(f"\nLoading dataset {dataset_name} ...")
     dataset = dataset_utils.OneIDSmallDataset(root=data_dir)
@@ -312,14 +290,9 @@ def _read_oneid(
 
 
 @_dataset("triangles")
-def _read_triangles(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test: bool = False,
-    **kwargs,
-):
+def _read_triangles(data_cfg: DataConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "TRIANGLES"
     print(f"\nLoading dataset {dataset_name} from {data_dir} ...")
     dataset = TUDataset(root=data_dir, name=dataset_name)
@@ -384,14 +357,9 @@ def _read_triangles(
 
 
 @_dataset("reddit_threads")
-def _read_reddit_threads(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test: bool = False,
-    **kwargs,
-):
+def _read_reddit_threads(data_cfg: DataConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "reddit_threads"
     print(f"\nLoading dataset {dataset_name} from {data_dir} ...")
     dataset = TUDataset(root=data_dir, name=dataset_name)
@@ -461,22 +429,11 @@ def _read_reddit_threads(
 
 
 @_dataset("molecule")
-def _read_molecules(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode: bool = False,
-    return_valid_test: bool = False,
-    with_prob: bool = False,
-    true_valid: int = 0,
-    ensemble_datasets: List = None,
-    **kwargs,
-):
+def _read_molecules(data_cfg: DataConfig, **kwargs):
+    ensemble_datasets = data_cfg.ensemble_datasets
     ls_ds = []
     for ds_name in ensemble_datasets:
-        dataset, raw_dataset = read_dataset(
-            ds_name, data_dir, None, return_valid_test=False, pt_all=True
-        )
+        dataset, raw_dataset = read_dataset(ds_name, data_cfg, pt_all=True)
         ls_ds.append(dataset)
     train_dataset = EnsembleGraphsMapDataset(ls_ds)
     return train_dataset, raw_dataset
@@ -484,7 +441,9 @@ def _read_molecules(
 
 @_molecule("ogbg-molhiv")
 @_dataset("ogbg-molhiv")
-def _read_ogbg_molhiv(data_dir, sampling_config, *, return_valid_test=False, **kwargs):
+def _read_ogbg_molhiv(data_cfg: DataConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "ogbg-molhiv"
     dataset = PygGraphPropPredDataset(root=data_dir, name=dataset_name)
     # dataset._data -> Data(num_nodes=1049163, edge_index=[2, 2259376], edge_attr=[2259376, 3], x=[1049163, 9], y=[41127, 1])
@@ -522,7 +481,9 @@ def _read_ogbg_molhiv(data_dir, sampling_config, *, return_valid_test=False, **k
 
 @_molecule("ogbg-molpcba")
 @_dataset("ogbg-molpcba")
-def _read_ogbg_molpcba(data_dir, sampling_config, *, return_valid_test=False, **kwargs):
+def _read_ogbg_molpcba(data_cfg: DataConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     dataset_name = "ogbg-molpcba"
     print(f"\nLoading dataset {dataset_name} ...")
     dataset = PygGraphPropPredDataset(root=data_dir, name=dataset_name)
@@ -564,15 +525,16 @@ def _read_ogbg_molpcba(data_dir, sampling_config, *, return_valid_test=False, **
 @_molecule("PCQM4Mv2")
 @_dataset("PCQM4Mv2")
 def _read_pcqm4mv2(
-    data_dir,
-    sampling_config,
+    data_cfg: DataConfig,
     *,
-    return_valid_test: bool = False,
+    train_cfg: TrainingConfig,
     with_prob: bool = False,
-    true_valid: int = -1,
     pt_all: bool = False,  # whether to use all data in pre-train
     **kwargs,
 ):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
+    true_valid = train_cfg.ft_eval.true_valid
     print("\nLoading dataset PCQM4Mv2 ...")
     # data_dir: e.g., "../data/OGB"
     # CC means `chiral-center` -> dataset_utils.py::mol2graph_cc
@@ -583,9 +545,7 @@ def _read_pcqm4mv2(
     # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
     # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3]) -> geometric_data_processed_3d.pt
     # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620], pos=[52970652, 3]) -> geometric_data_processed_3dm_v2.pt
-    dataset = PygPCQM4Mv2Dataset(
-        root=data_dir, smiles2graph=smiles2graph
-    )  # official version
+    dataset = PygPCQM4Mv2Dataset(root=data_dir)  # official version
     # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
     # dataset = dataset_utils.PygPCQM4Mv2ExtraDataset(root=data_dir)
     # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 12], y=[3746620])
@@ -713,6 +673,17 @@ def _read_pcqm4mv2(
         )
         # train/valid/test-dev/test-challenge
         # 3378606/73545/147037/147432
+        if train_cfg.ft_eval.save_hidden_states:
+            print("\nLoading Custom Mol dataset ...")
+            dataset_custom = dataset_utils.PygCustomMolDataset(root=data_dir)
+            print(f"\ndataset_custom._data -> {dataset_custom._data}")
+            test_dataset = GraphsMapDataset(
+                dataset_custom,
+                None,
+                sample_idx=torch.arange(len(dataset_custom)),
+                provide_sampler=True,
+                with_prob=with_prob,
+            )
         print(
             f"Split dataset based on given train/valid/test index!\nTrain: {len(train_dataset)}, Valid: {len(valid_dataset)}, Test: {len(test_dataset)}!"
         )
@@ -1008,16 +979,9 @@ def _obtain_disconnected_molecules(dataset):
 
 @_molecule("CEPDB")
 @_dataset("CEPDB")
-def _read_cepdb(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode: bool = False,
-    return_valid_test: bool = False,
-    with_prob: bool = False,
-    true_valid: int = 0,
-    **kwargs,
-):
+def _read_cepdb(data_cfg: DataConfig, *, with_prob: bool = False, **kwargs):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     print("\nLoading dataset CEPDB ...")
     # data_dir: e.g., "../data/OGB"
     assert not return_valid_test
@@ -1049,16 +1013,14 @@ def _read_cepdb(
 @_molecule("ZINC")
 @_dataset("ZINC")
 def _read_zinc(
-    data_dir,
-    sampling_config,
+    data_cfg: DataConfig,
     *,
-    pretrain_mode: bool = False,
-    return_valid_test: bool = False,
     with_prob: bool = False,
-    true_valid: int = 0,
     subset: int = 11,
     **kwargs,
 ):
+    data_dir = data_cfg.data_dir
+    return_valid_test = data_cfg.return_valid_test
     print(f"\nLoading dataset ZINC subset {subset} ...")
     # data_dir: e.g., "../data/OGB"
     assert not return_valid_test
@@ -1077,15 +1039,13 @@ def _read_zinc(
 
 
 @_dataset("ogbn-products")
-def _read_ogbn_products(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    true_valid: int = -1,
-    **kwargs,
-):
+def _read_ogbn_products(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+    true_valid = train_cfg.ft_eval.true_valid
+
     dataset_name = "ogbn-products"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygNodePropPredDataset(root=data_dir, name=dataset_name)
@@ -1170,15 +1130,12 @@ def _read_ogbn_products(
 
 
 @_dataset("ogbn-arxiv")
-def _read_ogbn_arxiv(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    true_valid: int = -1,
-    **kwargs,
-):
+def _read_ogbn_arxiv(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+
     dataset_name = "ogbn-arxiv"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygNodePropPredDataset(root=data_dir, name=dataset_name)
@@ -1249,15 +1206,11 @@ def _read_ogbn_arxiv(
 
 
 @_dataset("ogbn-papers100M")
-def _read_ogbn_papers100M(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    true_valid: int = -1,
-    **kwargs,
-):
+def _read_ogbn_papers100M(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
     # cost TOO MUCH memory in `_pre_transform_ogbn_papers100M`, NOT applicable @ 2025-01
     dataset_name = "ogbn-papers100M"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
@@ -1338,14 +1291,12 @@ def _pre_transform_ogbn_papers100M(graph):
 
 
 @_dataset("ogbn-proteins")
-def _read_ogbn_proteins(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    **kwargs,
-):
+def _read_ogbn_proteins(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+
     dataset_name = "ogbn-proteins"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygNodePropPredDataset(root=data_dir, name=dataset_name)
@@ -1428,14 +1379,12 @@ def _read_ogbn_proteins(
 
 
 @_dataset("ogbl-ppa")
-def _read_ogbl_ppa(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    **kwargs,
-):
+def _read_ogbl_ppa(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+
     dataset_name = "ogbl-ppa"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygLinkPropPredDataset(root=data_dir, name=dataset_name)
@@ -1491,15 +1440,13 @@ def _read_ogbl_ppa(
 
 
 @_dataset("ogbl-citation2")
-def _read_ogbl_citation2(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    true_valid: int = -1,
-    **kwargs,
-):
+def _read_ogbl_citation2(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+    true_valid = train_cfg.ft_eval.true_valid
+
     dataset_name = "ogbl-citation2"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygLinkPropPredDataset(root=data_dir, name=dataset_name)
@@ -1610,14 +1557,12 @@ def _read_ogbl_citation2(
 
 
 @_dataset("ogbl-wikikg2")
-def _read_ogbl_wikikg2(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    **kwargs,
-):
+def _read_ogbl_wikikg2(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+
     dataset_name = "ogbl-wikikg2"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygLinkPropPredDataset(root=data_dir, name=dataset_name)
@@ -1719,14 +1664,12 @@ def _read_ogbl_wikikg2(
 
 
 @_dataset("ogbl-ddi")
-def _read_ogbl_ddi(
-    data_dir,
-    sampling_config,
-    *,
-    pretrain_mode=False,
-    return_valid_test=False,
-    **kwargs,
-):
+def _read_ogbl_ddi(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs):
+    data_dir = data_cfg.data_dir
+    sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
+    return_valid_test = data_cfg.return_valid_test
+    pretrain_mode = train_cfg.pretrain_mode
+
     dataset_name = "ogbl-ddi"
     print(f"Loading {dataset_name} raw data from dir: {data_dir}")
     raw_dataset = PygLinkPropPredDataset(root=data_dir, name=dataset_name)
@@ -1781,13 +1724,12 @@ def _read_ogbl_ddi(
 
 
 @_dataset("odps_onedevice")
-def _read_odps_onedevice_data(
-    table,
-    return_valid_test: bool = False,
-    edge_dim: int = 5,
-    node_dim: int = 1,
-    **kwargs,
-):
+def _read_odps_onedevice_data(data_cfg: DataConfig, **kwargs):
+    table = data_cfg.odps.tables
+    return_valid_test = data_cfg.return_valid_test
+    edge_dim = data_cfg.odps.edge_dim
+    node_dim = data_cfg.odps.node_dim
+
     slice_id = int(os.environ.get("RANK", 0))
     slice_count = int(os.environ.get("WORLD_SIZE", 1))
 
@@ -1839,7 +1781,9 @@ def _read_odps_onedevice_data(
 
 
 @_dataset("odps_oneid")
-def _read_odps_oneid_data(table, return_valid_test: bool = False, **kwargs):
+def _read_odps_oneid_data(data_cfg: DataConfig, **kwargs):
+    table = data_cfg.odps.tables
+    return_valid_test = data_cfg.return_valid_test
     slice_id = int(os.environ.get("RANK", 0))
     slice_count = int(os.environ.get("WORLD_SIZE", 1))
 
@@ -1862,7 +1806,11 @@ def _read_odps_oneid_data(table, return_valid_test: bool = False, **kwargs):
 
 
 @_dataset("odps")
-def _read_odps_data(table, node_dim, edge_dim, mode="train", **kwargs):
+def _read_odps_data(data_cfg: DataConfig, **kwargs):
+    table = data_cfg.odps.tables
+    edge_dim = data_cfg.odps.edge_dim
+    node_dim = data_cfg.odps.node_dim
+    mode = data_cfg.odps.mode
     if mode == "train":
         slice_id = int(os.environ.get("RANK", 0))
         slice_count = int(os.environ.get("WORLD_SIZE", 1))

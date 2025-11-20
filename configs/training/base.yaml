@@ -1,0 +1,76 @@
+# @package _global_
+training:
+  deepspeed_conf_file: ""
+  use_deepspeed: null
+  output_dir: "../exp/models/graph_llama_test"
+  pretrain_cpt: ""
+  pretrain_mode: false  # affects the sampling for edge-/node- level tasks
+  gpu_name: null
+  # moved here from tokenization cfg
+  task_type: "pretrain-mlm"  # pretrain|graph|edge|node
+  # --- Pre-training Masked Language Model (MLM) Settings ---
+  # moved here from tokenization cfg
+  pretrain_mlm:  # TODO: refactor to be similar to `finetune`
+    name: "polynomial"
+    params:
+      fixed_ratio: 0.7
+      power: 1
+      mtp: [ 1, 0, 0 ]
+      umr_clip: [0.01, 0.99]  # un-mask ratio clip range, i.e., percentage of presented tokens
+    dlm_wgt: true  # whether to turn on the weights in discrete diffusion LM's loss
+    num_gen_samples: 128  # num of samples picked for generation
+  task_conversion: "regression2binary_classification---"
+
+  schedule:
+    epochs: null
+    warmup_epochs: null
+    total_tokens: 1e9
+    warmup_tokens: 1e8
+    total_num_steps: null
+    warmup_num_steps: null
+    logging_steps: 100
+    samples_per_saving: null
+    steps_per_saving: null
+    samples_per_eval: null
+  optimizer:
+    lr: 0.001
+    min_lr: 0.0
+    betas: [ 0.9, 0.95 ]
+    weight_decay: 0.1
+    eps: 1e-6
+    max_grad_norm: 1.0
+    gradient_accumulation_steps: 1
+    use_ema: false
+    ema_decay: 0.9999
+  tot_samples: 10000  # num of samples for estimating tokens-per-sample
+  batch_size: 128
+  batch_size_eval: null  # small to avoid OOM when evaluating during finetuning
+  max_length: null  # used in finetuning
+  pad_to_multiple_of: 8
+  pack_tokens: 0
+  num_workers: 8  # num of workers for data processing in train DataLoader
+  num_workers_eval: 8  # num of workers for data processing in eval DataLoader
+  valid_percent: 0
+  do_valid: false
+  do_test: false  # can be used to evaluate EMA ckp with validation data
+  do_generation: false
+  pt_eval_only: false
+  #TODO: refactor into pt_eval
+  focal_gamma: 0  # 0 for CE; other vals for focal-loss
+  distributed:
+    world_size: 1
+    rank: 0
+  finetune:  # TODO: change to `ft_train`
+    freeze: -1  # how to freeze the params of backbone architecture: -1->no, 0->embedding
+    seed: -1  # seed to shuffle train sampler
+    use_aux: false
+    aux_ratio: 0
+    task_ratio: 1
+  ft_eval:
+    save_pred: false  # whether to save prediction results
+    save_hidden_states: false
+    infer_only: false
+    eval_only: false
+    epoch_per_eval: 1
+    k_samplers: 262144  # 2^14=16384  2^16=65536  2^18=262144
+    true_valid: -1

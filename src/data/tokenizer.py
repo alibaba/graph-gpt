@@ -15,8 +15,9 @@ from ..utils import (
     attn_mask_utils,
     graph2path,
     prepare_inputs_for_task,
-    TASK_TYPES,
 )
+from ..conf import TASK_TYPES
+from ..conf import TrainingConfig
 from .vocab_builder import load_vocab
 
 
@@ -33,6 +34,7 @@ class GSTTokenizer(object):
         *,
         padding_side: str = "right",
         add_eos: bool = True,
+        train_cfg: TrainingConfig = None,
         **kwargs,
     ):
         self.config = config
@@ -62,6 +64,7 @@ class GSTTokenizer(object):
         self.node_idx_token_ids = None
         self.all_token_ids = None
         # kwargs
+        self.train_cfg = train_cfg
         self.kwargs = kwargs
 
     def load_vocab(self):
@@ -898,11 +901,18 @@ class StackedGSTTokenizer(GSTTokenizer):
         *,
         padding_side: str = "right",
         add_eos: bool = True,
+        train_cfg: TrainingConfig = None,
         stack_method: str = "short",
         rotation: str = "anchor_rotate",
         **kwargs,
     ):
-        super().__init__(config, padding_side=padding_side, add_eos=add_eos, **kwargs)
+        super().__init__(
+            config,
+            padding_side=padding_side,
+            add_eos=add_eos,
+            train_cfg=train_cfg,
+            **kwargs,
+        )
         assert stack_method in {"short", "long"}
         self.stack_method = stack_method
         self.default_node_attr = None

@@ -1,5 +1,6 @@
-from typing import Optional, List
+from typing import Optional, List, Any
 from transformers import LlamaConfig
+from ...conf.model import GraphGPTModelConfig
 
 
 class GraphGPTConfig(LlamaConfig):
@@ -13,31 +14,7 @@ class GraphGPTConfig(LlamaConfig):
 
 
     Args:
-        vocab_size (`int`, *optional*, defaults to 32000):
-            Vocabulary size of the LLaMA model. Defines the number of different tokens that can be represented by the
-            `inputs_ids` passed when calling [`LlamaModel`]
-        hidden_size (`int`, *optional*, defaults to 4096):
-            Dimension of the hidden representations.
-        intermediate_size (`int`, *optional*, defaults to 11008):
-            Dimension of the MLP representations.
-        num_hidden_layers (`int`, *optional*, defaults to 32):
-            Number of hidden layers in the Transformer encoder.
-        num_attention_heads (`int`, *optional*, defaults to 32):
-            Number of attention heads for each attention layer in the Transformer encoder.
-        hidden_act (`str` or `function`, *optional*, defaults to `"silu"`):
-            The non-linear activation function (function or string) in the decoder.
-        max_position_embeddings (`int`, *optional*, defaults to 2048):
-            The maximum sequence length that this model might ever be used with. Typically set this to something large
-            just in case (e.g., 512 or 1024 or 2048).
-        initializer_range (`float`, *optional*, defaults to 0.02):
-            The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
-        rms_norm_eps (`float`, *optional*, defaults to 1e-12):
-            The epsilon used by the rms normalization layers.
-        use_cache (`bool`, *optional*, defaults to `True`):
-            Whether or not the model should return the last key/values attentions (not used by all models). Only
-            relevant if `config.is_decoder=True`.
-        tie_word_embeddings(`bool`, *optional*, defaults to `False`):
-            Whether to tie weight embeddings
+
         pad_token_id (`int`, *optional*, defaults to 0):
         cls_token_id (`int`, *optional*, defaults to None):
         num_neg (`int`, *optional*, defaults to None): For auc loss ONLY
@@ -93,6 +70,8 @@ class GraphGPTConfig(LlamaConfig):
         self.next_n_token = next_n_token
         self.causal_attention = causal_attention
         self.rope_range = rope_range
+        # rope_type: yarn, dynamic, default
+        rope_scaling = None  # {"rope_type": "default", "factor": 4}
         # 1. For dropout in transformer backbone
         self.embed_pdrop = embed_pdrop
         self.path_pdrop = path_pdrop
@@ -113,6 +92,9 @@ class GraphGPTConfig(LlamaConfig):
         self.loss_type = loss_type
         self.num_neg = num_neg
         self.rope_3d = False
+        print(
+            f"[BEFORE] hidden_size: {hidden_size}, num_attention_heads: {num_attention_heads}"
+        )
         super().__init__(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -126,5 +108,105 @@ class GraphGPTConfig(LlamaConfig):
             use_cache=use_cache,
             pad_token_id=pad_token_id,
             tie_word_embeddings=tie_word_embeddings,
+            rope_scaling=rope_scaling,
             **kwargs,
         )
+        print(
+            f"[AFTER] head_dim: {self.head_dim}, hidden_size: {self.hidden_size}, num_attention_heads: {self.num_attention_heads}"
+        )
+
+    def update(self, config_dict: dict[str, Any]):
+        super().update(config_dict)
+        print(f"updated: {config_dict}\n")
+
+
+def convert_to_legacy_config(model_config: GraphGPTModelConfig) -> GraphGPTConfig:
+    """
+    Converts a structured GraphGPTModelConfig instance into a legacy, flat
+    GraphGPTConfig instance for backward compatibility.
+
+    Args:
+        model_config: An instance of the new `GraphGPTModelConfig`.
+
+    Returns:
+        An instance of the old `GraphGPTConfig`.
+    """
+    # Create a flat dictionary of keyword arguments by extracting values
+    # from the structured model_config.
+    kwargs = {
+        # Core Llama/Transformer parameters
+        "vocab_size": model_config.vocab_size,
+        "hidden_size": model_config.hidden_size,
+        "intermediate_size": model_config.intermediate_size,
+        "num_hidden_layers": model_config.num_hidden_layers,
+        "num_attention_heads": model_config.num_attention_heads,
+        "num_key_value_heads": model_config.num_key_value_heads,
+        "head_dim": model_config.head_dim,
+        "attention_bias": model_config.attention_bias,
+        "mlp_bias": model_config.mlp_bias,
+        "hidden_act": model_config.hidden_act,
+        "max_position_embeddings": model_config.max_position_embeddings,
+        "initializer_range": model_config.initializer_range,
+        "rms_norm_eps": model_config.rms_norm_eps,
+        "tie_word_embeddings": model_config.tie_word_embeddings,
+        "rope_theta": model_config.rope_theta,
+        "use_cache": model_config.use_cache,
+        # Tokenizer 相关
+        "pad_token_id": model_config.pad_token_id,
+        "bos_token_id": model_config.bos_token_id,
+        "eos_token_id": model_config.eos_token_id,
+        "cls_token_id": model_config.cls_token_id,
+        # Top-level GraphGPT-specific parameters
+        "causal_attention": model_config.causal_attention,
+        "rope_range": model_config.rope_range,
+        "layer_scale_init_value": model_config.layer_scale_init_value,
+        # Parameters from `dropout_settings`
+        "embed_pdrop": model_config.dropout_settings.embed_dropout,
+        "path_pdrop": model_config.dropout_settings.path_dropout,
+        "mlp_pdrop": model_config.dropout_settings.mlp_dropout,
+        "attention_dropout": model_config.dropout_settings.attention_dropout,
+        # Parameters from `graph_input`
+        "stacked_feat": model_config.graph_input.stacked_feat,
+        "stack_method": model_config.graph_input.stack_method,
+        "stacked_feat_agg_method": model_config.graph_input.stacked_feat_agg_method,
+        "embed_dim": model_config.graph_input.embed_dim,
+        # Parameters from `geometric_input`
+        "pos_agg_method": model_config.geometric_input.pos_agg_method,
+        "pos_bins": model_config.geometric_input.pos_bins,
+        # Parameters from `pretraining head`
+        "next_n_token": model_config.pt_head.next_n_token,
+        "focal_gamma": model_config.pt_head.focal_gamma,
+        "smtp_inside": model_config.pt_head.smtp_inside,
+        # Parameters from `finetuning head`
+        "pooling_method": model_config.ft_head.pooling_method,
+        "mlp": model_config.ft_head.mlp,
+        "dropout": model_config.ft_head.dropout,
+        "loss_type": model_config.ft_head.loss_type,
+        "num_neg": model_config.ft_head.num_neg,
+        "num_labels": model_config.ft_head.num_labels,
+        "problem_type": model_config.ft_head.problem_type,
+        "use_aux": model_config.ft_head.task_ratio < 1,
+    }
+
+    # 处理 rope_scaling 配置
+    if model_config.rope_scaling:
+        kwargs["rope_scaling"] = {
+            "rope_type": model_config.rope_scaling.rope_type,
+            "factor": model_config.rope_scaling.factor,
+            "original_max_position_embeddings": model_config.rope_scaling.original_max_position_embeddings,
+            "attention_factor": model_config.rope_scaling.attention_factor,
+            "beta_fast": model_config.rope_scaling.beta_fast,
+            "beta_slow": model_config.rope_scaling.beta_slow,
+            "short_factor": model_config.rope_scaling.short_factor,
+            "long_factor": model_config.rope_scaling.long_factor,
+            "low_freq_factor": model_config.rope_scaling.low_freq_factor,
+            "high_freq_factor": model_config.rope_scaling.high_freq_factor,
+        }
+
+    # 移除值为 None 的参数，避免 GraphGPTConfig 的验证错误
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+    # Instantiate the legacy config class with the flattened arguments
+    legacy_config = GraphGPTConfig(**kwargs)
+
+    return legacy_config

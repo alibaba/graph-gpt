@@ -9,22 +9,7 @@ from dataclasses import dataclass
 from transformers.utils import ModelOutput
 from . import control_flow
 
-TASK_TYPES = {
-    "pretrain",
-    "pretrain-smtp",
-    "pretrain-mlm",
-    "pretrain-mlm-coord",
-    "pretrain-coord",
-    "pretrain-ltp",
-    "pretrain-euler",
-    "pretrain-cl",
-    "pretrain-coord-cl",
-    "node",
-    "nodev2",
-    "edge",
-    "graph",
-}
-ATTR_ASSIGNMENT_TYPES = {"first", "last", "random", "all", "mix"}
+
 MOL_ENERGY_BIN_LEN = 16
 MOL_ENERGY_SCALE = 1000
 
@@ -131,8 +116,7 @@ def _mask_stacked_input_ids_v2(
     mask_ratio: float = 0.15,
     mask_token_precent: Tuple[float, float, float] = (1, 0, 0),
     pad_token_id: int = 0,
-    has_eos: bool = True,
-    stack_method: str = "short",
+    **kwargs,
 ):
     # v2 choose tokens to mask globally
     seq = len(input_ids)
@@ -161,6 +145,30 @@ def _mask_stacked_input_ids_v2(
                 input_ids[idx_seq, idx_dim] = random.sample(all_vocab_ids, k=1)[0]
             else:
                 pass
+    return input_ids.tolist(), labels_mask.tolist()
+
+
+def _mask_stacked_input_ids_dlm(
+    input_ids: List[List[int]],
+    mask_token_id,
+    all_vocab_ids,
+    mask_ratio: float = 0.15,
+    mask_token_precent: Tuple[float, float, float] = (1, 0, 0),
+    pad_token_id: int = 0,
+    has_eos: bool = True,
+    stack_method: str = "short",
+):
+    # dLM-type of masking
+    seq = len(input_ids)
+    dim = len(input_ids[0])
+    input_ids = np.array(input_ids)
+    labels_mask = np.full((seq, dim), -100)
+    rand = np.random.rand(seq, dim)  # [0,1)
+    mask = rand < mask_ratio
+    mask = mask & (input_ids != pad_token_id)
+
+    labels_mask = np.where(mask, input_ids, labels_mask)
+    input_ids = np.where(mask, mask_token_id, input_ids)
     return input_ids.tolist(), labels_mask.tolist()
 
 
@@ -246,16 +254,27 @@ def prepare_inputs_for_pretrain_mlm(
     conf = gtokenizer.config["pretrain_mlm"]
     assert conf["name"] in {"polynomial", "cosine", "fixed"}
     if conf["name"] == "fixed":
-        mask_ratio = conf["params"]["fixed_ratio"]
+        alpha_t = conf["params"]["fixed_ratio"]
     elif conf["name"] == "polynomial":
         # 3-> cubic, 2-> square, 1-> linear, 0.5-> sqrt
         powers = conf["params"]["power"]
-        mask_ratio = 1 - random.random() ** powers
+        umr_min, umr_max = gtokenizer.train_cfg.pretrain_mlm.params.umr_clip
+        assert 0 <= umr_min <= umr_max <= 1
+        r = random.random()
+        t = umr_min + (umr_max - umr_min) * r  # rescale to [mr_min, mr_max]
+        alpha_t = 1 - t**powers
+        # print(f"alpha_t(mask_ratio): {alpha_t}")
+        alpha_t_prime = -powers * t ** (powers - 1)
+        # Fig. 1 @ https://arxiv.org/pdf/2406.04329
+        wgt = powers / t  # - alpha_t_prime / (1 - alpha_t)
+        if gtokenizer.train_cfg.pretrain_mlm.dlm_wgt:
+            in_dict["wgt"] = wgt
     else:
-        # mask_ratio = min(
+        # alpha_t = min(
         #     max(math.cos(random.random() * math.pi / 2), 0), 1
         # )  # MaskGIT-cos
-        mask_ratio = math.cos(random.random() * math.pi) * 0.5 + 0.5
+        alpha_t = math.cos(random.random() * math.pi) * 0.5 + 0.5
+        # TODO: add derivative of alpha_t
     mask_token_precent = conf["params"]["mtp"]
     # [MASK] token 80% of the time, i.e., (0.8, 0.1, 0.1) -> BERT paper
     all_vocab_ids = gtokenizer.get_all_vocab_ids()
@@ -266,7 +285,7 @@ def prepare_inputs_for_pretrain_mlm(
         # the `for` loop is for packing several sequences together in pre-training
         _input_ids = input_ids[idx_left:idx_right]
         idx_left = idx_right
-        curr_mask_ratio = mask_ratio
+        curr_mask_ratio = alpha_t
         if (gtokenizer.mpe is not None) and (idx_right > gtokenizer.mpe):
             # in case of pack_tokens and smtp-pretrain, if the last seq beyond mpe, do NOT mask,
             # therefore NOT make prediction -> DEPRECATED because make result worse

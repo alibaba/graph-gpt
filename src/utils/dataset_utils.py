@@ -720,6 +720,100 @@ def smiles2graph_with_try(smiles_string):
     return graph
 
 
+class PygCustomMolDataset(InMemoryDataset):
+    def __init__(
+        self,
+        root="dataset",
+        smiles2graph=None,
+        transform=None,
+        pre_transform=None,
+    ):
+        """
+        modified from ogb/lsc/pcqm4mv2_pyg.py::PygPCQM4Mv2Dataset
+        Pytorch Geometric Custom Molecules dataset object
+            - root (str): the dataset folder will be located at root/custom_mol
+            - smiles2graph (callable): A callable function that converts a SMILES string into a graph object
+                * The default smiles2graph requires rdkit to be installed
+        """
+
+        self.original_root = root
+        self.smiles2graph = smiles2graph_with_try
+        self.folder = osp.join(root, "custom_mol")
+        self.version = 1
+
+        # md5sum:
+        self.url = None
+
+        # check version and update if necessary
+        if osp.isdir(self.folder) and (
+            not osp.exists(osp.join(self.folder, f"RELEASE_v{self.version}.txt"))
+        ):
+            print("Custom Molecules dataset has been updated.")
+            if input("Will you update the dataset now? (y/N)\n").lower() == "y":
+                shutil.rmtree(self.folder)
+
+        super(PygCustomMolDataset, self).__init__(self.folder, transform, pre_transform)
+
+        print(f"Loading data from {self.processed_paths[0]}")
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+    @property
+    def raw_file_names(self):
+        return "smiles.txt"
+
+    @property
+    def processed_file_names(self):
+        return "geometric_data_processed.pt"
+
+    def process(self):
+        processes = 10
+        data_df = pd.read_csv(
+            osp.join(self.raw_dir, self.raw_file_names),
+            dtype=str,
+            header=None,
+            names=["smiles"],
+        )
+        smiles_list = data_df["smiles"].tolist()
+
+        print("Converting SMILES strings into graphs...")
+        data_list = []
+        with Pool(processes=processes) as pool:
+            iter = pool.imap(self.smiles2graph, smiles_list)
+
+            for i, graph in tqdm(enumerate(iter), total=len(smiles_list)):
+                try:
+                    data = Data()
+
+                    assert len(graph["edge_feat"]) == graph["edge_index"].shape[1]
+                    assert len(graph["node_feat"]) == graph["num_nodes"]
+
+                    data.__num_nodes__ = int(graph["num_nodes"])
+                    data.edge_index = torch.from_numpy(graph["edge_index"]).to(
+                        torch.int64
+                    )
+                    data.edge_attr = torch.from_numpy(graph["edge_feat"]).to(
+                        torch.int64
+                    )
+                    data.x = torch.from_numpy(graph["node_feat"]).to(torch.int64)
+                    data.y = torch.Tensor([0.0])
+
+                    data_list.append(data)
+                except Exception as inst:
+                    print(type(inst))
+                    print(inst.args)
+                    print(inst)
+                    print(f"[Warning] Skip {smiles_list[i]}")
+                    continue
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        data, slices = self.collate(data_list)
+
+        print("Saving...")
+        torch.save((data, slices), self.processed_paths[0])
+
+
 class PygCEPDBDataset(InMemoryDataset):
     def __init__(
         self,
@@ -1531,6 +1625,7 @@ class SpiceCircuitDataset(InMemoryDataset):
         self.original_root = root
         self.folder = osp.join(root, "spice_circuit")
         self.data_ver = data_ver
+        assert self.data_ver in ["v1", "v2"], f"{self.data_ver}"
         super(SpiceCircuitDataset, self).__init__(self.folder, transform, pre_transform)
         fn_processed = self.processed_paths[0]
         print(f"Loading data from {fn_processed}")
@@ -1543,11 +1638,11 @@ class SpiceCircuitDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return f"data.pt"
+        return f"data_{self.data_ver}.pt"
 
     @property
     def split_idx_file_name(self):
-        return f"split_dict.pt"
+        return f"split_dict_{self.data_ver}.pt"
 
     def download(self):
         pass
@@ -1610,13 +1705,17 @@ class SpiceCircuitDataset(InMemoryDataset):
 
             # create x
             # update x's elements
-            for ele in connection_matrix.index:
+            if self.data_ver == "v2":
+                components = spice2graph.normalize_all(connection_matrix.index)
+            else:
+                components = connection_matrix.index
+            for ele in components:
                 if ele not in x_elements:
                     x_elements.append(ele)
 
-            x = torch.tensor(
-                [x_elements.index(ele) for ele in connection_matrix.index]
-            ).reshape((-1, 1))
+            x = torch.tensor([x_elements.index(ele) for ele in components]).reshape(
+                (-1, 1)
+            )
             label = labels[j]
             num_nodes = len(connection_matrix.index)
 
@@ -1626,7 +1725,7 @@ class SpiceCircuitDataset(InMemoryDataset):
             j += 1
 
         # save x's elements
-        fn_x_elements = osp.join(self.folder, "x-elements.txt")
+        fn_x_elements = osp.join(self.folder, f"x-elements_{self.data_ver}.txt")
         with open(fn_x_elements, "wb") as fp:
             fp.writelines([f"{ele}\n".encode("utf-8") for ele in x_elements])
         print(f"Saving {len(x_elements)} x elements in fn {fn_x_elements}")
@@ -1657,18 +1756,21 @@ if __name__ == "__main__":
     # import pyanitools as pya
     from ogb.lsc import PygPCQM4Mv2Dataset
 
-    # dataset = PygPCQM4Mv2ExtraDataset(root="../../data/OGB")
-    # dataset = PygPCQM4Mv2RdkitPosCCDataset(root="../../data/OGB")
-    # dataset = PygPCQM4Mv2CCDataset(root="../../data/OGB")
-    # dataset = PygPCQM4Mv2PosCCDataset(root="../../data/OGB")
-    # dataset = StructureDataset(root="../../data/Struct", data_ver="v00")
-    # dataset = OneIDSmallDataset(root="../../data/OneID")
-    # dataset = PygPCQM4Mv2Dataset(root="../../data/OGB")
-    # dataset = PygPCQM4Mv2PosDataset(root="../../data/OGB")
-    # dataset = PygCEPDBDataset(root="../../data/OGB")
-    # dataset = PygANI1Dataset(root="../../data/OGB")
-    # dataset = PygZINCDataset(root="../../data/OGB", subset=11)
-    dataset = SpiceCircuitDataset(root="../../data/Custom")
+    # in `ggpt` dir, run `python -m src.utils.dataset_utils`
+
+    # dataset = PygPCQM4Mv2ExtraDataset(root="./data/OGB")
+    # dataset = PygPCQM4Mv2RdkitPosCCDataset(root="./data/OGB")
+    # dataset = PygPCQM4Mv2CCDataset(root="./data/OGB")
+    # dataset = PygPCQM4Mv2PosCCDataset(root="./data/OGB")
+    dataset = PygCustomMolDataset(root="./data/OGB")
+    # dataset = StructureDataset(root="./data/Struct", data_ver="v00")
+    # dataset = OneIDSmallDataset(root="./data/OneID")
+    # dataset = PygPCQM4Mv2Dataset(root="./data/OGB")
+    # dataset = PygPCQM4Mv2PosDataset(root="./data/OGB")
+    # dataset = PygCEPDBDataset(root="./data/OGB")
+    # dataset = PygANI1Dataset(root="./data/OGB")
+    # dataset = PygZINCDataset(root="./data/OGB", subset=11)
+    # dataset = SpiceCircuitDataset(root="./data/Custom", data_ver="v2")
     print(dataset)
     data_ = dataset._data
     print(data_)

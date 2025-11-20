@@ -35,6 +35,11 @@ Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.co
 
 ## Update:
 
+***11/20/2025***
+1. v0.6.0 released. Check `CHANGELOG.md` for details.
+2. Generation functionality is added in analog to diffusion LLM.
+3. Code refactoring for graph-level tasks. Edge-/Node-level tasks refactoring to be done, and welcome to contribute.
+
 ***05/08/2025***
 1. v0.5.0 released. Check `CHANGELOG.md` for details.
 2. Four check-points for PCQM4M-v2 is available in [ModelScope](https://www.modelscope.cn/organization/Alibaba-DT), including pre-trained and fine-tuned models.
@@ -191,14 +196,16 @@ After hitting the boundary, e.g., `255`, the next node index will be 0.
 git clone https://github.com/alibaba/graph-gpt.git
 ```
 
-- Install the dependencies in requirements.txt (Using [Anaconda](https://www.anaconda.com/), tested with py38, pytorch-1131 and CUDA-11.7, 11.8 and 12.1 on GPU V100 and A100)
+- Install the dependencies in requirements.txt (Using [Anaconda](https://www.anaconda.com/))
+  - ver <= 0.5.0 tested with py38, pytorch-1131 and CUDA-11.7, 11.8 and 12.1 on GPU V100 and A800
+  - ver >= 0.6.0 tested with py310, pytorch-251 and CUDA-12.4 on GPU V100 and A800
 
 ```shell
-conda create -n graph_gpt python=3.8 pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 pytorch-cuda=11.7 -c pytorch -c nvidia
+conda create -n graph_gpt python=3.10 "numpy<2" pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
 conda activate graph_gpt
 cd graph-gpt
 pip install -r ./requirements.txt
-pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.13.1+cpu.html
+pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-2.5.1+cpu.html
 sudo apt-get install bc
 ```
 

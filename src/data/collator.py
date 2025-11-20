@@ -16,11 +16,11 @@ import torch
 from dataclasses import dataclass
 from typing import Any, Optional, List, Dict, Union, Tuple
 from torch_geometric.data import Data
-from .tokenizer import GSTTokenizer
+from .tokenizer import GSTTokenizer, StackedGSTTokenizer
 
 
 @dataclass
-class DataCollatorForGSTCausal:
+class DataCollatorForGST:
     """
     Data collator that will dynamically pad the inputs received, as well as the labels.
 
@@ -54,7 +54,7 @@ class DataCollatorForGSTCausal:
             The type of Tensor to return. Allowable values are "np", "pt" and "tf".
     """
 
-    tokenizer: GSTTokenizer
+    tokenizer: Union[GSTTokenizer, StackedGSTTokenizer]
     is_training: Optional[bool] = None
     model: Optional[Any] = None
     padding: bool = True

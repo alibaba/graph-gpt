@@ -93,6 +93,7 @@ class DoubleHeadsModelOutput(ModelOutput):
     logits: torch.FloatTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+    task_hidden_states: Optional[torch.FloatTensor] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
 
@@ -136,7 +137,7 @@ class StackedFeatAggregation(nn.Module):
         return repr_
 
 
-class GraphGPTCausal(LlamaForCausalLM):
+class GraphGPTPretrainBase(LlamaForCausalLM):
     def __init__(self, config):
         super().__init__(config)
         # 1. Transformer's backbone
@@ -145,11 +146,8 @@ class GraphGPTCausal(LlamaForCausalLM):
             if _use_dropout(self.config)
             else modeling_llama.LlamaModel
         )
-        if not config.causal_attention:
-            print(
-                f"\nMonkey Patch {LlamaModel.__name__}'s method `_update_causal_mask`!\n"
-            )
-            LlamaModel._update_causal_mask = _update_causal_mask
+        if not self.config.causal_attention:
+            print("\nSet attention mask to non-causal attention!\n")
         self.model = LlamaModel(config)
         self.smtp_inside = config.smtp_inside  # apply mask in side model
         self.smtp_power = 1
@@ -158,8 +156,7 @@ class GraphGPTCausal(LlamaForCausalLM):
         if config.embed_pdrop > 0:
             self.embed_dropout = nn.Dropout(p=config.embed_pdrop)
         # 1.2 Node/edge attributes stacking
-        if config.stack_method in {"short", "long"}:
-            self.stacked_feat_agg = StackedFeatAggregation(config)
+        self.stacked_feat_agg = StackedFeatAggregation(config)
         # 1.3 inputs got raw embed feature
         if config.embed_dim > 0:
             self.raw_embed_dropout = None
@@ -177,18 +174,17 @@ class GraphGPTCausal(LlamaForCausalLM):
                 config.embed_dim, config.hidden_size, bias=False
             )
         # 2. Optimization objective
-        if config.stack_method in {"short", "long"}:
-            print(
-                f"Next/Masked-(1)-token-prediction changed to next/masked-{config.next_n_token}-tokens-prediction!"
+        print(
+            f"Next/Masked-(1)-token-prediction changed to next/masked-{config.next_n_token}-tokens-prediction!"
+        )
+        if self.config.next_n_token > 1:
+            self.n_token_proj = nn.Linear(
+                config.hidden_size,
+                config.hidden_size * config.next_n_token,
+                bias=False,
             )
-            if self.config.next_n_token > 1:
-                self.n_token_proj = nn.Linear(
-                    config.hidden_size,
-                    config.hidden_size * config.next_n_token,
-                    bias=False,
-                )
-            else:
-                self.n_token_proj = nn.Identity()
+        else:
+            self.n_token_proj = nn.Identity()
         # 2.1 generative or discriminative
         self.use_generative = True
         self.use_discriminative = False
@@ -255,6 +251,7 @@ class GraphGPTCausal(LlamaForCausalLM):
         inputs_raw_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         label_mask: Optional[torch.Tensor] = None,
+        sample_wgt: Optional[torch.FloatTensor] = None,  # [bz], weight of sample
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -298,6 +295,8 @@ class GraphGPTCausal(LlamaForCausalLM):
             input_ids, inputs_embeds, inputs_raw_embeds, labels
         )
 
+        if not self.config.causal_attention:
+            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -315,19 +314,29 @@ class GraphGPTCausal(LlamaForCausalLM):
         gen_loss, gen_logits = None, None
         # 1. BELOW for generative pre-train, i.e., NTP/MTP/SMTP
         if self.use_generative:
-            hidden_states, labels = prepare_for_stacked_feat_labels(
-                self, raw_hidden_states, labels
+            hidden_states, labels, wgt = prepare_for_stacked_feat_labels(
+                self, raw_hidden_states, labels, sample_wgt
             )
+            # hidden_states: wgt is None -> [bz*seq*next_n, dim]; wgt is not None -> [M, dim], M is total # of masked tokens
             logits = self.lm_head(hidden_states)
 
             loss = None
             if labels is not None:
-                loss = _get_ce_loss(
-                    logits,
-                    labels,
-                    self.config.vocab_size,
-                    focal_gamma=self.config.focal_gamma,
-                )
+                if wgt is None:
+                    loss = _get_ce_loss(
+                        logits,
+                        labels,
+                        self.config.vocab_size,
+                        focal_gamma=self.config.focal_gamma,
+                    )
+                else:
+                    bz, seq, _ = raw_hidden_states.shape
+                    loss = _get_dlm_ce_loss(
+                        logits,
+                        labels,
+                        self.config.vocab_size,
+                        wgt=wgt,
+                    ) / (bz * seq * self.config.next_n_token)
             gen_loss, gen_logits = loss, logits
         # 2. BELOW for discriminative pre-train, i.e., CL
         dis_loss, dis_logits = None, None
@@ -369,11 +378,8 @@ class GraphGPTPosPred(LlamaForCausalLM):
             if _use_dropout(self.config)
             else modeling_llama.LlamaModel
         )
-        if not config.causal_attention:
-            print(
-                f"\nMonkey Patch {LlamaModel.__name__}'s method `_update_causal_mask`!\n"
-            )
-            LlamaModel._update_causal_mask = _update_causal_mask
+        if not self.config.causal_attention:
+            print("\nSet attention mask to non-causal attention!\n")
         self.model = LlamaModel(config)
         # 1.1 Embedding dropout
         if config.embed_pdrop > 0:
@@ -703,6 +709,8 @@ class GraphGPTPosPred(LlamaForCausalLM):
         # 1. run backbone transformer
         # position_ids = None
         # print(f"[DEBUG] position_ids:\n{position_ids}")
+        if not self.config.causal_attention:
+            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -831,11 +839,8 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
             if _use_dropout(self.config)
             else modeling_llama.LlamaModel
         )
-        if not config.causal_attention:
-            print(
-                f"\nMonkey Patch {LlamaModel.__name__}'s method `_update_causal_mask`!\n"
-            )
-            LlamaModel._update_causal_mask = _update_causal_mask
+        if not self.config.causal_attention:
+            print("\nSet attention mask to non-causal attention!\n")
         self.model = LlamaModel(config)
         # 1.1 Embedding dropout
         if config.embed_pdrop > 0:
@@ -874,6 +879,11 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
 
         self.pooling_method = config.pooling_method  # "last|sum|mean"
         print(f"Pooling in last layer is {self.pooling_method}!")
+        print(f"[BEFORE] Rotary Embedding is set to {self.model.rotary_emb}!")
+        # self.model.rotary_emb = utils_graphgpt.ResonanceLlamaRotaryEmbedding(
+        #     config=config
+        # )
+        print(f"[AFTER] Rotary Embedding is set to {self.model.rotary_emb}!")
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1044,6 +1054,9 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
             input_ids, inputs_embeds, inputs_raw_embeds=inputs_raw_embeds
         )
 
+        if not self.config.causal_attention:
+            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
+        # print(f"attention_mask: {attention_mask.shape}\n{attention_mask}")
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1068,6 +1081,10 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
         assert self.pooling_method == "last", f"{self.pooling_method}!='last'"
         # [N, seq, num_labels] -> [N, num_labels]
         pooled_logits = logits[
+            torch.arange(batch_size, device=logits.device), sequence_lengths
+        ]
+        # [N, seq, dim] -> [N, dim]
+        pooled_hidden_states = hidden_states[
             torch.arange(batch_size, device=logits.device), sequence_lengths
         ]
         # 1.2 Calculate logits for special tasks, e.g., token-lvl task
@@ -1097,6 +1114,7 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
             task_logits=pooled_logits.float(),
             past_key_values=outputs.past_key_values,
             hidden_states=hidden_states,
+            task_hidden_states=pooled_hidden_states,
             attentions=outputs.attentions,
         )
 
@@ -1599,6 +1617,8 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         # 1. run backbone transformer
         # position_ids = None
         # print(f"[DEBUG] position_ids: {position_ids}")
+        if not self.config.causal_attention:
+            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1820,10 +1840,32 @@ def _get_ce_loss(
     return loss
 
 
+def _get_dlm_ce_loss(
+    logits,
+    labels,
+    vocab_size,
+    *,
+    wgt,
+):
+    # print(f"[DEBUG] wgt: {wgt}, focal_gamma: {focal_gamma}")
+    # Flatten the tokens
+    logits = logits.view(-1, vocab_size)
+    labels = labels.view(-1)
+
+    labels = labels.to(logits.device)
+    loss_fct = CrossEntropyLoss(reduction="none")
+    loss = loss_fct(logits.float(), labels)
+    wgt1 = wgt.view(-1)
+    loss = (loss * wgt1).float().sum()
+    # convert logits to float before cross-entropy for molecule datasets like PCQM4M-v2, MOLPCBA and etc.
+    # because when batch-size too large, ce with fp16 leads to no decrease of loss
+    return loss
+
+
 def _get_cl_logits_loss(
     cl_proj: torch.nn.Module,
     raw_hidden_states: torch.Tensor,
-    input_ids: torch.Tensor,
+    input_ids: Optional[torch.Tensor],
     inputs_embeds: torch.Tensor,
     in_: torch.Tensor,
     pad_token_id: int,
@@ -1849,13 +1891,85 @@ def _get_cl_logits_loss(
     return loss, logits
 
 
-def _prepare_for_stacked_feat_labels_per_feat_lvl(
+def _prepare_for_logits_labels_per_seq_lvl(
+    hidden_states: torch.FloatTensor,
+    labels: torch.LongTensor,
+    *,
+    proj: torch.nn.Module,
+):
+    # i). obtain mask
+    if labels is not None:
+        mask = labels != -100  # [N, seq]
+    else:  # for inference: pred all tokens
+        mask = torch.ones(hidden_states.size()[:2], dtype=torch.bool)
+    # ii). deal hidden states: mask and reshape
+    # [N, seq, dim] -> [M, dim]
+    hidden_states = hidden_states[mask]
+    # [M, dim] -> [M, dim]
+    hidden_states = proj(hidden_states)
+    # iii). deal labels: mask and reshape
+    if labels is not None:
+        # [N, seq] -> [M]
+        labels = labels[mask]
+    # iv). obtain normalized wgt
+    wgt = None
+    if labels is not None:
+        wgt = mask.float()  # [N, seq]
+        wgt = wgt / (wgt.sum(dim=-1)[:, None] + _EPSILON)
+        # [N, seq, n_token] -> [M]
+        wgt = wgt[mask]
+    return hidden_states, labels, wgt
+
+
+def _prepare_for_stacked_feat_labels_per_mix_lvl(
+    hidden_states: torch.FloatTensor,
+    labels: torch.LongTensor,
+    *,
+    proj: torch.nn.Module,
+):
+    # per_seq_lvl vs per_feat_lvl::
+    # seq == node-idx & node-feat & edge-feat in one column, i.e., tokens all masked in one column
+    # feat == each token, i.e., either node-idx | node-feat | edge-feat
+    # use seq_lvl ONLY when tokens in one column is masked together to SAVE compute power
+    # Because in seq_lvl, `proj` is applied to each all-masked column (corresponding to non-masked labels)
+    # after filtering out non-masked input columns
+    # MIX-LVL: mix per-seq-lvl and per-feat-lvl
+    dim = hidden_states.shape[-1]  # [N, seq, dim]
+    # i). obtain mask
+    if labels is not None:
+        mask = labels != -100  # [N, seq, next_n]
+        mask_m = mask.any(dim=-1)  # [N, seq]
+        # mask_m -> seq-lvl mask
+        # mask -> feat-lvl mask
+        mask = mask[mask_m]  # [M, next_n]
+    else:  # for inference: pred all tokens
+        mask_m = torch.ones(hidden_states.size()[:2], dtype=torch.bool)
+    # ii). deal hidden states: mask and reshape
+    # [N, seq, dim] -> [M, dim]
+    hidden_states = hidden_states[mask_m]
+    # [M, dim] -> [M, dim*next_n]
+    hidden_states = proj(hidden_states)
+    # [M, dim*next_n] -> [M*next_n, dim]
+    hidden_states = hidden_states.reshape((-1, dim))
+    # iii). deal labels: mask and reshape
+    if labels is not None:
+        # 0.1 Converted by seq-lvl mask: [N, seq, next_n] -> [M, next_n]
+        labels = labels[mask_m]
+        # 0.2 Converted by feat-lvl mask: [M, next_n] -> [L]
+        labels = labels[mask]
+        # 0.3 Converted by feat-lvl mask: [M*next_n, dim] -> [L, dim]
+        hidden_states = hidden_states[mask.reshape(-1)]
+    return hidden_states, labels
+
+
+def _prepare_for_per_feat_lvl(
     hidden_states: torch.FloatTensor,
     labels: torch.LongTensor,
     *,
     proj: torch.nn.Module,
     num_feat: int,
 ):
+    # TODO: mix per-seq and per-feat lvl to boost speed
     batch_size, seq, dim = hidden_states.shape  # [N, seq, dim]
     hidden_states = proj(hidden_states)  # [N, seq, dim] -> [N, seq, dim*next_n]
     # i). obtain mask
@@ -1868,6 +1982,19 @@ def _prepare_for_stacked_feat_labels_per_feat_lvl(
     # iii). deal labels: mask
     # [N, seq, next_n] -> [M]
     labels = labels[mask_m]
+    return hidden_states, labels, mask_m
+
+
+def _prepare_for_stacked_feat_labels_per_feat_lvl(
+    hidden_states: torch.FloatTensor,
+    labels: torch.LongTensor,
+    *,
+    proj: torch.nn.Module,
+    num_feat: int,
+):
+    hidden_states, labels, mask_m = _prepare_for_per_feat_lvl(
+        hidden_states, labels, proj=proj, num_feat=num_feat
+    )
     # iv). obtain normalized wgt
     wgt = mask_m.float()  # [N, seq, n_token]
     wgt = wgt / (wgt.sum(dim=-1).sum(dim=-1)[:, None, None] + _EPSILON)
@@ -1876,27 +2003,20 @@ def _prepare_for_stacked_feat_labels_per_feat_lvl(
     return hidden_states, labels, wgt
 
 
-def _prepare_for_logits_labels_per_seq_lvl(
+def _prepare_for_stacked_feat_labels_wgt_per_feat_lvl(
     hidden_states: torch.FloatTensor,
     labels: torch.LongTensor,
     *,
     proj: torch.nn.Module,
+    num_feat: int,
+    wgt: torch.FloatTensor,
 ):
-    # i). obtain mask
-    mask = labels != -100  # [N, seq]
-    # ii). deal hidden states: mask and reshape
-    # [N, seq, dim] -> [M, dim]
-    hidden_states = hidden_states[mask]
-    # [M, dim] -> [M, dim]
-    hidden_states = proj(hidden_states)
-    # iii). deal labels: mask and reshape
-    # [N, seq] -> [M]
-    labels = labels[mask]
-    # iv). obtain normalized wgt
-    wgt = mask.float()  # [N, seq]
-    wgt = wgt / (wgt.sum(dim=-1)[:, None] + _EPSILON)
+    hidden_states, labels, mask_m = _prepare_for_per_feat_lvl(
+        hidden_states, labels, proj=proj, num_feat=num_feat
+    )
+    # iv). obtain wgt
     # [N, seq, n_token] -> [M]
-    wgt = wgt[mask]
+    wgt = wgt[mask_m]
     return hidden_states, labels, wgt
 
 
@@ -1904,6 +2024,7 @@ def prepare_for_stacked_feat_labels(
     self,
     hidden_states: Optional[torch.FloatTensor] = None,
     labels: Optional[torch.LongTensor] = None,
+    wgt: Optional[torch.FloatTensor] = None,
 ):
     if self.config.stack_method == "long":
         hidden_states, labels, wgt = _prepare_for_stacked_feat_labels_per_feat_lvl(
@@ -1913,28 +2034,24 @@ def prepare_for_stacked_feat_labels(
             num_feat=self.config.next_n_token,
         )
     # the version below can save lots of GPU memory and boost speed
-    if self.config.stack_method == "short":
-        dim = hidden_states.shape[-1]  # [N, seq, dim]
-        # i). obtain mask
-        if labels is not None:
-            labels_m = labels[:, :, 0]  # [N, seq, next_n] -> [N, seq]
-            mask_m = labels_m != -100  # [N, seq]
-        else:  # for inference
-            mask_m = torch.ones(hidden_states.size()[:2], dtype=torch.bool)
-        # ii). deal hidden states: mask and reshape
-        # [N, seq, dim] -> [M, dim]
-        hidden_states = hidden_states[mask_m]
-        # [M, dim] -> [M, dim*next_n]
-        hidden_states = self.n_token_proj(hidden_states)
-        # [M, dim*next_n] -> [M*next_n, dim]
-        hidden_states = hidden_states.reshape((-1, dim))
-        # iii). deal labels: mask and reshape
-        if labels is not None:
-            # [N, seq, next_n] -> [M, next_n]
-            labels = labels[mask_m]
-            # [M, next_n] -> [M*next_n]
-            labels = labels.reshape(-1)
-    return hidden_states, labels
+    if self.config.stack_method == "short" and wgt is None:
+        hidden_states, labels = _prepare_for_stacked_feat_labels_per_mix_lvl(
+            hidden_states,
+            labels,
+            proj=self.n_token_proj,
+        )
+    if self.config.stack_method == "short" and wgt is not None:
+        seq = hidden_states.size(1)
+        # [N] -> [N, seq, n_token]
+        wgt = wgt[:, None, None].repeat(1, seq, self.config.next_n_token)
+        hidden_states, labels, wgt = _prepare_for_stacked_feat_labels_wgt_per_feat_lvl(
+            hidden_states,
+            labels,
+            proj=self.n_token_proj,
+            num_feat=self.config.next_n_token,
+            wgt=wgt,
+        )
+    return hidden_states, labels, wgt
 
 
 def transform_inputs_raw_embeds(self, inputs_raw_embeds, dtype):

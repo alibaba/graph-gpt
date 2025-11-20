@@ -1,33 +1,18 @@
 import os
-import copy
-import random
-import torch
-import fire
+
+import dataclasses
 import multiprocessing as mp
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.cuda.amp import GradScaler
 import deepspeed
 from datetime import datetime
-from typing import Optional, List
 from pprint import pprint, pformat
-from torch.utils.data import DataLoader, IterableDataset
-
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except ModuleNotFoundError:
-    from tensorboardX import SummaryWriter
-from timm.models import load_checkpoint
-from timm.utils.model import unwrap_model, get_state_dict
+from torch.utils.data import IterableDataset
 
 import sys
-
-# sys.path.insert(0, "..")
-sys.path.insert(0, ".")  # for submit to PAI
+sys.path.insert(0, ".")
 # put below `src.data` import above other `src.` to avoid `common_io` import error
-from src.data import collator, vocab_builder, tokenizer, read_dataset
+from src.data import collator, vocab_builder, tokenizer, read_dataset, dataset_iterable
 from src.models import (
-    GraphGPTConfig,
+    convert_to_legacy_config,
     GraphGPTTaskModel,
     GraphGPTDenoisingRegressionDoubleHeadsModel,
 )
@@ -35,360 +20,161 @@ from src.utils import (
     patch_utils,
     conf_utils,
     loader_utils,
+    log_eval_dump_utils,
     modules_utils,
     misc_utils,
     loss_utils,
-    metrics_utils,
     print_trainable_parameters,
-    print_params,
     inspect_tokenization_results,
-    get_metrics,
-    ogb_utils,
-    evaluate_ogb,
-    format_ogb_output_for_csv,
-    worker_init_fn_seed,
+    opt_utils,
+    training_utils,
 )
+from src.utils.log_eval_dump_utils import ft_evaluate as evaluate
+from src.conf import (
+    Config,
+    OptimizingStats,
+    TrainingStats,
+    EMAConfig,
+    EMAStats,
+    LoaderStats,
+    base_configs,
+)
+
+# Hydra imports
+import hydra
+from omegaconf import OmegaConf
 
 ModelEmaV3 = patch_utils.ModelEmaV3
 
 dict_models = {
-    "graphgpt": (GraphGPTTaskModel, GraphGPTConfig),
-    "graphgpt-denoise": (GraphGPTDenoisingRegressionDoubleHeadsModel, GraphGPTConfig),
+    "graphgpt": GraphGPTTaskModel,
+    "graphgpt-denoise": GraphGPTDenoisingRegressionDoubleHeadsModel,
 }
 
 
-@torch.no_grad()
-def evaluate(
-    model,
-    problem_type,
-    device,
-    num_labels,
-    loader,
-    task_level,
-    dataset_name,
-    metric_type="",
-    ds_split="train",
-):
-    model.eval()
-    # model.train()
-    # print(f"Enabling dropout during inference ... ")
-    # if model.embed_dropout is not None:
-    #     model.embed_dropout.train()  # no use for pcqm4m-v2
-    #     print(f"Enabling embed dropout: {model.embed_dropout} during inference ... ")
-    if not metric_type:
-        metric_type = problem_type
-    cls_metrics = get_metrics(metric_type, device, num_labels=num_labels)
-    test_loss = 0
-    for j, test_data in enumerate(loader, 1):
-        input_ids = test_data["input_ids"].to(device)
-        attention_mask = test_data["attention_mask"].to(device)
-        position_ids = test_data["position_ids"].to(device)
-        task_labels = test_data[f"{task_level}_labels"].to(device)
-        task_labels = (
-            task_labels.float()
-            if problem_type == "multi_label_classification"
-            else task_labels
-        )
-        pretrain_labels = test_data["labels"].to(device)
-        cls_idx = test_data["cls_idx"].to(device) if "cls_idx" in test_data else None
-        inputs_raw_embeds = None
-        if "embed" in test_data:
-            inputs_raw_embeds = test_data["embed"].to(device)
-        sample_wgt = None
-        if "wgt" in test_data:
-            sample_wgt = test_data["wgt"].to(device)
-        res = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            task_labels=task_labels,
-            pretrain_labels=pretrain_labels,
-            cls_idx=cls_idx,
-            inputs_raw_embeds=inputs_raw_embeds,
-            sample_wgt=sample_wgt,
-            position_ids=position_ids,
-        )  # Perform a single forward pass.
-        # record loss
-        test_loss += res.task_loss
-        # record metrics
-        # `idx` is finalized inside `collator`
-        idx = test_data["idx"].to(device)
-        if "raw_node_idx" in test_data:
-            idx = (idx, test_data["raw_node_idx"].to(device))
-        cls_metrics.update(res.task_logits, task_labels, idx)
-    print(f"[{datetime.now()}][FINISHED][EVAL] input_ids shape: {input_ids.shape}")
-    test_loss = test_loss / j
-    cls_metrics.compute()
-    ogb_input_dict = cls_metrics.to_dict()
-    if dist.get_world_size() > 1:
-        print(f"[{datetime.now()}][GATHERING] start gathering result tensors ...")
-        # gather results from different gpus if there are more than 1 gpu
-        # refer to: https://stackoverflow.com/a/71433508/4437068
-        for key, val in ogb_input_dict.items():
-            ogb_input_dict[key] = tensor_out = misc_utils.all_gather(val.to(device))
-            cnt_nans = torch.isnan(tensor_out).sum().item()
-            print(
-                f"[{datetime.now()}] Update ogb_input_dict element {key} with val of shape {tensor_out.shape} of type {tensor_out.dtype} of NANs {cnt_nans}"
-            )
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
+def train(cfg: Config):
+    cfg = base_configs.update_cfg_with_saved_cfg_yaml(cfg)
+    base_configs.update_odps_cfg_for_ft_infer(cfg)
+    base_configs.update_finetune_cfg(cfg)
+    # extract main config component
+    token_cfg = cfg.tokenization
+    model_cfg = cfg.model
+    train_cfg = cfg.training
+    # extract sub-configs
+    data_cfg = token_cfg.data
+    sched_cfg = train_cfg.schedule
+    optim_cfg = train_cfg.optimizer
+    train_cfg.pretrain_mode = False
+    data_cfg.return_valid_test = True
+    data_cfg.odps.mode = "all"
 
-    if dataset_name in ogb_utils._eval._register_map:
-        if (ds_split == "train") and (
-            dataset_name in {"ogbl-citation2", "ogbl-wikikg2"}
-        ):
-            # ONLY these ds' valid/test shall be evaluated
-            ogb_eval_res = None
-        else:
-            ogb_eval_res = evaluate_ogb(dataset_name, ogb_input_dict)
-    else:
-        ogb_eval_res = cls_metrics.results_in_dict()
-    return test_loss, cls_metrics, ogb_eval_res, ogb_input_dict
+    # extrac params from configs
+    pretrain_cpt = train_cfg.pretrain_cpt
+    output_dir = train_cfg.output_dir
 
+    # set some configs
+    if model_cfg.model_type == "graphgpt-denoise":
+        train_cfg.finetune.task_ratio = 0.5
 
-def train(
-    output_dir: str = "../exp/models/graph_llama_classification_test",
-    pretrain_cpt: str = "",
-    data_dir: str = "../data/TUDataset",
-    dataset_name: str = "reddit_threads",
-    save_pred: int = 0,  # whether to save prediction results
-    # tokenization config
-    tokenizer_class: str = None,  # GSTTokenizer|StackedGSTTokenizer
-    tokenization_config: str = "reddit_tokenization_config.json",
-    stack_method: str = None,
-    attr_assignment: str = "first",
-    attr_shuffle: int = 0,
-    # training config
-    optimization_config: str = "",
-    epochs: int = 1,
-    warmup_epochs: float = 0.25,
-    batch_size: int = 128,
-    batch_size_eval: int = 16,  # small to avoid OOM when evaluating
-    pad_to_multiple_of: int = 8,
-    lr: float = 0.0001,
-    min_lr: float = 0,
-    eps: float = 1e-8,
-    betas: List[float] = (0.9, 0.95),
-    weight_decay: float = 0.1,
-    max_grad_norm: float = 1.0,
-    logging_steps: int = 100,
-    num_workers: int = 8,  # num of workers for data processing in DataLoader
-    freeze: int = -1,  # how to freeze the params of backbone architecture: -1->no, 0->embedding
-    # eval config
-    infer_only: int = 0,
-    eval_only: int = 0,
-    epoch_per_eval: int = 1,
-    k_samplers: int = 262144,  # 2^14=16384  2^16=65536  2^18=262144
-    true_valid: int = -1,
-    # deepspeed config
-    deepspeed_config: str = "",
-    gradient_accumulation_steps: int = 1,
-    local_rank: int = 0,
-    # architecture cofig
-    model_type: str = "graphgpt",  # graphgpt|graphgpt2|graphbert
-    model_config: str = "",
-    vocab_size: int = None,  # defaults to 32000
-    hidden_size: int = 128,  # defaults to 4096
-    num_hidden_layers: int = 2,  # defaults to 32
-    intermediate_size: int = 0,  # defaults to 11008
-    num_attention_heads: int = 0,  # defaults to 32
-    hidden_act: str = "silu",  # defaults to "silu"
-    stacked_feat_agg_method: str = "gated",  # sum|gated
-    max_position_embeddings: int = 128,  # defaults to 2048
-    initializer_range: float = 0.02,  # defaults to 0.02
-    causal_attention: int = 1,  # use causal or bi attention
-    attention_dropout: float = 0,  # used for transformers v>=4.38
-    embed_dropout: float = 0,
-    path_dropout: float = 0,
-    mlp_dropout: float = 0,
-    layer_scale_init_value: float = 0,
-    use_ema: int = 0,
-    ema_decay: float = 0.9999,
-    max_length: int = 1024,
-    # supervised task config
-    num_labels: Optional[int] = 2,
-    mlp: Optional[List[int]] = tuple(),
-    pooling_method: str = "last",
-    dropout: float = 0,  # dropout for mlp layers
-    problem_type: Optional[
-        str
-    ] = None,  # single_label_classification|multi_label_classification|regression
-    metric_type: str = "",
-    loss_type: Optional[str] = "",  # auc
-    task_level: Optional[str] = "graph",  # pretrain|graph|edge|node
-    task_ratio: float = 1,  # multi-task loss setting, ratio of sv task
-    # odps config
-    tables: str = "",  # ODPS input table names
-    outputs: str = "",  # ODPS output table names
-    # others
-    samples_per_eval: int = 0,
-    seed: int = -1,
-):
-    if infer_only:
-        eval_only = 1
-    if seed < 0:
-        seed = int(datetime.now().date().strftime("%Y%m%d")[::-1])
     use_tb_writer = False
-    use_ema = bool(use_ema)
-    ema_file = "model_ema.pt"
-    ema_file_best = "model_ema_best.pt"
-    ema_best_res = None
-    ema_best_flag = False
-    use_deepspeed = len(deepspeed_config) > 0
+    ema_cfg = EMAConfig(
+        use_ema=optim_cfg.use_ema,
+        ema_file="model_ema.pt",
+        ema_file_best="model_ema_best.pt",
+    )
+    ema_stats = EMAStats(ema_cfg=ema_cfg)
 
-    if (intermediate_size == 0) and (num_attention_heads == 0):
-        (
-            hidden_size,
-            intermediate_size,
-            num_attention_heads,
-            num_hidden_layers,
-        ) = modules_utils.set_up_model_architect(
-            hidden_size=hidden_size, num_hidden_layers=num_hidden_layers
-        )
-    aux_ratio, task_ratio = 1 - task_ratio, task_ratio
-    gpu_name = torch.cuda.get_device_name()
-
-    GraphModel, GraphModelConfig = dict_models[model_type]
-    raw_pretrain_cpt = pretrain_cpt
+    train_cfg.use_deepspeed = use_deepspeed = len(train_cfg.deepspeed_conf_file) > 0
     if os.path.exists(os.path.join(output_dir, "log.csv")):
         print(
-            f"log file {os.path.join(output_dir, 'log.csv')} exists, resume training from {output_dir} instead of initializing from pre-train ckp {pretrain_cpt}!"
+            f"log file\n{os.path.join(output_dir, 'log.csv')}\nexists, resume training from\n{output_dir}\ninstead of initializing from pre-train ckp\n{pretrain_cpt}"
         )
         pretrain_cpt = output_dir
-    # 0. init distributed train and get gpu/device info
-    dist.init_process_group(backend="nccl", init_method="env://")
-    dist.barrier()
-    world_size = dist.get_world_size()
-    rank = dist.get_rank()
-    local_rank = os.environ.get("LOCAL_RANK")
-    print(f"\nworld size: {world_size}, rank: {rank}, local rank: {local_rank}")
-    rnd_seed = torch.random.initial_seed() - rank
-    random.seed(rnd_seed)
-    print(f"seed `random` with {rnd_seed}")
-    params = print_params(**locals())
+    # 0. set-up distributed training
+    tmp_env = misc_utils.set_dist_env(train_cfg)
+    world_size = train_cfg.distributed.world_size
+    rank = train_cfg.distributed.rank
 
     # 1. prepare data & tokenizer
-    # 1.1 set-up tokenization config
-    task_type = task_level
-    tokenizer_config = conf_utils.parse_tokenization_config_for_ft(
-        tokenization_config=tokenization_config,
-        pretrain_cpt=pretrain_cpt,
-        data_dir=data_dir,
-        dataset_name=dataset_name,
-        task_type=task_type,
-        tokenizer_class=tokenizer_class,
-        attr_assignment=attr_assignment,
-        attr_shuffle=attr_shuffle,
-    )
-    if "pcqm4m" in tokenizer_config["name_or_path"]:
-        if model_type == "graphgpt-denoise":
-            tokenizer_config["semantics"]["node"].update(
-                {"embed": "pos", "embed_dim": 3}
-            )
-            aux_ratio, task_ratio = 0.5, 0.5
-        else:
-            tokenizer_config["semantics"]["node"].pop("embed", None)
-            tokenizer_config["semantics"]["node"].pop("embed_dim", None)
-            tokenizer_config["semantics"]["edge"].pop("embed", None)
-            tokenizer_config["semantics"]["edge"].pop("embed_dim", None)
+    # 1.1 read configuration
+    base_configs.init_stacked_feat(cfg)
+    base_configs.init_embed_dim(cfg)
+    base_configs.sync_config(cfg)
+
+    tokenizer_config = conf_utils.convert_to_legacy_tokenization_config(cfg)
+    if token_cfg.semantics.node.embed is None:
+        tokenizer_config["semantics"]["node"].pop("embed", None)
+        tokenizer_config["semantics"]["node"].pop("embed_dim", None)
+    if token_cfg.semantics.edge.embed is None:
+        tokenizer_config["semantics"]["edge"].pop("embed", None)
+        tokenizer_config["semantics"]["edge"].pop("embed_dim", None)
     pprint(tokenizer_config)
-    if tokenizer_config["tokenizer_class"] == "StackedGSTTokenizer":
-        attr_dim = (
-            tokenizer_config["semantics"]["edge"]["dim"]
-            + tokenizer_config["semantics"]["node"]["dim"]
-        )
-        assert stack_method in ("short", "long", None), f"stack_method: {stack_method}"
-        if tokenizer_config["structure"]["edge"]["remove_edge_type_token"]:
-            stacked_feat = 1 + attr_dim
-        else:
-            stacked_feat = 2 + attr_dim
-    else:
-        stacked_feat = 1
-    embed_dim = tokenizer_config["semantics"]["node"].get(
-        "embed_dim", 0
-    ) + tokenizer_config["semantics"]["edge"].get("embed_dim", 0)
-    print(f"stacked_feat: {stacked_feat}, embed_dim: {embed_dim}")
+
     # 1.2 get graph dataset
     train_dataset, valid_dataset, test_dataset, raw_dataset = read_dataset(
-        name=dataset_name,
-        # for local graph data file reading
-        data_dir=data_dir,
-        sampling_config=tokenizer_config["sampling"],
-        # general
-        pretrain_mode=False,
-        return_valid_test=True,
+        name=data_cfg.dataset,
+        data_cfg=data_cfg,
+        train_cfg=train_cfg,
         with_prob=False,
-        # for odps data reading
-        table=tables,
-        edge_dim=tokenizer_config["semantics"]["edge"]["dim"],
-        node_dim=tokenizer_config["semantics"]["node"]["dim"],
-        # others
-        mode="all",
-        supervised_task=task_level,
-        true_valid=true_valid,
+        true_valid=train_cfg.ft_eval.true_valid,
     )
+    # inspect data points
     for dataset in [train_dataset, valid_dataset, test_dataset]:
         if isinstance(dataset, IterableDataset):
             print(next(iter(dataset)))
         else:
             idx = dataset.sampler[0]
             print(dataset[idx])
-    # 1.3 build vocab and then init tokenizer from the tokenization config
-    vocab_builder.build_vocab(raw_dataset, tokenizer_config, rank)
+
+    # 1.3 build vocab if needed
+    vocab_builder.build_vocab(raw_dataset, tokenizer_config, cfg.training.distributed.rank)
+
+    # 1.4 init tokenizer from the tokenization config
     tokenizer_cls = getattr(tokenizer, tokenizer_config["tokenizer_class"])
     gtokenizer = tokenizer_cls(
         tokenizer_config,
-        stack_method=stack_method,
-        loss_type=loss_type,
-        num_labels=num_labels,
+        stack_method=model_cfg.graph_input.stack_method,
+        loss_type=model_cfg.ft_head.loss_type,
+        num_labels=model_cfg.ft_head.num_labels,
     )  # loss_type & num_labels -> kwargs
+
     inspect_tokenization_results(train_dataset, gtokenizer)
-    # 1.4 get train/valid/test sampler
-    (
-        train_cnt,
-        train_sampler,
-        train_sampler_for_eval,
-        train_shuffle,
-        valid_cnt,
-        valid_sampler,
-        valid_sampler_for_eval,
-        test_cnt,
-        test_sampler,
-        test_sampler_for_eval,
-        steps_per_epoch,
-    ) = loader_utils.get_train_valid_test_sampler(
-        train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-        test_dataset=test_dataset,
-        batch_size=batch_size,
-        k_samplers=k_samplers,
-        world_size=world_size,
-        rank=rank,
-        num_workers=num_workers,
+
+    # 1.5 get train/valid/test sampler
+    ft_sampler = loader_utils.FTSamplerConfig(
+        train=loader_utils.SamplerConfig(ds=train_dataset),
+        valid=loader_utils.SamplerConfig(ds=valid_dataset),
+        test=loader_utils.SamplerConfig(ds=test_dataset),
     )
+    steps_per_epoch = loader_utils.set_train_valid_test_sampler(ft_sampler, train_cfg)
     print(f"steps_per_epoch: {steps_per_epoch}")
+
+    ft_sampler.enlarge_valid_test_samples(train_cfg.ft_eval.eval_only, 1)
     # due to `drop_last` in train_loader, use //
-    samples_per_gpu = (len(train_sampler) if train_sampler else train_cnt) // world_size
-    total_num_steps = epochs * (samples_per_gpu // batch_size)
-    warmup_num_steps = int(warmup_epochs * (samples_per_gpu // batch_size))
-    print(
-        f"\ntotal_num_steps: {total_num_steps}\nwarmup_num_steps: {warmup_num_steps}\n"
-    )
+    samples_per_gpu = (len(ft_sampler.train.sampler) if ft_sampler.train.sampler else ft_sampler.train.cnt) // world_size
+    base_configs.update_ft_num_steps(train_cfg, samples_per_gpu)
 
     # 2. set model
     # 2.1 init model config
-    config = conf_utils.parse_model_config_for_ft(loss_utils=loss_utils, **locals())
+    model_cfg = modules_utils.set_ft_model_config(cfg, gtokenizer)
+    config = convert_to_legacy_config(model_cfg)
     print(f"\nFinal model config for supervised task:\n{pformat(config)}\n")
     # 2.2 create model
     if use_deepspeed:
         deepspeed.init_distributed(
             dist_backend="nccl", rank=rank, world_size=world_size
         )
-    model = GraphModel(config)
+    model = dict_models[model_cfg.model_type](config)
+    if hasattr(ft_sampler.train.ds, "dict_bounds"):  # for PCQM4M-v2 dataset ONLY
+        model.dict_bounds = ft_sampler.train.ds.dict_bounds
     model.gradient_checkpointing_enable()
     # silence the warnings. Please re-enable for inference!
     model.config.use_cache = False
-    if freeze > -1:  # 0->freeze embedding; 1->embed+1st layer
-        modules_utils.freeze_llama_layers(model, freeze)
+    if train_cfg.finetune.freeze > -1:  # 0->freeze embedding; 1->embed+1st layer
+        modules_utils.freeze_llama_layers(model, train_cfg.finetune.freeze)
     model.config.num_params = print_trainable_parameters(model)
-    # 2.21 load from ckp IF provided existing ckp and NOT resume from the ckp
+    # 2.3 load from ckp IF provided existing ckp and NOT resume from the ckp
     model = loader_utils.load_from_ckp(
         misc_utils=misc_utils,
         pretrain_cpt=pretrain_cpt,
@@ -398,10 +184,11 @@ def train(
         skip_keys=False,
     )
     print(model)
-    model_ema = None
-    if use_ema:
-        model_ema = ModelEmaV3(model, decay=ema_decay)
-    # 2.3 Create optimizer (load optimization config if given)
+
+    # 3. Setup training::optimizer (load optimization config if given)
+    # 3.1 set main task, aux task ratio
+    base_configs.set_finetune_cfg(train_cfg.finetune)
+    # 3.2 Create optimizer (load optimization config if given)
     # obtain layerwise lr
     model_parameters = model.parameters()
     # model_parameters = loss_utils.get_layerwise_param_groups(model, lr, 0.95)
@@ -410,7 +197,7 @@ def train(
             ds_config,
             non_ds_scheduler,
             scheduler_conf,
-        ) = conf_utils.parse_deepspeed_config_for_ft(loss_utils=loss_utils, **locals())
+        ) = conf_utils.parse_deepspeed_config_for_ft(train_cfg, loss_utils)
         model, optimizer, _, lr_scheduler = deepspeed.initialize(
             model=model,
             model_parameters=model_parameters,
@@ -419,52 +206,53 @@ def train(
             mpu=None,
             dist_init_required=False,
         )
-        device = model.device
+        opt_stats = OptimizingStats(optimizer, lr_scheduler)
     else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = DDP(model.to(device), find_unused_parameters=False)
-        optimizer = torch.optim.AdamW(
-            model_parameters, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay
+        model, opt_stats = opt_utils.initialize_optimizer(
+            model=model,
+            model_parameters=model_parameters,
+            training=train_cfg,
+            loss_utils=loss_utils,
         )
-        lr_scheduler_generator, _ = loss_utils.set_py_scheduler(
-            "OneCycleLR",
-            {"scheduler": {"params": {}}},
-            max_lr=lr,
-            min_lr=min_lr,
-            total_steps=total_num_steps,
-            pct_start=warmup_num_steps / total_num_steps,
-            last_step_index=-1,
-        )
-        lr_scheduler = lr_scheduler_generator(optimizer)
-        # Creates a GradScaler once at the beginning of training.
-        scaler = GradScaler()
-    if use_ema:
-        model_ema.module.to(device=device)
-        emb = model_ema.module.model.embed_tokens.weight.data
-        print(f"[Debug] model-ema embedding_params:\n{emb}\n{emb.shape}")
-    # 2.4 Load model parameters and optimizer stats from ckp IF resuming from current ckp
-    if (len(pretrain_cpt) > 0) and (pretrain_cpt == output_dir) and (not eval_only):
-        ckp, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt)
-        print(f"Loading pretrained weights from ckp {ckp}")
+    device = model.device
+    print(f"optimizer: {opt_stats.optimizer}")
+    print(f"[{datetime.now()}] Finish -> 3. set optimizer")
+    ema_stats.init_ema(model, ModelEmaV3, optim_cfg.ema_decay)
+    ema_stats.ema2device(device, ema_cfg.use_ema)
+
+    # 4. SET initial status
+    # 4.1 Resuming: load model parameters and optimizer stats from ckp from current ckp
+    if (len(pretrain_cpt) > 0) and (pretrain_cpt == output_dir) and (not train_cfg.ft_eval.eval_only):
+        ckp, _ = misc_utils.get_latest_ckp(pretrain_cpt)
         if use_deepspeed:
+            print(f"Resuming: Load weights from {ckp} with deepspeed API.")
             model.load_checkpoint(ckp)
         else:
             misc_utils.load_ddp_ckp(
-                ckp, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler
+                ckp,
+                model=model,
+                optimizer=opt_stats.optimizer,
+                lr_scheduler=opt_stats.lr_scheduler,
             )
         print(
-            f"After loading weights from ckp:\n{model.module.config}\nnum_labels: {model.module.num_labels}\nmodel-type: {model.module.dtype}\n\n{model.module}"
+            f"After loading weights from ckp:\n{model.module.config}\n"
+            f"num_labels: {model.module.num_labels}\nmodel-type: {model.module.dtype}\n\n{model.module}"
         )
-        if model_ema is not None:
-            ema_ckp = os.path.join(output_dir, ema_file)
-            load_checkpoint(model_ema.module, ema_ckp, use_ema=True)
-            print(f"load model_ema ckp from {ema_ckp}")
-    if (rank == 0) and (not eval_only):
-        model.module.config.save_pretrained(output_dir)
-    # 3. set initial status
-    # 3.0 set initial condition of optimization, either resuming from ckp or starting from scratch
+        ema_stats.load_ema_ckp(output_dir)
+
+    if (train_cfg.distributed.rank == 0) and (not train_cfg.ft_eval.eval_only):
+        try:
+            model.module.config.save_pretrained(output_dir)
+        except AttributeError:
+            print("In local test setting!!!\n" * 5)
+            model.config.save_pretrained(output_dir)
+        print(
+            f"[{datetime.now()}] Finish -> Dump model config to `{output_dir}/config.json`"
+        )
+
+    # 4.2 set initial condition of training, either resuming from ckp or starting from scratch
     (
-        last_step_index,
+        _,
         ep_init,
         j_init,
         ls_log,
@@ -475,69 +263,51 @@ def train(
         pretrain_cpt=pretrain_cpt,
         output_dir=output_dir,
         steps_per_epoch=steps_per_epoch,
-        eval_only=eval_only,
+        eval_only=train_cfg.ft_eval.eval_only,
     )
 
-    # 3.1 init collator
-    collator_fn = collator.DataCollatorForGSTCausal(
+    # 4.3 init collator
+    collator_fn = collator.DataCollatorForGST(
         tokenizer=gtokenizer,
-        max_length=max_length,
-        pad_to_multiple_of=pad_to_multiple_of,
+        max_length=train_cfg.max_length,
+        pad_to_multiple_of=train_cfg.pad_to_multiple_of,
         return_tensors="pt",
         is_training=False,
     )
-    num_workers_eval = min(num_workers, 16)
-    train_loader_for_eval, valid_loader, test_loader = loader_utils.get_eval_loader(
-        train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-        test_dataset=test_dataset,
-        batch_size_eval=batch_size_eval,
-        train_sampler_for_eval=train_sampler_for_eval,
-        valid_sampler=valid_sampler,
-        test_sampler=test_sampler,
-        num_workers_eval=num_workers_eval,
-        collator_fn=collator_fn,
+    print(f"[{datetime.now()}] Finish -> 4.3 init collator")
+    # 4.4 set-up loader
+    # 4.41 set-up valid/test loader and evaluate before training
+    train_cfg.num_workers_eval = min(train_cfg.num_workers, 16)
+    train_loader_for_eval, valid_loader, test_loader = loader_utils.get_eval_loader(ft_sampler, train_cfg, collator_fn)
+
+    # 4.42 dump ds config and initialize tensorboard in `worker 0`
+    tb_writer = log_eval_dump_utils.ft_dump_cfg_and_init_tb(
+        model, use_deepspeed, use_tb_writer, output_dir, train_cfg.ft_eval.eval_only, scheduler_conf
     )
 
-    tb_writer = None
-    if (rank == 0) and (not eval_only):
-        tmp_ds_config = None
-        if use_deepspeed:
-            tmp_ds_config = copy.deepcopy(model.config)
-            tmp_ds_config.update(scheduler_conf)
-        conf_utils.dump_all_conf(**locals())
-
-        if use_tb_writer:
-            # note: ONLY worker 0 write summary
-            # flush_secs: automatic flush, default 120s
-            # max_queue: queue size for storing events, default 10; >10 will flush data once to filesystem
-            summary_dir = os.environ.get(
-                "SUMMARY_DIR", os.path.join(output_dir, "summary")
-            )
-            tb_writer = SummaryWriter(log_dir=summary_dir, max_queue=30, flush_secs=120)
-            print(f"start logging in dir: {summary_dir}")
-
-    # 4. Training & Inferring
-    i = 0
+    # 4. Training & Inferring ...
+    print(f"[{datetime.now()}] Training start with j_init {j_init} and ep_init {ep_init} ...")
     j = j_init
-    print(
-        f"[{datetime.now()}] Training start with j_init {j_init} and ep_init {ep_init} ..."
+
+    train_stats = TrainingStats(
+        device=device,
+        has_embeds_input=model_cfg.graph_input.embed_dim > 0,
+        use_deepspeed=use_deepspeed,
+        epoch_start=ep_init,
+        j=j,
+        ls_log=ls_log,
+        ls_loss=ls_loss,
+        ls_result=ls_result,
     )
-    if not eval_only:
-        print(f"[{datetime.now()}] running eval before training starts ...")
+
+    if not train_cfg.ft_eval.eval_only:
+        print(f"[{datetime.now()}] Eval before training starts ...")
         val_loss, val_cls_metrics, val_ogb_eval_res, val_triplet = evaluate(
-            model,
-            problem_type,
-            device,
-            num_labels,
-            valid_loader,
-            task_level,
-            tokenizer_config["dataset"],
-            metric_type=metric_type,
-            ds_split="valid",
+            model, valid_loader, cfg, "valid"
         )
         print(
-            f"[{datetime.now()}] tr_loss: {val_loss}\ntr_cls_metrics: {val_cls_metrics.results_in_details()}\ntr_ogb_eval_res: {val_ogb_eval_res}, tr_triplet: {val_triplet}"
+            f"[{datetime.now()}] tr_loss: {val_loss}\ntr_cls_metrics: {val_cls_metrics.results_in_details()}\n"
+            f"tr_ogb_eval_res: {val_ogb_eval_res}, tr_triplet: {val_triplet}"
         )
         if rank == 0:
             misc_utils.save_all(
@@ -545,310 +315,71 @@ def train(
                 model,
                 epoch=-1,
                 save_model=False,
-                ls_log=None,
-                ls_result=None,
-                ls_loss=None,
-                tr_dict=None,
-                val_dict=val_triplet if save_pred else None,
-                test_dict=None,
+                val_dict=val_triplet if train_cfg.ft_eval.save_pred else None
             )
-        ema_best_res = val_ogb_eval_res
-    if eval_only:
-        ep_init = max(ep_init - 1, epochs - 1)
+        ema_stats.ema_best_res = val_ogb_eval_res
+    if train_cfg.ft_eval.eval_only:
+        ep_init = max(ep_init - 1, train_cfg.schedule.epochs - 1)
+        train_stats.epoch_start = ep_init
         print(
-            f"[{datetime.now()}] In eval only mode, ep_init: {ep_init}, epochs: {epochs}!"
+            f"[{datetime.now()}] EVAL only mode, ep_init: {ep_init}, epochs: {sched_cfg.epochs}!"
         )
-    for epoch in range(ep_init, epochs):
-        if not eval_only:
-            model.train()
-            print(
-                f"Re-initialize train-loader with shuffled sampler and reset dataset!"
+    model.train()
+    if not train_cfg.ft_eval.eval_only:
+        OmegaConf.save(config=cfg, f=os.path.join(output_dir, "config.yaml"))
+    with tmp_env:  # must be in the outerest loop, otherwise error occurs
+        for epoch in range(train_stats.epoch_start, sched_cfg.epochs):
+            train_stats.epoch = epoch
+            loader_stats = LoaderStats(
+                train_loader_for_eval=train_loader_for_eval,
+                valid_loader=valid_loader,
+                test_loader=test_loader
             )
-            if not isinstance(train_dataset, IterableDataset):
-                train_dataset.reset_samples(epoch, seed) if hasattr(
-                    train_dataset, "reset_samples"
-                ) else None
-                train_sampler = loader_utils.distribute_sampler_with_rnd_seed(
-                    torch.tensor(train_dataset.sampler),
-                    world_size,
-                    rank,
-                    seed=seed + epoch,
+            if not train_cfg.ft_eval.eval_only:
+                train_loader = loader_utils.initialize_ft_train_loader_at_epoch_start(
+                    train_dataset, train_cfg, train_stats, ft_sampler, collator_fn
                 )
-            collator_fn.is_training = True
-            train_loader = DataLoader(
-                dataset=train_dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                sampler=train_sampler,
-                num_workers=num_workers,
-                collate_fn=collator_fn,
-                worker_init_fn=worker_init_fn_seed,
-                pin_memory=True,
-                prefetch_factor=2,
-                drop_last=True,
-            )
-            # print(f"Top 10 samples' idx:\n{train_loader.sampler[:10]}")
-            t_start = datetime.now()
-            for i, data in enumerate(train_loader):
-                # Iterate in batches over the training dataset.
-                print(
-                    f"[sample idx top 10][local i:{i}]{data['idx'][:10]} {data['input_ids'].shape}\n"
-                    f"inputs keys: {data.keys()}"
-                ) if i == 0 else None
-                input_ids = data["input_ids"].to(device)
-                attention_mask = data["attention_mask"].to(device)
-                position_ids = data["position_ids"].to(device)
-                labels = data["labels"].to(device)
-                task_labels = data[f"{task_level}_labels"].to(device)
-                task_labels = (
-                    task_labels.float()
-                    if problem_type == "multi_label_classification"
-                    else task_labels
-                )
-                cls_idx = data["cls_idx"].to(device) if "cls_idx" in data else None
-                inputs_raw_embeds = None
-                if embed_dim > 0:
-                    inputs_raw_embeds = data["embed"].to(device)
-                sample_wgt = None
-                if "wgt" in data:
-                    sample_wgt = data["wgt"].to(device)
-                if "noise" in data:
-                    labels = data["noise"].to(device)
+                loader_stats = dataclasses.replace(loader_stats, train_loader=train_loader)
+                # print(f"Top 10 samples' idx:\n{train_loader.sampler[:10]}")
+                train_stats.t_start = datetime.now()
 
-                if use_deepspeed:
-                    output = model(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        pretrain_labels=labels if aux_ratio > 0 else None,
-                        task_labels=task_labels,
-                        cls_idx=cls_idx,
-                        inputs_raw_embeds=inputs_raw_embeds,
-                        sample_wgt=sample_wgt,
-                        position_ids=position_ids,
-                    )  # Perform a single forward pass.
-                    aux_loss = output.pretrain_loss
-                    task_loss = output.task_loss
-                    if aux_loss is not None:
-                        # loss = (
-                        #     aux_loss.float() * aux_ratio
-                        #     + task_loss.float() * task_ratio
-                        # )
-                        loss = aux_loss.float() + task_loss.float()
-                    else:
-                        loss = task_loss.float()
-                    model.backward(loss)  # Derive gradients.
-                    model.step()
-                else:
-                    assert (
-                        gradient_accumulation_steps == 1
-                    ), "https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation"
-                    optimizer.zero_grad()  # Clear gradients.
-                    # https://pytorch.org/docs/stable/notes/amp_examples.html#amp-examples
-                    # Enables autocasting for the forward pass (model + loss)
-                    with torch.autocast(device_type="cuda", dtype=torch.float16):
-                        output = model(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            pretrain_labels=labels if aux_ratio > 0 else None,
-                            task_labels=task_labels,
-                            cls_idx=cls_idx,
-                            inputs_raw_embeds=inputs_raw_embeds,
-                            sample_wgt=sample_wgt,
-                            position_ids=position_ids,
-                        )  # Perform a single forward pass.
-                        aux_loss = output.pretrain_loss
-                        task_loss = output.task_loss
-                        if aux_loss is not None:
-                            # loss = aux_loss * aux_ratio + task_loss * task_ratio
-                            loss = aux_loss + task_loss
-                        else:
-                            loss = task_loss
-                    # Scales loss.  Calls backward() on scaled loss to create scaled gradients.
-                    # Backward passes under autocast are not recommended.
-                    # Backward ops run in the same dtype autocast chose for corresponding forward ops.
-                    scaler.scale(loss).backward()
-                    if max_grad_norm > 0:
-                        # https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-clipping
-                        # Unscales the gradients of optimizer's assigned params in-place
-                        scaler.unscale_(optimizer)
-                        # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), max_grad_norm
-                        )
-
-                    # IF not unscaled, scaler.step() first unscales the gradients of the optimizer's assigned params.
-                    # If these gradients do not contain infs or NaNs, optimizer.step() is then called,
-                    # otherwise, optimizer.step() is skipped.
-                    scaler.step(optimizer)
-
-                    # Updates the scale for next iteration.
-                    scaler.update()
-                    lr_scheduler.step()
-                if model_ema is not None:
-                    model_ema.update(model.module, step=j)
-                if j % logging_steps == 0:
-                    t_interval = (datetime.now() - t_start).total_seconds()
-                    samples_per_second = round(i * batch_size / t_interval)
-                    if aux_loss is not None:
-                        loss_log = f"\n{' ' * 8}loss: {round(loss.item(), 6)}, aux_Loss {round(aux_loss.item(), 6)}, task_Loss {round(task_loss.item(), 6)}"
-                    else:
-                        loss_log = f"loss: {round(loss.item(), 6)}"
-                    print(
-                        f"[{datetime.now()}][epoch {epoch}][local {i}][global {j}] processed {samples_per_second} samples per second; {loss_log}"
-                        # f"{' ' * 8}{lr_scheduler.get_last_lr() if hasattr(lr_scheduler, 'get_last_lr') else 'lr ...'}"
+                for i, data in enumerate(loader_stats.train_loader):
+                    train_stats.i = i
+                    # Iterate in batches over the training dataset.
+                    training_utils.ft_batch_training(
+                        data, model, model_cfg.ft_head, train_cfg, train_stats, opt_stats
                     )
-                    # Reduce SUM to get the loss from all the GPUs to RANK=0
-                    # refer: https://github.com/microsoft/DeepSpeed/discussions/2377#discussioncomment-3765282
-                    dist.reduce(loss, 0)
-                    loss = loss / world_size
-                    ls_loss.append(f"{epoch},{i},{j},{aux_loss},{task_loss},{loss}\n")
-
-                    tb_writer.add_scalar(
-                        "loss", loss.item(), j
-                    ) if tb_writer is not None else None
-                j += 1
-        else:
-            ckp = os.path.join(pretrain_cpt, f"epoch_{epoch}")
-            if os.path.exists(ckp):
-                loader_utils.load_from_ckp_with_try(
-                    model.module, ckp, config, skip_keys=False
+                    ema_stats.update_ema(model, step=train_stats.j, ft=True)
+                    if train_stats.j % sched_cfg.logging_steps == 0:
+                        log_eval_dump_utils.log_ft_training_stats(train_cfg, train_stats, tb_writer)
+                    train_stats.j += 1
+            else:  # `eval_only` mode, load from ckp and then eval
+                ckp = os.path.join(pretrain_cpt, f"epoch_{epoch}")
+                if os.path.exists(ckp):
+                    loader_utils.load_from_ckp_with_try(
+                        model.module, ckp, skip_keys=False, use_ema=ema_stats.ema_cfg.use_ema
+                    )
+                else:
+                    print(f"ckp {ckp} doesn't exists, skip it!")
+                ema_stats.model_ema = None
+            if train_cfg.ft_eval.infer_only:  # INFER in ODPS
+                writer = dataset_iterable.get_odps_writer(table_name=data_cfg.odps.outputs, slice_id=rank)
+                misc_utils.dump_results(
+                    model=model,
+                    loader=test_loader,
+                    device=device,
+                    writer=writer,
+                    slice_id=rank,
                 )
-            else:
-                print(f"ckp {ckp} doesn't exists, skip it!")
-            model_ema = None
-        if (epoch + 1) % epoch_per_eval == 0 and (not infer_only):
-            print(f"[{datetime.now()}][end of epoch {epoch}][local {i}][global {j}] Save ckp ...")
-            if not eval_only:
-                misc_utils.save_ckp(
-                    output_dir,
-                    model,
-                    epoch,
-                    use_deepspeed,
-                    optimizer=optimizer,
-                    lr_scheduler=lr_scheduler,
+                writer.close()
+            if (epoch + 1) % train_cfg.ft_eval.epoch_per_eval == 0 and (not train_cfg.ft_eval.infer_only):
+                log_eval_dump_utils.log_dump_ft_training_stats(
+                    model, cfg, ft_sampler, train_stats, opt_stats, loader_stats, ema_stats, tb_writer
                 )
-            print(f"[{datetime.now()}] Evaluate on partial train data {k_samplers*world_size} -> {k_samplers}!")
-            tr_loss, tr_cls_metrics, tr_ogb_eval_res, tr_triplet = (
-                evaluate(
-                    model,
-                    problem_type,
-                    device,
-                    num_labels,
-                    train_loader_for_eval,
-                    task_level,
-                    tokenizer_config["dataset"],
-                    metric_type=metric_type,
-                    ds_split="train",
-                )
-                if train_loader_for_eval
-                else (0, None, None, None)
-            )
-            print(
-                f"[{datetime.now()}][end of epoch {epoch}][local {i}][global {j}] Evaluate on full valid data "
-                f"{valid_cnt} -> {len(valid_sampler) if valid_sampler else valid_cnt // world_size}!"
-            )
-            val_loss, val_cls_metrics, val_ogb_eval_res, val_triplet = evaluate(
-                model,
-                problem_type,
-                device,
-                num_labels,
-                valid_loader,
-                task_level,
-                tokenizer_config["dataset"],
-                metric_type=metric_type,
-                ds_split="valid",
-            )
-            val_ogb_eval_res_ema = None
-            if model_ema is not None:
-                print(
-                    f"[{datetime.now()}][end of epoch {epoch}][local {i}][global {j}] Evaluate on full valid data with "
-                    f"EMA {valid_cnt} -> {len(valid_sampler) if valid_sampler else valid_cnt // world_size}!"
-                )
-                (
-                    val_loss_ema,
-                    val_cls_metrics_ema,
-                    val_ogb_eval_res_ema,
-                    val_triplet_ema,
-                ) = evaluate(
-                    model_ema,
-                    problem_type,
-                    device,
-                    num_labels,
-                    valid_loader,
-                    task_level,
-                    tokenizer_config["dataset"],
-                    metric_type=metric_type,
-                    ds_split="valid",
-                )
-                ema_best_flag, ema_best_res = metrics_utils.compare_metrics_res(
-                    val_ogb_eval_res_ema, ema_best_res
-                )
-            print(
-                f"[{datetime.now()}][end of epoch {epoch}][local {i}][global {j}] Evaluate on full test data {test_cnt}"
-                f" -> {len(test_sampler) if test_sampler else test_cnt // world_size}!"
-            )
-            model_for_test = model
-            if model_ema is not None:
-                model_for_test = model_ema
-                print(f"Using model-ema on test data")
-            test_loss, test_cls_metrics, test_ogb_eval_res, test_triplet = evaluate(
-                model_for_test,
-                problem_type,
-                device,
-                num_labels,
-                test_loader,
-                task_level,
-                tokenizer_config["dataset"],
-                metric_type=metric_type,
-                ds_split="test",
-            )
-            print(
-                f"[{datetime.now()}][epoch {epoch}][local {i}][global {j}] train_loss: {tr_loss}, "
-                f"valid_loss: {val_loss}, test_loss: {test_loss}, {test_cls_metrics.results_in_details()},\n"
-                f"train ogb_eval: {tr_ogb_eval_res}, valid ogb_eval: {val_ogb_eval_res}, "
-                f"EMA valid ogb_eval: {val_ogb_eval_res_ema}, test ogb_eval: {test_ogb_eval_res}"
-                f"\nSaved in {output_dir}"
-            )
-            ls_log.append(
-                f"{epoch},{i},{j},{tr_loss},{val_loss},{test_loss},"
-                f"{','.join(val_cls_metrics.results_in_str_tuple())},"
-                f"{format_ogb_output_for_csv(val_ogb_eval_res)},"
-                f"{','.join(test_cls_metrics.results_in_str_tuple())},"
-                f"{format_ogb_output_for_csv(test_ogb_eval_res)}\n"
-            )
-            curr_lr = lr_scheduler.get_lr() if lr_scheduler is not None else [lr]
-            ls_result.append(
-                f"{epoch},{j},{curr_lr},{curr_lr[0]},"
-                f"{format_ogb_output_for_csv(tr_ogb_eval_res)},"
-                f"{format_ogb_output_for_csv(val_ogb_eval_res)},"
-                f"{format_ogb_output_for_csv(test_ogb_eval_res)},"
-                f"{format_ogb_output_for_csv(val_ogb_eval_res_ema)}\n"
-            )
-            if int(os.environ.get("RANK", 0)) == 0:
-                misc_utils.save_all(
-                    output_dir,
-                    model,
-                    epoch,
-                    save_model=False,
-                    ls_log=ls_log if not eval_only else None,
-                    ls_result=ls_result if not eval_only else None,
-                    ls_loss=ls_loss if not eval_only else None,
-                    tr_dict=tr_triplet if save_pred else None,
-                    val_dict=val_triplet if save_pred else None,
-                    test_dict=test_triplet if save_pred else None,
-                )
-                if model_ema is not None:
-                    ema_state = get_state_dict(model_ema, unwrap_model)
-                    ema_ckp = os.path.join(output_dir, ema_file)
-                    torch.save(ema_state, ema_ckp)
-                    if ema_best_flag:
-                        torch.save(ema_state, os.path.join(output_dir, ema_file_best))
-            if tb_writer is not None:
-                # Log histograms of model parameters
-                for name, param in model.named_parameters():
-                    tb_writer.add_histogram(name, param, epoch)
 
     tb_writer.close() if tb_writer is not None else None
+    if not train_cfg.ft_eval.eval_only:
+        OmegaConf.save(config=cfg, f=os.path.join(output_dir, "config.yaml"))
 
 
 if __name__ == "__main__":
@@ -857,4 +388,24 @@ if __name__ == "__main__":
         mp.set_start_method("spawn")
     except RuntimeError:
         pass
-    fire.Fire(train)
+    print(sys.argv)
+    # `--local_rank` is injected by deepspeed, and will not be recognized by Hydra, so FILTER it
+    sys.argv = [a for a in sys.argv if not a.startswith("--local_rank")]
+    assert sys.argv[0].endswith(".py"), f"{sys.argv[0]}"
+    if "=" not in sys.argv[-1]:
+        print("Parsing space separate arguments in Nebula")
+        space_args = sys.argv[1:]
+        parsed_config = conf_utils.parse_space_separated_args(space_args)
+        # Convert to Hydra compatible format
+        hydra_args = []
+        for key, value in parsed_config.items():
+            if value == "":
+                hydra_args.append(f"{key}='{value}'")
+            else:
+                hydra_args.append(f"{key}={value}")
+
+        # Replace sys.argv with Hydra-compatible format
+        sys.argv = [sys.argv[0]] + hydra_args
+
+    # Use Hydra to train
+    train()

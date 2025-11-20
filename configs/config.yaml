@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - _self_
+  - tokenization: base
+  - model: base
+  - training: base
+  - generation: base
+  - override hydra/launcher: basic
+
+# 主要配置分组
+project_name: "graph-gpt"
+
+# 可以通过命令行覆盖的参数
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

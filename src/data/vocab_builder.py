@@ -56,7 +56,7 @@ def _get_vocab(ls_arr, ignored_val: str = None):
 
 def _get_node_edge_graph_semantics_vocab(dataset: Dataset, config: Dict, neg: str):
     # neg: node_edge_graph
-    world_identifier = config.get("attr_world_identifier", config["dataset"])
+    world_identifier = config["attr_world_identifier"]
     assert not (
         config["semantics"][neg]["discrete"] and config["semantics"][neg]["continuous"]
     ), "NotImplement"
@@ -85,7 +85,7 @@ def _get_node_edge_graph_semantics_vocab(dataset: Dataset, config: Dict, neg: st
 def get_semantics_vocab(dataset: Dataset, config: Dict):
     reserved_vocab = config["semantics"]["common"].get("reserved_token", [])
     numbers_vocab = config["semantics"]["common"].get("numbers", [])
-    world_identifier = config.get("attr_world_identifier", config["dataset"])
+    world_identifier = config["attr_world_identifier"]
     if world_identifier == "molecule" or world_identifier == "onedevice":
         if world_identifier == "molecule":
             # print(f"merge all molecule datasets to build a unified vocab")

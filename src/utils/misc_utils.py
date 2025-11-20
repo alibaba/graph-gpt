@@ -3,9 +3,11 @@ import time
 import shutil
 import random
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+import base64
 import pandas as pd
-from typing import List
+from typing import List, Optional
 from tqdm import tqdm
 import deepspeed
 import torch
@@ -18,6 +20,7 @@ from transformers.trainer import (
     SCHEDULER_NAME,
     SCALER_NAME,
 )
+from ..conf import TrainingConfig
 
 MODEL_NAME = "model.pt"
 
@@ -27,11 +30,16 @@ def delete_old_ckp(dir_ckp):
         shutil.rmtree(dir_ckp, ignore_errors=True)
 
 
-def get_latest_ckp(pretrain_cpt, eval_only=0):
+def _scan_ckps(pretrain_cpt):
     dirs_scan = [f.path for f in os.scandir(pretrain_cpt) if f.is_dir()]
     dirs_scan = [dir_.split("/")[-1] for dir_ in dirs_scan]
     dirs_scan = [dir_.split("_")[-1] for dir_ in dirs_scan]
     dirs_scan = [int(dir_) for dir_ in dirs_scan if dir_.isnumeric()]
+    return sorted(dirs_scan)
+
+
+def get_latest_ckp(pretrain_cpt, eval_only=0):
+    dirs_scan = _scan_ckps(pretrain_cpt)
     if dirs_scan:
         ep = min(dirs_scan) if eval_only else max(dirs_scan)
         ckp = os.path.join(pretrain_cpt, f"epoch_{ep}")
@@ -39,6 +47,11 @@ def get_latest_ckp(pretrain_cpt, eval_only=0):
         ep = None
         ckp = pretrain_cpt
     return ckp, ep
+
+
+def get_all_ckps(pretrain_cpt):
+    dirs_scan = _scan_ckps(pretrain_cpt)
+    return [os.path.join(pretrain_cpt, f"epoch_{ep}") for ep in dirs_scan]
 
 
 def convert_dict_to_df(dict_):
@@ -215,6 +228,124 @@ def load_ddp_ckp(
         print(f"load scheduler from {fn_scheduler}")
 
 
+def load_ds_ckp(ckp, model, *, strict=False):  # eval ONLY
+    print(
+        f"[{datetime.now()}] Loading existing weights from ckp {ckp} using deepspeed API."
+    )
+    from deepspeed.utils.zero_to_fp32 import (
+        get_fp32_state_dict_from_zero_checkpoint,
+    )
+
+    stat_dict = get_fp32_state_dict_from_zero_checkpoint(ckp)
+    # new_key = 'n_token_proj.weight'
+    # old_key = 'next_n_token_head.weight'
+    # stat_dict[new_key] = stat_dict.pop(old_key)
+    missing_keys, unexpected_keys = model.load_state_dict(stat_dict, strict=strict)
+    print(
+        f"[{datetime.now()}] load ckp using DeepSpeed API `get_fp32_state_dict_from_zero_checkpoint` and pytorch `load_state_dict`\n"
+        f"missing keys: {missing_keys}\n"
+        f"unexpected_keys: {unexpected_keys}\n"
+    )
+    print("After loading weights from ckp:")
+    print(model.config)
+    print(model)
+
+
+def encode_numpy_array(arr: np.ndarray) -> str:
+    """
+    Encodes a NumPy array into a URL-safe, Base64-encoded string.
+
+    The array's metadata (shape and dtype) is packaged with the data.
+    """
+    # 1. Convert the array's raw data to a bytes object
+    data_bytes = arr.tobytes()
+
+    # 2. Base64-encode the raw data bytes
+    #    The result of b64encode is bytes, so we decode it to a string
+    data_b64_str = base64.b64encode(data_bytes).decode("ascii")
+
+    # 3. Create a dictionary to hold all necessary information
+    payload = {"dtype": str(arr.dtype), "shape": arr.shape, "data": data_b64_str}
+
+    # 4. Convert the dictionary to a JSON string
+    json_str = json.dumps(payload)
+
+    # 5. URL-safe Base64-encode the entire JSON string
+    #    First encode the json string to bytes, then b64encode
+    encoded_final = base64.urlsafe_b64encode(json_str.encode("utf-8"))
+
+    # The result of b64encode is bytes, so decode it to get the final string
+    return encoded_final.decode("ascii")
+
+
+def decode_numpy_array(encoded_str: str) -> np.ndarray:
+    """
+    Decodes a URL-safe, Base64-encoded string back into a NumPy array.
+    """
+    # 1. Decode the outer URL-safe Base64 layer to get the JSON string
+    decoded_json_bytes = base64.urlsafe_b64decode(encoded_str.encode("ascii"))
+
+    # 2. Load the JSON string back into a Python dictionary
+    payload = json.loads(decoded_json_bytes.decode("utf-8"))
+
+    # 3. Extract the metadata and the inner Base64 data string
+    shape = tuple(payload["shape"])
+    dtype = np.dtype(payload["dtype"])
+    data_b64_str = payload["data"]
+
+    # 4. Decode the inner Base64 data to get the original raw bytes
+    data_bytes = base64.b64decode(data_b64_str.encode("ascii"))
+
+    # 5. Use np.frombuffer to create a 1D array from the raw bytes
+    #    This is a highly efficient way to interpret a buffer of bytes
+    array_flat = np.frombuffer(data_bytes, dtype=dtype)
+
+    # 6. Reshape the 1D array to its original shape
+    return array_flat.reshape(shape)
+
+
+def _format_infer_results(
+    idx: Optional[torch.LongTensor] = None, tensor: Optional[torch.FloatTensor] = None
+):
+    idx = idx.view(-1)
+    encoder = encode_numpy_array
+    if tensor.size(1) == 1:
+        tensor = tensor.view(-1)
+        encoder = lambda x: x
+    assert idx.size(0) == tensor.size(0), f"{idx.size(0)} != {tensor.size(0)}"
+    ls = []
+    for i, t in zip(idx.cpu().numpy(), tensor.cpu().numpy()):
+        ls.append(f"{i},{encoder(t)}\n")
+    return ls
+
+
+def dump_infer_results(
+    output_dir,
+    epoch,
+    *,
+    idx: Optional[torch.LongTensor] = None,
+    logits: Optional[torch.FloatTensor] = None,
+    hidden_states: Optional[torch.FloatTensor] = None,
+):
+    ckp_dir = os.path.join(output_dir, f"epoch_{epoch}")
+    if not os.path.exists(ckp_dir):
+        os.makedirs(ckp_dir, exist_ok=True)
+    # a). save task logits
+    rnk = int(os.environ.get("RANK", 0))
+    res = _format_infer_results(idx, logits)
+    fn = os.path.join(ckp_dir, f"task_logits_{rnk}.csv")
+    with open(fn, "w") as fp:
+        fp.writelines(res)
+    print(f"Task logits saved in {fn}!")
+    # b). save hidden states
+    if (hidden_states is not None) and (hidden_states.numel() > 0):
+        res = _format_infer_results(idx, hidden_states)
+        fn = os.path.join(ckp_dir, f"hidden_states_{rnk}.csv")
+        with open(fn, "w") as fp:
+            fp.writelines(res)
+        print(f"Hidden States saved in {fn}!")
+
+
 def estimate_tokens_per_sample(
     gtokenizer, dataset, sampler, mpe, world_size, tot_samples: int = 10000
 ):
@@ -268,6 +399,7 @@ def dump_results(
     epoch=1,
     ds_split="test",
 ):
+    # Mainly for dumping inference results into ODPS tables
     print(f"[{datetime.now()}] Start inference for epoch {epoch} ......")
     t_start = t_batch_start = datetime.now()
     report_gap = 10000
@@ -370,3 +502,41 @@ def all_gather(q):
     for q, size in zip(all_qs_padded, all_sizes):
         all_qs.append(q[:size])
     return torch.cat(all_qs)
+
+
+def set_dist_env(train_cfg: TrainingConfig):
+    # 1. set-up gpu related env
+    gpu_name = torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu"
+    train_cfg.gpu_name = gpu_name
+    # if "V100" in gpu_name:
+    #     os.environ["NCCL_SOCKET_IFNAME"] = "eth"
+    #     print(f"set NCCL_SOCKET_IFNAME to be 'eth' for dt-algo-v100 queue")
+    if "AMD" in gpu_name:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+
+        tmp_env = sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.MATH])
+        print(f"Setting spda env: {tmp_env}!!!")
+    else:
+        tmp_env = open("tmp_file", "w")
+
+    # 2. init distributed train
+    try:
+        dist.init_process_group(
+            backend="nccl", init_method="env://", timeout=timedelta(seconds=1800)
+        )
+        dist.barrier()
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+    except ValueError:
+        print("In local test setting!!!\n" * 5)
+        train_cfg.schedule.logging_steps = 5
+        world_size = 1
+        rank = 0
+    local_rank = os.environ.get("LOCAL_RANK")
+    train_cfg.distributed.world_size = world_size
+    train_cfg.distributed.rank = rank
+    print(f"\nworld size: {world_size}, rank: {rank}, local rank: {local_rank}")
+    rnd_seed = torch.random.initial_seed() - rank
+    random.seed(rnd_seed)
+    print(f"seed random with {rnd_seed}")
+    return tmp_env

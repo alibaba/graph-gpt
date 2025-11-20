@@ -1,0 +1,134 @@
+# @package _global_
+model:
+  # Hydra-compatible merged configuration for GraphGPT with a highly modular structure.
+
+  # -------------------------------------------------------------------
+  # 核心模型架构 (Core Model Architecture)
+  # -------------------------------------------------------------------
+  model_type: graphgpt  # Model type identifier. Overridden from 'llama' to 'graphgpt'.
+
+  vocab_size: null  # Vocabulary size of the model.
+  hidden_size: 128  # Dimension of the hidden representations.
+  intermediate_size: 0  # Dimension of the MLP representations.
+  num_hidden_layers: 2  # Number of hidden layers in the Transformer decoder.
+  num_attention_heads: 0  # Number of attention heads for each attention layer.
+  num_key_value_heads: null  # Number of key_value heads for Grouped Query Attention. If null, defaults to num_attention_heads.
+  head_dim: null  # The attention head dimension. If null, it will default to hidden_size // num_attention_heads.
+
+  attention_bias: false  # Whether to use a bias in the query, key, value and output projection layers.
+  mlp_bias: false  # Whether to use a bias in up_proj, down_proj and gate_proj layers in the MLP layers.
+
+  hidden_act: "gelu"  # "silu" The non-linear activation function in the decoder.
+  max_position_embeddings: 128  # The maximum sequence length that this model might ever be used with.
+
+  initializer_range: 0.02  # The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
+  rms_norm_eps: 1e-6  # The epsilon used by the RMS normalization layers.
+
+  layer_scale_init_value: 0.0  # Initial value for layer scaling.
+
+  tie_word_embeddings: false  # Whether to tie input and output word embeddings.
+  rope_theta: 10000.0  # The base period of the RoPE embeddings.
+  # Configuration for RoPE scaling. Default is null (disabled).
+  # To enable, uncomment and configure this section. Example for 'yarn':
+  # rope_scaling:
+  #   rope_type: "yarn"
+  #   factor: 2.0
+  #   original_max_position_embeddings: 2048
+  rope_scaling: null
+
+  use_cache: false  # Whether the model should return the last key/values attentions.
+
+  # -------------------------------------------------------------------
+  # 通用和 GraphGPT 特有参数 (General & Graph-Specific Parameters)
+  # -------------------------------------------------------------------
+  causal_attention: false  # true for causal, false for bi attention
+  rope_range: 0
+
+  # -------------------------------------------------------------------
+  # 模块化子配置 (Modular Sub-configs)
+  # -------------------------------------------------------------------
+
+  # --- Dropout Settings ---
+  dropout_settings:
+    attention_dropout: 0.0
+    path_dropout: 0.0
+    embed_dropout: 0.0
+    mlp_dropout: 0.0
+
+  # --- Graph Input Feature Stacking ---
+  graph_input:
+    stacked_feat: 1  # number of stacked feats
+    stack_method: "short"  # short|long|prolonged
+    stacked_feat_agg_method: "sum"
+    embed_dim: 0  # Total dimension of external embeddings if provided as input: node.embed_dim + edge.embed_dim
+
+  # --- geometric-Specific Input Settings ---
+  geometric_input:
+    # Aggregation method for 3D positions.
+    pos_agg_method: "sum"
+    # Number of bins for discretizing 3D positions.
+    pos_bins: 512
+
+
+  # --- Pretraining Task Head Settings ---
+  pt_head:
+    # Number of next tokens to predict for pre-training.
+    next_n_token: 1
+    # Gamma parameter for focal loss.
+    focal_gamma: 0.0
+    # Whether to prepare SMTP inputs and labels inside the model's forward pass.
+    smtp_inside: false
+
+  # --- Finetuning Task Head Settings ---
+  ft_head:
+    # task_type -> pretrain|graph|edge|node; shall be copied from tokenization config
+    task_type: null
+    # multi-task loss setting, ratio of sv task TODO: remove it here or in trainging config
+    task_ratio: 1
+
+    # problem_type -> single_label_classification|multi_label_classification|regression
+    problem_type: null
+    # Pooling method for sequence-level representation. One of {'last', 'sum', 'mean'}.
+    pooling_method: "last"
+    # A list of hidden sizes for an optional MLP classification head. e.g. [512, 128]
+    mlp: [ ]
+    # Dropout for the final classification head.
+    dropout: 0.0
+    # Type of loss function for the task (e.g., 'auc', 'cross_entropy').
+    loss_type: null
+    # Metric type for evaluation.
+    metric_type: null
+    # Number of negative samples, for losses like 'auc'.
+    num_neg: null
+    # Number of labels in classification tasks; =1 for regression.
+    num_labels: null
+
+  # -------------------------------------------------------------------
+  # Tokenizer 和特殊 Token 参数 (Tokenizer and Special Tokens)
+  # -------------------------------------------------------------------
+  pad_token_id: 0 # Padding token ID. Default is 0, as overridden by GraphGPTConfig.
+  bos_token_id: 1 # Beginning of stream token ID.
+  eos_token_id: 2 # End of stream token ID.
+  cls_token_id: null # Classification token ID, specific to GraphGPT for downstream tasks.
+
+  # -------------------------------------------------------------------
+  # 其他和元数据 (Other and Metadata)
+  # -------------------------------------------------------------------
+  pretraining_tp: 1 # Tensor parallelism rank used during pretraining for reproducibility.
+
+  keys_to_ignore_at_inference:
+    - "past_key_values"
+
+  base_model_tp_plan:
+    "layers.*.self_attn.q_proj": "colwise"
+    "layers.*.self_attn.k_proj": "colwise"
+    "layers.*.self_attn.v_proj": "colwise"
+    "layers.*.self_attn.o_proj": "rowwise"
+    "layers.*.mlp.gate_proj": "colwise"
+    "layers.*.mlp.up_proj": "colwise"
+    "layers.*.mlp.down_proj": "rowwise"
+
+  base_model_pp_plan:
+    embed_tokens: [["input_ids"], ["inputs_embeds"]]
+    layers: [["hidden_states", "attention_mask"], ["hidden_states"]]
+    norm: [["hidden_states"], ["hidden_states"]]

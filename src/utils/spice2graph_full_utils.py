@@ -16,6 +16,7 @@ copies or substantial portions of the Software.
 # copied and modified from https://github.com/xz-group/AnalogGenie/blob/main/SPICE2GRAPH_full.py
 import pandas as pd
 import os
+import re
 
 
 def read_netlist(filename):
@@ -393,6 +394,145 @@ def build_connection_matrix(netlist, ports):
         matrix.at[conn_list, net] = 1
 
     return matrix, net_connections
+
+
+def normalize(pattern, symbol):
+    match = pattern.match(symbol)
+    if match:
+        # match.groups() will return a tuple like ('PM', None) or (None, '_B')
+        # We find the group that is not None and print it.
+        # list(filter(None, ...)) creates a list of all non-None items.
+        result = list(filter(None, match.groups()))[0]
+        return result
+
+
+def norm_pmos4(symbol):
+    # A single regex pattern to capture either the "PM" prefix or the "_[Suffix]"
+    # This pattern has two parts, separated by the OR operator `|`
+    # Part 1: ^(PM)\d+$  -> Captures "PM" from strings like 'PM18'
+    # Part 2: ^PM\d+(_[BDSG])$ -> Captures the suffix from strings like 'PM18_B'
+    pattern = re.compile(r"^(PM)\d+$|^PM\d+(_[BDSG])$")
+    return normalize(pattern, symbol)
+
+
+def norm_nmos4(symbol):
+    pattern = re.compile(r"^(NM)\d+$|^NM\d+(_[BDSG])$")
+    return normalize(pattern, symbol)
+
+
+def norm_npn(symbol):
+    pattern = re.compile(r"^(NPN)\d+$|^NPN\d+(_[CBE])$")
+    return normalize(pattern, symbol)
+
+
+def norm_pnp(symbol):
+    pattern = re.compile(r"^(PNP)\d+$|^PNP\d+(_[CBE])$")
+    return normalize(pattern, symbol)
+
+
+def norm_resistor(symbol):
+    pattern = re.compile(r"^(R)\d+$|^R\d+(_[PN])$")
+    return normalize(pattern, symbol)
+
+
+def norm_capacitor(symbol):
+    pattern = re.compile(r"^(C)\d+$|^C\d+(_[PN])$")
+    return normalize(pattern, symbol)
+
+
+def norm_inductor(symbol):
+    pattern = re.compile(r"^(L)\d+$|^L\d+(_[PN])$")
+    return normalize(pattern, symbol)
+
+
+def norm_diode(symbol):
+    pattern = re.compile(r"^(DIO)\d+$|^DIO\d+(_[PN])$")
+    return normalize(pattern, symbol)
+
+
+def norm_xor(symbol):
+    pattern = re.compile(r"^(XOR)\d+$|^XOR\d+(_[A-Z]+)$")
+    return normalize(pattern, symbol)
+
+
+def norm_pfd(symbol):
+    pattern = re.compile(r"^(PFD)\d+$|^PFD\d+(_[A-Z]+)$")
+    return normalize(pattern, symbol)
+
+
+def norm_invertor(symbol):
+    pattern = re.compile(r"^(INVERTER)\d+$|^INVERTER\d+(_[A-Z]+)$")
+    return normalize(pattern, symbol)
+
+
+def norm_trans_gate(symbol):
+    pattern = re.compile(r"^(TRANSMISSION_GATE)\d+$|^TRANSMISSION_GATE\d+(_[A-Z]+)$")
+    return normalize(pattern, symbol)
+
+
+def norm_index(symbol):
+    pattern = re.compile(r"([A-Z]+)\d+$")
+    return normalize(pattern, symbol)
+
+
+def normalize_all(symbols):
+    ls = []
+    for symbol in symbols:
+        if norm_pmos4(symbol):
+            # print(f"'{symbol}' -> '{norm_pmos4(symbol)}'")
+            ls.append(norm_pmos4(symbol))
+            continue  # Move to the next symbol
+        if norm_nmos4(symbol):
+            # print(f"'{symbol}' -> '{norm_nmos4(symbol)}'")
+            ls.append(norm_nmos4(symbol))
+            continue  # Move to the next symbol
+        if norm_npn(symbol):
+            # print(f"'{symbol}' -> '{norm_npn(symbol)}'")
+            ls.append(norm_npn(symbol))
+            continue  # Move to the next symbol
+        if norm_pnp(symbol):
+            # print(f"'{symbol}' -> '{norm_pnp(symbol)}'")
+            ls.append(norm_pnp(symbol))
+            continue  # Move to the next symbol
+        if norm_resistor(symbol):
+            # print(f"'{symbol}' -> '{norm_resistor(symbol)}'")
+            ls.append(norm_resistor(symbol))
+            continue  # Move to the next symbol
+        if norm_capacitor(symbol):
+            # print(f"'{symbol}' -> '{norm_capacitor(symbol)}'")
+            ls.append(norm_capacitor(symbol))
+            continue  # Move to the next symbol
+        if norm_inductor(symbol):
+            # print(f"'{symbol}' -> '{norm_inductor(symbol)}'")
+            ls.append(norm_inductor(symbol))
+            continue  # Move to the next symbol
+        if norm_diode(symbol):
+            # print(f"'{symbol}' -> '{norm_diode(symbol)}'")
+            ls.append(norm_diode(symbol))
+            continue  # Move to the next symbol
+        if norm_xor(symbol):
+            # print(f"'{symbol}' -> '{norm_xor(symbol)}'")
+            ls.append(norm_xor(symbol))
+            continue  # Move to the next symbol
+        if norm_pfd(symbol):
+            # print(f"'{symbol}' -> '{norm_pfd(symbol)}'")
+            ls.append(norm_pfd(symbol))
+            continue  # Move to the next symbol
+        if norm_invertor(symbol):
+            # print(f"'{symbol}' -> '{norm_invertor(symbol)}'")
+            ls.append(norm_invertor(symbol))
+            continue  # Move to the next symbol
+        if norm_trans_gate(symbol):
+            # print(f"'{symbol}' -> '{norm_trans_gate(symbol)}'")
+            ls.append(norm_trans_gate(symbol))
+            continue  # Move to the next symbol
+        if norm_index(symbol):
+            # print(f"'{symbol}' -> '{norm_index(symbol)}'")
+            ls.append(norm_index(symbol))
+            continue  # Move to the next symbol
+        # print(f"'{symbol}' -> 'NO MATCH'")
+        ls.append(symbol)
+    return ls
 
 
 if __name__ == "__main__":
