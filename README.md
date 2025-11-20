@@ -29,7 +29,7 @@ We are also seeking Ali-Star (阿里星) candidates in fields such as LLM, MLLM,
 
 Work place: Hangzhou, China
 
-If you are attending ICML 2025 in Vancouver Canada, we can have a meet up during the conference.
+If you are attending AAAI 2026 in Singapore, we can have a meet up during the conference.
 
 Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.com) for more information.
 
@@ -263,11 +263,13 @@ to download and preprocess dataset separately.
 If you find this work useful, please kindly cite following papers:
 
 ```latex
-@article{zhao2024graphgpt,
-  title={GraphGPT: Generative Pre-trained Graph Eulerian Transformer},
-  author={Zhao, Qifang and Ren, Weidong and Li, Tianyu and Liu, Hong and He, Xingsheng and Xu, Xiaoxiao},
-  journal={arXiv preprint arXiv:2401.00529},
-  year={2024}
+@inproceedings{
+    zhao2025graphgpt,
+    title={Graph{GPT}: Generative Pre-trained Graph Eulerian Transformer},
+    author={Qifang Zhao and Weidong Ren and Tianyu Li and Hong Liu and Xingsheng He and Xiaoxiao Xu},
+    booktitle={Forty-second International Conference on Machine Learning},
+    year={2025},
+    url={https://openreview.net/forum?id=4RdzeucFmW}
 }
 ```
 
