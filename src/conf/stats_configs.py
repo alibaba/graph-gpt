@@ -117,7 +117,7 @@ class EMAStats:
 
     def ema2device(self, device, use_ema: bool):
         if use_ema:
-            self.model_ema.to(device=device)
+            self.model_ema.device = device
             self.model_ema.module.to(device=device)
             emb = self.model_ema.module.model.embed_tokens.weight.data
             print(f"[Debug] model-ema embedding_params:\n{emb}\n{emb.shape}")
