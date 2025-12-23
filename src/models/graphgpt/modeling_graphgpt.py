@@ -186,8 +186,8 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
         else:
             self.n_token_proj = nn.Identity()
         # 2.1 generative or discriminative
-        self.use_generative = True
-        self.use_discriminative = False
+        self.use_generative = self.config.use_generative
+        self.use_discriminative = self.config.use_discriminative
         if self.use_generative and self.use_discriminative:
             self.ratio_dis = 0.5
         else:

@@ -332,6 +332,10 @@ def prepare_inputs_for_pretrain_mlm(
             for i, ls_labels in enumerate(labels_mask)
         ]
 
+    if gtokenizer.train_cfg.task_type == "pretrain-cl":
+        input_ids, labels_mask, len_extended_tokens = _add_gsum_tokens_for_cl(
+            input_ids, labels_mask, gtokenizer, len_extended_tokens
+        )
     in_dict["input_ids"] = input_ids
     in_dict["labels"] = labels_mask
     in_dict["position_ids"].extend(
@@ -357,6 +361,30 @@ def prepare_inputs_for_pretrain_mlm(
             in_dict["input_ids"]
         ), f"{len(in_dict['embed'])} != {len(in_dict['input_ids'])}"
     return in_dict
+
+
+def _add_gsum_tokens_for_cl(input_ids, labels_mask, gtokenizer, len_extended_tokens):
+    """Add gsum tokens for contrastive learning, to avoid multiple use of <eos> token"""
+    # a). append <gsum> token-id to inputs
+    special_token_id = gtokenizer.get_gsum_token_id()
+    ls_extend_tokens = [special_token_id]
+    inputs_instance = input_ids[0]
+    if isinstance(inputs_instance, List):
+        ls_extend_tokens = [
+            [token_id] * len(inputs_instance) for token_id in ls_extend_tokens
+        ]
+    input_ids.extend(ls_extend_tokens)
+    # b). append <label-pad> token-id to masked labels
+    label_pad_token_id = gtokenizer.label_pad_token_id
+    ls_extend_tokens = [label_pad_token_id]
+    labels_mask_instance = labels_mask[0]
+    if isinstance(labels_mask_instance, List):
+        ls_extend_tokens = [
+            [token_id] * len(inputs_instance) for token_id in ls_extend_tokens
+        ]
+    labels_mask.extend(ls_extend_tokens)
+    len_extended_tokens = len_extended_tokens + len(ls_extend_tokens)
+    return input_ids, labels_mask, len_extended_tokens
 
 
 @_inputs_deco("pretrain-smtp")

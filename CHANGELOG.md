@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2025-12-23
+
+### Model
+- Add contrastive loss pre-training for graph-level datasets like PCQM4M-v2
+- Add inferring graph-level embeddings with model trained with contrastive loss
+
+### Code Refactoring
+- Code refactoring for edge-level example `ogbl-ppa`
+
 ## [0.6.0] - 2025-11-19
 
 ### Model

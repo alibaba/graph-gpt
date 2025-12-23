@@ -19,7 +19,7 @@ model:
   mlp_bias: false  # Whether to use a bias in up_proj, down_proj and gate_proj layers in the MLP layers.
 
   hidden_act: "gelu"  # "silu" The non-linear activation function in the decoder.
-  max_position_embeddings: 128  # The maximum sequence length that this model might ever be used with.
+  max_position_embeddings: 1024  # The maximum sequence length that this model might ever be used with.
 
   initializer_range: 0.02  # The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
   rms_norm_eps: 1e-6  # The epsilon used by the RMS normalization layers.
@@ -74,6 +74,10 @@ model:
   pt_head:
     # Number of next tokens to predict for pre-training.
     next_n_token: 1
+    # Employ generative head
+    use_generative: true
+    # Employ discriminative head
+    use_discriminative: false
     # Gamma parameter for focal loss.
     focal_gamma: 0.0
     # Whether to prepare SMTP inputs and labels inside the model's forward pass.

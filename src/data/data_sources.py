@@ -17,7 +17,6 @@ from ogb.nodeproppred import PygNodePropPredDataset
 from ogb.linkproppred import PygLinkPropPredDataset
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.lsc import PygPCQM4Mv2Dataset
-from ogb.utils import smiles2graph
 from src.utils import control_flow, dataset_utils, mol_utils
 from ..conf import DataConfig, TrainingConfig
 from .dataset_map import (
@@ -545,10 +544,16 @@ def _read_pcqm4mv2(
     # dataset = dataset_utils.PygPCQM4Mv2PosDataset(root=data_dir)
     # dataset._data -> Data(edge_index=[2, 109093666], edge_attr=[109093666, 3], x=[52970672, 9], y=[3746620], pos=[52970672, 3]) -> geometric_data_processed_3d.pt
     # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620], pos=[52970652, 3]) -> geometric_data_processed_3dm_v2.pt
-    dataset = PygPCQM4Mv2Dataset(root=data_dir)  # official version
+    dataset, pt_all = PygPCQM4Mv2Dataset(root=data_dir), True  # official version
     # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 9], y=[3746620])
     # dataset = dataset_utils.PygPCQM4Mv2ExtraDataset(root=data_dir)
     # dataset._data -> Data(edge_index=[2, 109093626], edge_attr=[109093626, 3], x=[52970652, 12], y=[3746620])
+    # dataset, pt_all = (
+    #     dataset_utils.PygChembl29Dataset(root=data_dir),
+    #     True,
+    # )  # temporary, for testing ONLY
+    pretrain_idx = torch.arange(len(dataset))
+    # dataset._data -> Data(edge_index=[2, 137821426], edge_attr=[137821426, 3], x=[63727450, 9], y=[2084723])
     print(f"\ndataset._data -> {dataset._data}")
 
     if isinstance(dataset, dataset_utils.PygPCQM4Mv2ExtraDataset):
@@ -557,9 +562,10 @@ def _read_pcqm4mv2(
         print(f"\ndataset._data -> {dataset._data}")
 
     # BELOW 3 lines are for testing generation capability
-    # dataset._data.x = dataset._data.x[:, 0:1]
-    # dataset._data.edge_attr = dataset._data.edge_attr[:, 0:1]
-    # print(f"\ndataset._data -> {dataset._data}")
+    if train_cfg.do_generation:
+        dataset._data.x = dataset._data.x[:, 0:1]
+        dataset._data.edge_attr = dataset._data.edge_attr[:, 0:1]
+        print(f"\nMol Gen Pretraining!!!\ndataset._data -> {dataset._data}")
 
     # dataset._data.y = dataset._data.y - dataset._data.y[dataset.get_idx_split()["train"]].median()
     # median is the minimum of y if minimizing MAE
@@ -573,8 +579,8 @@ def _read_pcqm4mv2(
     #     print(dict_bounds)
 
     permute_nodes = True
-    split_idx = dataset.get_idx_split()
     if return_valid_test:
+        split_idx = dataset.get_idx_split()
         shift_distribution = False
         add_cepdb = False
         add_zinc = False
@@ -677,6 +683,7 @@ def _read_pcqm4mv2(
             print("\nLoading Custom Mol dataset ...")
             dataset_custom = dataset_utils.PygCustomMolDataset(root=data_dir)
             print(f"\ndataset_custom._data -> {dataset_custom._data}")
+            # dataset_custom._data -> Data(edge_index=[2, 502532], edge_attr=[502532, 3], x=[231956, 9], y=[8269])
             test_dataset = GraphsMapDataset(
                 dataset_custom,
                 None,
@@ -697,24 +704,25 @@ def _read_pcqm4mv2(
             dataset,
         )
     else:
-        ls_idx = obtain_special_molecules(dataset)
-        try:
-            fn = "dedup_idx" if pt_all else "dedup_idx_train_valid"
-            while not os.path.exists(os.path.join(dataset.root, fn)):
-                if int(dist.get_rank()) == 0:
-                    _generate_dedup_idx(dataset, fn, pt_all)
-                else:
-                    seconds = 3
-                    print(f"sleep for {seconds} seconds ...")
-                    time.sleep(seconds)
-            pretrain_idx = _load_idx_from_file(dataset.root, fn)
-            print(
-                f"Using dedup_idx with {len(pretrain_idx)} molecules instead of original {len(dataset)} molecules!"
-            )
-        except Exception as inst:
-            print(inst)
-            pretrain_idx = remove_special_molecules(torch.arange(len(dataset)), ls_idx)
+        # ls_idx = obtain_special_molecules(dataset)
+        # try:
+        #     fn = "dedup_idx" if pt_all else "dedup_idx_train_valid"
+        #     while not os.path.exists(os.path.join(dataset.root, fn)):
+        #         if int(dist.get_rank()) == 0:
+        #             _generate_dedup_idx(dataset, fn, pt_all)
+        #         else:
+        #             seconds = 3
+        #             print(f"sleep for {seconds} seconds ...")
+        #             time.sleep(seconds)
+        #     pretrain_idx = _load_idx_from_file(dataset.root, fn)
+        #     print(
+        #         f"Using dedup_idx with {len(pretrain_idx)} molecules instead of original {len(dataset)} molecules!"
+        #     )
+        # except Exception as inst:
+        #     print(inst)
+        #     pretrain_idx = remove_special_molecules(torch.arange(len(dataset)), ls_idx)
         if not pt_all:
+            split_idx = dataset.get_idx_split()
             non_pretrain_mols = torch.cat(
                 [split_idx["test-dev"], split_idx["test-challenge"]]
             ).tolist()
@@ -1036,6 +1044,33 @@ def _read_zinc(
         with_prob=with_prob,
     )
     return train_dataset, dataset
+
+
+@_dataset("custom_mol")
+def _read_cutom_mol(
+    data_cfg: DataConfig,
+    *,
+    with_prob: bool = False,
+    **kwargs,
+):
+    data_dir = data_cfg.data_dir
+    # data_dir: e.g., "../data/OGB"
+    return_valid_test = data_cfg.return_valid_test
+    assert not return_valid_test
+    print("\nLoading Custom Mol dataset ...")
+    dataset_custom = dataset_utils.PygCustomMolDataset(root=data_dir)
+    # dataset_custom._data -> Data(edge_index=[2, 502532], edge_attr=[502532, 3], x=[231956, 9], y=[8269])
+    print(f"\ndataset_custom._data -> {dataset_custom._data}")
+    test_dataset = GraphsMapDataset(
+        dataset_custom,
+        None,
+        sample_idx=torch.cat(
+            [torch.arange(1), torch.arange(len(dataset_custom))]
+        ),  # to make it even for inference
+        provide_sampler=True,
+        with_prob=with_prob,
+    )
+    return test_dataset, dataset_custom
 
 
 @_dataset("ogbn-products")
@@ -1383,6 +1418,7 @@ def _read_ogbl_ppa(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs)
     data_dir = data_cfg.data_dir
     sampling_config = OmegaConf.to_container(data_cfg.sampling, resolve=True)
     return_valid_test = data_cfg.return_valid_test
+    true_valid = train_cfg.ft_eval.true_valid
     pretrain_mode = train_cfg.pretrain_mode
 
     dataset_name = "ogbl-ppa"
@@ -1412,6 +1448,12 @@ def _read_ogbl_ppa(data_cfg: DataConfig, *, train_cfg: TrainingConfig, **kwargs)
             split_edge=split_edge,
             data_split="valid",
         )
+        if true_valid > 0:
+            valid_dataset.reset_samples_per_epoch = False
+            sampler = np.sort(valid_dataset.sampler)
+            rng = np.random.default_rng(seed=true_valid)
+            sampled_elements = rng.choice(sampler, size=true_valid, replace=False)
+            valid_dataset.sampler = sampled_elements.tolist()
         test_dataset = ShaDowKHopSeqFromEdgesMapDataset(
             graph,
             sampling_config,

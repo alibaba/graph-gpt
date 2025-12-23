@@ -35,6 +35,10 @@ Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.co
 
 ## Update:
 
+***12/23/2025***
+1. v0.6.1 released. Check `CHANGELOG.md` for details.
+2. Config code refactoring for edge-level tasks `ogbl-ppa`.
+
 ***11/20/2025***
 1. v0.6.0 released. Check `CHANGELOG.md` for details.
 2. Generation functionality is added in analog to diffusion LLM.
@@ -206,7 +210,7 @@ conda activate graph_gpt
 cd graph-gpt
 pip install -r ./requirements.txt
 pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-2.5.1+cpu.html
-sudo apt-get install bc
+sudo apt-get update && apt-get install -y bc
 ```
 
 

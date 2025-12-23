@@ -152,6 +152,7 @@ class TrainingConfig:
     do_valid: bool = False
     do_test: bool = False
     do_generation: bool = False
+    do_infer: bool = False
     pt_eval_only: bool = False
     focal_gamma: float = 0  # 0 for CE; other vals for focal-loss
     pretrain_mlm: PretrainMlmConfig = field(default_factory=PretrainMlmConfig)
@@ -242,6 +243,8 @@ def sync_config(cfg: Config):
 
     model_cfg.ft_head.task_type = train_cfg.task_type
     train_cfg.max_length = train_cfg.max_length or model_cfg.max_position_embeddings
+    if train_cfg.task_type == "pretrain-cl":
+        model_cfg.pt_head.use_discriminative = True
 
 
 def update_cfg_with_saved_cfg_yaml(cfg: Config):

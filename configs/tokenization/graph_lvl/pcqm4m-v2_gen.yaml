@@ -28,14 +28,14 @@ tokenization:
   semantics:
     node:
       discrete: "x"
-      dim: 9
+      dim: 1
       continuous: null
       ignored_val: null
       embed: null  # embed attr name
       embed_dim: null
     edge:
       discrete: "edge_attr"
-      dim: 3
+      dim: 1
       continuous: null
       ignored_val: null
       embed: null  # embed attr name

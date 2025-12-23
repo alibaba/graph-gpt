@@ -181,7 +181,7 @@ def train(cfg: Config):
             pt_sampler.train_sampler,
             model_cfg.max_position_embeddings,
             train_cfg.distributed.world_size,
-            train_cfg.tot_samples if not train_cfg.pt_eval_only else 100,
+            train_cfg.tot_samples if not (train_cfg.pt_eval_only or train_cfg.do_infer) else 100,
         )
     tokens_per_sample = (
         tokens_per_sample // 2 if task_type == "pretrain-euler" else tokens_per_sample
@@ -224,6 +224,14 @@ def train(cfg: Config):
     if train_cfg.pt_eval_only:
         eval_pt_gen_only(
             model, cfg, collator.DataCollatorForGST, tokenizer_cls, tokenizer_config, pt_sampler, train_dataset
+        )
+        return
+    ## INFER ONLY MODE
+    if train_cfg.do_infer:
+        # remove random mask for inference purpose
+        train_cfg.pretrain_mlm.params.umr_clip = [1, 1]
+        log_eval_dump_utils.pt_infer_only(
+            model, cfg, collator.DataCollatorForGST, tokenizer_cls, tokenizer_config, pt_sampler
         )
         return
     # 2.21 NON-Resuming: load from ckp IF provided existing ckp other than current ckp
@@ -281,7 +289,7 @@ def train(cfg: Config):
                 optimizer=opt_stats.optimizer,
                 lr_scheduler=opt_stats.lr_scheduler,
             )
-        print(f"After loading weights from ckp:\n{model.module.config}")
+        print(f"[{datetime.now()}] Finish -> 4.1 Loading weights from ckp:\n{model.module.config}")
         ema_stats.load_ema_ckp(output_dir)
 
     if int(os.environ.get("RANK", 0)) == 0:
@@ -291,7 +299,7 @@ def train(cfg: Config):
             print("In local test setting!!!\n" * 5)
             model.config.save_pretrained(output_dir)
         print(
-            f"[{datetime.now()}] Finish -> Dump model config to `{output_dir}/config.json`"
+            f"[{datetime.now()}] Finish -> 4.1 Dump model config to `{output_dir}/config.json`"
         )
 
     # 4.2 set initial condition of training, either resuming from ckp or starting from scratch
@@ -319,14 +327,14 @@ def train(cfg: Config):
         model, valgen_loader, "valid", train_cfg.do_valid and train_cfg.do_generation, cfg
     )
     test_loader = loader_utils.initialize_pt_test_loader(
-        gtokenizer, cfg, pt_sampler, tokenizer_config, tokenizer_cls, collator.DataCollatorForGST
+        cfg, pt_sampler, tokenizer_cls, tokenizer_config, collator.DataCollatorForGST
     )
     acc, triplet = evaluate(model, test_loader, "test", train_cfg.do_test)
     ema_stats.ema_best_res = {"loss": acc} if acc else None
 
     # 4.42 dump ds config and initialize tensorboard in `worker 0`
     tb_writer = log_eval_dump_utils.pt_dump_cfg_and_init_tb(model, use_deepspeed, use_tb_writer, output_dir)
-    # 4.43 reset train sampler if needed, especially when pretraining data is very small
+    # 4.43 reset train sampler if needed: a). pretraining data is very small; b). CL (Contrastive Learning)
     pt_sampler = loader_utils.reset_pt_train_sampler(
         reset_samples_per_epoch, task_type, train_dataset, train_cfg, pt_sampler
     )
@@ -345,7 +353,7 @@ def train(cfg: Config):
     )
 
     # 5. Training ...
-    print(f"[{datetime.now()}] Training start ...")
+    print(f"[{datetime.now()}] 5. Training start ...")
     j = j_init
     ckp = ckp_init
     train_stats = TrainingStats(
@@ -393,7 +401,7 @@ def train(cfg: Config):
                 )
                 ema_stats.update_ema(model, step=train_stats.j)
                 if train_stats.j % sched_cfg.logging_steps == 0:
-                    log_eval_dump_utils.log_training_stats(
+                    log_eval_dump_utils.log_pt_training_stats(
                         train_cfg, train_stats, opt_stats, prof=prof, tb_writer=tb_writer
                     )
 
@@ -401,14 +409,8 @@ def train(cfg: Config):
                     (train_stats.j % sched_cfg.steps_per_saving == 0)
                     and (train_stats.j > j_init)
                 ) or (train_stats.j == sched_cfg.total_num_steps):
-                    log_eval_dump_utils.log_dump_training_stats(
-                        model,
-                        cfg,
-                        train_stats,
-                        opt_stats,
-                        loader_stats,
-                        ema_stats,
-                        tb_writer,
+                    log_eval_dump_utils.log_dump_pt_training_stats(
+                        model, cfg, train_stats, opt_stats, loader_stats, ema_stats, tb_writer
                     )
 
                 if train_stats.j == sched_cfg.total_num_steps:

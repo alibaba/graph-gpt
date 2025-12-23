@@ -51,7 +51,7 @@ def get_latest_ckp(pretrain_cpt, eval_only=0):
 
 def get_all_ckps(pretrain_cpt):
     dirs_scan = _scan_ckps(pretrain_cpt)
-    return [os.path.join(pretrain_cpt, f"epoch_{ep}") for ep in dirs_scan]
+    return [os.path.join(pretrain_cpt, f"epoch_{ep}") for ep in dirs_scan], dirs_scan
 
 
 def convert_dict_to_df(dict_):
@@ -508,9 +508,6 @@ def set_dist_env(train_cfg: TrainingConfig):
     # 1. set-up gpu related env
     gpu_name = torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu"
     train_cfg.gpu_name = gpu_name
-    # if "V100" in gpu_name:
-    #     os.environ["NCCL_SOCKET_IFNAME"] = "eth"
-    #     print(f"set NCCL_SOCKET_IFNAME to be 'eth' for dt-algo-v100 queue")
     if "AMD" in gpu_name:
         from torch.nn.attention import SDPBackend, sdpa_kernel
 

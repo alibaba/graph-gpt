@@ -192,6 +192,7 @@ def train(cfg: Config):
     # obtain layerwise lr
     model_parameters = model.parameters()
     # model_parameters = loss_utils.get_layerwise_param_groups(model, lr, 0.95)
+    scheduler_conf = None
     if use_deepspeed:
         (
             ds_config,

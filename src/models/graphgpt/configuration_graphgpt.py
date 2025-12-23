@@ -55,6 +55,8 @@ class GraphGPTConfig(LlamaConfig):
         embed_dim: int = 0,
         # For pre-train task
         next_n_token: int = 1,
+        use_generative: bool = True,
+        use_discriminative: bool = False,
         focal_gamma: float = 0,  # param for focal-loss
         smtp_inside: bool = False,  # whether to prepare SMTP inputs and labels inside `model::forward`
         # For downstream tasks
@@ -65,13 +67,16 @@ class GraphGPTConfig(LlamaConfig):
         num_neg: Optional[int] = None,
         **kwargs,
     ):
-        self.smtp_inside = smtp_inside
-        self.focal_gamma = focal_gamma
-        self.next_n_token = next_n_token
         self.causal_attention = causal_attention
         self.rope_range = rope_range
         # rope_type: yarn, dynamic, default
         rope_scaling = None  # {"rope_type": "default", "factor": 4}
+        # pre-train task settings
+        self.next_n_token = next_n_token
+        self.use_generative = use_generative
+        self.use_discriminative = use_discriminative
+        self.focal_gamma = focal_gamma
+        self.smtp_inside = smtp_inside
         # 1. For dropout in transformer backbone
         self.embed_pdrop = embed_pdrop
         self.path_pdrop = path_pdrop
@@ -175,6 +180,8 @@ def convert_to_legacy_config(model_config: GraphGPTModelConfig) -> GraphGPTConfi
         "pos_bins": model_config.geometric_input.pos_bins,
         # Parameters from `pretraining head`
         "next_n_token": model_config.pt_head.next_n_token,
+        "use_generative": model_config.pt_head.use_generative,
+        "use_discriminative": model_config.pt_head.use_discriminative,
         "focal_gamma": model_config.pt_head.focal_gamma,
         "smtp_inside": model_config.pt_head.smtp_inside,
         # Parameters from `finetuning head`

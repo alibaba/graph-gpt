@@ -4,11 +4,20 @@ tokenization:
 
   data:
     data_dir: "../data/OGB"
-    dataset: "PCQM4Mv2"
-    data_path: "pcqm4m-v2"
+    dataset: "ogbl-ppa"
+    data_path: "ogbl_ppa"
 
     ensemble_datasets: [ ]
-    sampling: null
+    sampling:
+      edge_ego:
+        depth_neighbors:
+          - [1, 14]
+        replace: false
+        neg_ratio: 1
+        percent: 50
+        method:
+          name: "global"
+        valid: 1
 
     return_valid_test: false
 
@@ -19,32 +28,32 @@ tokenization:
       node_dim: null
       mode: null
 
-  attr_world_identifier: "molecule"  # TODO: move inside `semantics`
+  attr_world_identifier: "ogbl-ppa"
   add_eos: false
 
-  vocab_file: "vocab512_sorted"
+  vocab_file: "vocab512"
   label_tokens_to_pad: []
 
   semantics:
     node:
       discrete: "x"
-      dim: 9
+      dim: 2
       continuous: null
       ignored_val: null
-      embed: null  # embed attr name
+      embed: null
       embed_dim: null
     edge:
-      discrete: "edge_attr"
-      dim: 3
+      discrete: null
+      dim: 0
       continuous: null
       ignored_val: null
-      embed: null  # embed attr name
+      embed: null
       embed_dim: null
     graph:
       discrete: null
       continuous: null
       ignored_val: null
-      embed: null  # embed attr name
+      embed: null
       embed_dim: null
     common:
       reserved_token:
@@ -74,7 +83,7 @@ tokenization:
         - "<9>"
     instructions:
       enable: false
-      name: "molecule"
+      name: null
       func: []
 
   structure:
@@ -85,11 +94,11 @@ tokenization:
       bos_token: "<bos>"
       eos_token: "<eos>"
       new_node_token: "<new>"
-      node_scope: 512  # TODO: remove redundant config, such as scope_base, cyclic
+      node_scope: 512
       scope_base: 512
       cyclic: 1
     edge:
-      remove_edge_type_token: true
+      remove_edge_type_token: false
       in_token: "<edge_in>"
       out_token: "<edge_out>"
       bi_token: "<edge_bi>"

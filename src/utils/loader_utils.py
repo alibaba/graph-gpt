@@ -378,10 +378,8 @@ def get_pt_train_valid_test_sampler(
         # sampler_for_test = loader_utils.obtain_deterministic_sampler(
         #     test_dataset.sample_idx, seed=42, cnt_samples=20000
         # )
-        print(f"Using ZINC dataset for validating loss.")
-        test_dataset, _ = read_dataset(
-            name="ZINC", data_cfg=data_cfg, train_cfg=training
-        )
+        name = "ZINC"
+        test_dataset, _ = read_dataset(name=name, data_cfg=data_cfg)
         sampler_for_test = distribute_sampler_with_rnd_seed(
             test_dataset.sample_idx,
             training.distributed.world_size,
@@ -390,6 +388,16 @@ def get_pt_train_valid_test_sampler(
         )[:20000]
         if task_type.endswith("-cl"):
             sampler_for_test = get_cl_sampler(sampler_for_test, True)
+    if training.do_infer:
+        name = "custom_mol"
+        test_dataset, _ = read_dataset(name=name, data_cfg=data_cfg)
+        sampler_for_test = distribute_sampler_with_rnd_seed(
+            test_dataset.sample_idx,
+            training.distributed.world_size,
+            training.distributed.rank,
+            seed=42,
+        )
+
     pt_sampler = PTSamplerConfig(
         train_sampler=train_sampler,
         train_cnt=train_cnt,
@@ -427,6 +435,7 @@ def reset_pt_train_sampler(
             pt_sampler = dataclasses.replace(
                 pt_sampler,
                 train_sampler=get_cl_sampler(pt_sampler.train_sampler, False),
+                train_shuffle=False,  # double ensurance
             )
         sched_cfg.epochs = 1
         print(f"reset actual epochs to {sched_cfg.epochs}")
@@ -635,17 +644,18 @@ def initialize_ft_train_loader_at_epoch_start(
     return train_loader
 
 
-def get_valid_test_loader(train_dataset, collator_fn, sampler_for_eval):
-    batch_size_eval = 128  # small to avoid OOM when evaluating
-    num_workers_eval = 8
+def get_valid_test_loader(
+    train_dataset, collator_fn, sampler_for_eval, train_cfg: TrainingConfig
+):
     loader_for_eval = DataLoader(
         dataset=train_dataset,
-        batch_size=batch_size_eval,
+        batch_size=train_cfg.batch_size_eval,
         sampler=sampler_for_eval,
-        num_workers=num_workers_eval,
+        num_workers=train_cfg.num_workers_eval,
         collate_fn=collator_fn,
         worker_init_fn=worker_init_fn_seed,
         pin_memory=False,
+        drop_last=(train_cfg.task_type == "pretrain-cl") and (not train_cfg.do_infer),
     )
     return loader_for_eval
 
@@ -680,6 +690,7 @@ def initialize_pt_valid_loader(
             stack_method=model_cfg.graph_input.stack_method,
             train_cfg=train_cfg,
         )
+        inspect_tokenization_results(train_dataset, gtokenizer_valid)
         valid_loader = get_valid_test_loader(
             train_dataset,
             collator_cls(
@@ -689,6 +700,7 @@ def initialize_pt_valid_loader(
                 return_tensors="pt",
             ),
             pt_sampler.sampler_for_eval,
+            train_cfg,
         )
         if train_cfg.do_generation:
             valgen_loader = get_valid_test_loader(
@@ -700,44 +712,40 @@ def initialize_pt_valid_loader(
                     return_tensors="pt",
                 ),
                 pt_sampler.sampler_for_eval[: train_cfg.pretrain_mlm.num_gen_samples],
+                train_cfg,
             )
     return valid_loader, valgen_loader
 
 
 def initialize_pt_test_loader(
-    gtokenizer,  # src.data.tokenizer.GSTTokenizer|StackedGSTTokenizer
     cfg: Config,
     pt_sampler: PTSamplerConfig,
-    tokenizer_config: dict,
     tokenizer_cls,  # src.data.tokenizer.GSTTokenizer|StackedGSTTokenizer
+    tokenizer_config: dict,
     collator_cls,  # src.data.collator.DataCollatorForGST
 ):
-    model_config = cfg.model
-    training = cfg.training
+    token_cfg = cfg.tokenization
+    model_cfg = cfg.model
+    train_cfg = cfg.training
 
     test_loader = None
-    if training.do_test:
-        # test_tokenizer_config = copy.deepcopy(tokenizer_config)
-        # test_tokenizer_config["semantics"]["node"]["discrete"] = None
-        # test_tokenizer_config["semantics"]["edge"]["discrete"] = None
-        # test_tokenizer_config["structure"]["nx"]["func"] = [
-        #     {"name": "shortest_path_length", "valid": 1}
-        # ]
-        # gtokenizer_test = tokenizer_cls(test_tokenizer_config, add_eos=False)
-        # gtokenizer_test = tokenizer_cls(
-        #     tokenizer_config, add_eos=add_eos, stack_method=stack_method, train_cfg=training,
-        # )
-        gtokenizer_test = gtokenizer
-        # gtokenizer_test.attr_mask_ratio = 0  # no need mask
+    if train_cfg.do_test or train_cfg.do_infer:
+        gtokenizer_test = tokenizer_cls(
+            copy.deepcopy(tokenizer_config),
+            add_eos=token_cfg.add_eos,
+            stack_method=model_cfg.graph_input.stack_method,
+            train_cfg=train_cfg,
+        )
         inspect_tokenization_results(pt_sampler.test_dataset, gtokenizer_test)
         test_loader = get_valid_test_loader(
             pt_sampler.test_dataset,
             collator_cls(
                 tokenizer=gtokenizer_test,
-                max_length=model_config.max_position_embeddings,
-                pad_to_multiple_of=training.pad_to_multiple_of,
+                max_length=model_cfg.max_position_embeddings,
+                pad_to_multiple_of=train_cfg.pad_to_multiple_of,
                 return_tensors="pt",
             ),
             pt_sampler.sampler_for_test,
+            train_cfg,
         )
     return test_loader

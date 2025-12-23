@@ -38,8 +38,8 @@ except ModuleNotFoundError:
 
 
 @torch.no_grad()
-def ft_infer(model, loader, cfg: Config, eval_name: str):
-    # Infer hidden states or predicted results for a SFT model
+def ft_infer_hidden_states(model, loader, cfg: Config, eval_name: str):
+    # Infer hidden states or predicted results for an SFT model
     # eval_name -> train, valid, test
     model.eval()
     device = model.device
@@ -164,6 +164,82 @@ def ft_evaluate(model, loader, cfg: Config, eval_name: str):
 
 
 @torch.no_grad()
+def pt_infer_hidden_states(model, loader, cfg: Config):
+    """Infer hidden states or predicted results for a Generative/Discriminative Pre-trained model"""
+    # eval_name -> train, valid, test
+    model.eval()
+    device = model.device
+    ls_idx = []
+    ls_logits = []
+    for j, test_data in enumerate(loader, 1):
+        input_ids = test_data["input_ids"].to(device)
+        attention_mask = test_data["attention_mask"].to(device)
+        position_ids = test_data["position_ids"].to(device)
+        inputs_raw_embeds = None
+        if "embed" in test_data:
+            inputs_raw_embeds = test_data["embed"].to(device)
+        res = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            inputs_raw_embeds=inputs_raw_embeds,
+            position_ids=position_ids,
+        )  # Perform a single forward pass.
+        # `idx` is finalized inside `collator`
+        idx = test_data["idx"].to(device)
+        ls_idx.append(idx.view((-1, 1)))
+        logits = res.head2_logits  # non-l2 normalized
+        ls_logits.append(logits.half())
+    idx = torch.vstack(ls_idx)
+    logits = torch.vstack(ls_logits)
+    return idx, logits, None
+
+
+def pt_infer_only(
+    model: PreTrainedModel,
+    cfg: Config,
+    collator_cls,  # src.data.collator.DataCollatorForGST
+    tokenizer_cls,  # src.data.tokenizer.GSTTokenizer|StackedGSTTokenizer
+    tokenizer_config: Dict,
+    pt_sampler: loader_utils.PTSamplerConfig,
+):
+    train_cfg = cfg.training
+    output_dir = train_cfg.output_dir
+    print("\nInfer-only mode: skip training!!!" * 5)
+    print(f"\n\n{OmegaConf.to_yaml(cfg)}\n\n")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # set-up valid/test loader and evaluate before training
+    test_loader = loader_utils.initialize_pt_test_loader(
+        cfg, pt_sampler, tokenizer_cls, tokenizer_config, collator_cls
+    )
+    ls_ckp, ls_eps = misc_utils.get_all_ckps(output_dir)
+    pprint(ls_ckp)
+    if len(ls_ckp) > 0:
+        for ep, ckp in zip(ls_eps, ls_ckp):
+            print("\n\n\n")
+            if train_cfg.use_deepspeed:
+                misc_utils.load_ds_ckp(ckp, model, strict=True)
+            else:
+                fn_model = os.path.join(output_dir, misc_utils.MODEL_NAME)
+                model.load_state_dict(torch.load(fn_model), strict=True)
+            model.to(device)
+            idx, logits, hidden_states = pt_infer_hidden_states(model, test_loader, cfg)
+            misc_utils.dump_infer_results(output_dir, ep, idx=idx, logits=logits)
+    else:
+        print("No checkpoint found!!! Model Initialized Randomly!!!\n" * 5)
+        ep = -1
+        model.to(device)
+        idx, logits, hidden_states = pt_infer_hidden_states(model, test_loader, cfg)
+        misc_utils.dump_infer_results(output_dir, ep, idx=idx, logits=logits)
+    OmegaConf.save(
+        cfg,
+        f=os.path.join(
+            output_dir,
+            f"config-infer-only-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.yaml",
+        ),
+    )
+
+
+@torch.no_grad()
 def evaluate(
     model: PreTrainedModel,
     loader: DataLoader,
@@ -252,8 +328,8 @@ def evaluate_generation(
     default_umr_clip = list(train_cfg.pretrain_mlm.params.umr_clip)
     print(f"[{datetime.now()}] Evaluating Model Generation on {eval_name} data ...")
     print(OmegaConf.to_yaml(gen_cfg))
-    intervals = 5
-    sp = np.linspace(0.49, 0.99, num=intervals + 1)
+    intervals = 10
+    sp = np.linspace(0.01, 0.99, num=intervals + 1)
     acc_mat = []
     for j in range(intervals):
         # `j in range(intervals)` must be in the outer loop to affect loader's processing of data mask
@@ -382,13 +458,14 @@ def eval_pt_gen_only(
 ):
     train_cfg = cfg.training
     output_dir = train_cfg.output_dir
-    print("\n\nEval-only mode: skip training!!!" * 5)
+    print("\nEval-only mode: skip training!!!" * 5)
+    print(f"\n\n{OmegaConf.to_yaml(cfg)}\n\n")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # set-up valid/test loader and evaluate before training
     valid_loader, valgen_loader = loader_utils.initialize_pt_valid_loader(
         train_dataset, cfg, pt_sampler, tokenizer_config, tokenizer_cls, collator_cls
     )
-    ls_ckp = misc_utils.get_all_ckps(output_dir)
+    ls_ckp, _ = misc_utils.get_all_ckps(output_dir)
     pprint(ls_ckp)
     ls_result = ["ckp,loss,gen_acc1,gen_acc2,gen_acc3,gen_acc4,gen_acc5\n"]
     for ckp in ls_ckp:
@@ -424,7 +501,7 @@ def eval_pt_gen_only(
     )
 
 
-def log_training_stats(
+def log_pt_training_stats(
     training: TrainingConfig,
     train_stats: TrainingStats,
     opt_stats: OptimizingStats,
@@ -485,7 +562,7 @@ def log_ft_training_stats(
     ) if tb_writer is not None else None
 
 
-def log_dump_training_stats(
+def log_dump_pt_training_stats(
     model: PreTrainedModel,
     cfg: Config,
     train_stats: TrainingStats,
@@ -714,7 +791,7 @@ def log_dump_ft_training_stats(
     if ema_stats.model_ema is not None:
         model_for_test = ema_stats.model_ema
         print(f"Using model-ema on test data")
-    idx, logits, hidden_states = ft_infer(
+    idx, logits, hidden_states = ft_infer_hidden_states(
         model_for_test, loader_stats.test_loader, cfg, "test"
     )
     misc_utils.dump_infer_results(

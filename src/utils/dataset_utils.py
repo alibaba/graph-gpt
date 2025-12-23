@@ -727,6 +727,7 @@ class PygCustomMolDataset(InMemoryDataset):
         smiles2graph=None,
         transform=None,
         pre_transform=None,
+        folder="custom_mol",
     ):
         """
         modified from ogb/lsc/pcqm4mv2_pyg.py::PygPCQM4Mv2Dataset
@@ -738,7 +739,7 @@ class PygCustomMolDataset(InMemoryDataset):
 
         self.original_root = root
         self.smiles2graph = smiles2graph_with_try
-        self.folder = osp.join(root, "custom_mol")
+        self.folder = osp.join(root, folder)
         self.version = 1
 
         # md5sum:
@@ -812,6 +813,24 @@ class PygCustomMolDataset(InMemoryDataset):
 
         print("Saving...")
         torch.save((data, slices), self.processed_paths[0])
+
+
+class PygChembl29Dataset(PygCustomMolDataset):
+    def __init__(
+        self,
+        root="dataset",
+        smiles2graph=None,
+        transform=None,
+        pre_transform=None,
+    ):
+        super().__init__(
+            root, transform=transform, pre_transform=pre_transform, folder="chembl29"
+        )
+        self.folder = osp.join(root, "chembl29")
+
+    @property
+    def raw_file_names(self):
+        return "smiles.smi"
 
 
 class PygCEPDBDataset(InMemoryDataset):
@@ -1762,7 +1781,8 @@ if __name__ == "__main__":
     # dataset = PygPCQM4Mv2RdkitPosCCDataset(root="./data/OGB")
     # dataset = PygPCQM4Mv2CCDataset(root="./data/OGB")
     # dataset = PygPCQM4Mv2PosCCDataset(root="./data/OGB")
-    dataset = PygCustomMolDataset(root="./data/OGB")
+    # dataset = PygCustomMolDataset(root="./data/OGB")
+    dataset = PygChembl29Dataset(root="./data/OGB")
     # dataset = StructureDataset(root="./data/Struct", data_ver="v00")
     # dataset = OneIDSmallDataset(root="./data/OneID")
     # dataset = PygPCQM4Mv2Dataset(root="./data/OGB")

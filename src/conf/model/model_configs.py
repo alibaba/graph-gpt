@@ -62,6 +62,12 @@ class PretrainingHeadConfig:
     next_n_token: int = 1
     """Number of next tokens to predict for pre-training."""
 
+    use_generative: bool = True
+    """Whether to use generative pre-training."""
+
+    use_discriminative: bool = False
+    """Whether to use discriminative pre-training, e.g., Contrastive Learning"""
+
     focal_gamma: float = 0.0
     """Gamma parameter for focal loss."""
 
@@ -131,8 +137,8 @@ class GraphGPTModelConfig:
     attention_bias: bool = False
     mlp_bias: bool = False
 
-    hidden_act: str = "silu"
-    max_position_embeddings: int = 2048
+    hidden_act: str = "gelu"
+    max_position_embeddings: int = 1024
     initializer_range: float = 0.02
     rms_norm_eps: float = 1e-6
     tie_word_embeddings: bool = False

@@ -44,7 +44,7 @@ training:
     ema_decay: 0.9999
   tot_samples: 10000  # num of samples for estimating tokens-per-sample
   batch_size: 128
-  batch_size_eval: null  # small to avoid OOM when evaluating during finetuning
+  batch_size_eval: 128  # small to avoid OOM when evaluating during finetuning
   max_length: null  # used in finetuning
   pad_to_multiple_of: 8
   pack_tokens: 0
@@ -54,6 +54,7 @@ training:
   do_valid: false
   do_test: false  # can be used to evaluate EMA ckp with validation data
   do_generation: false
+  do_infer: false
   pt_eval_only: false
   #TODO: refactor into pt_eval
   focal_gamma: 0  # 0 for CE; other vals for focal-loss

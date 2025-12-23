@@ -12,8 +12,6 @@ model_type="graphgpt"
 model_name="mini"  # tiny mini small medium base base24 base48 base64 large xlarge xxlarge
 stack_method="short"
 stacked_feat_agg_method="gated"  # gated|sum
-hidden_act="gelu"  # llama -> `silu`, graphformer -> `gelu`
-tie_word_embeddings=0
 max_position_embeddings=1024
 
 # ii.a model::dropout & lsi
@@ -41,6 +39,7 @@ logging_steps=100
 # iii.c training::eval/infer settings
 valid_percent=0.1
 pt_eval_only=false
+do_infer=false
 
 # iii.d training::directories
 ds_prefix="ogbg_molpcba"
@@ -66,7 +65,7 @@ focal_gamma=0
 tot_samples=10000  # tot_samples sampled for evaluating average eulerian path length
 
 # iv. generation config
-do_generation=true
+do_generation=false
 gen_alg="maskgit_plus"  # origin maskgit_plus topk_margin entropy
 parallel_gen=false  # whether to parallel batch generation: slow when tested in spice-circuit dataset
 #===================================== ABOVE section is task-specific ==================================
@@ -88,6 +87,20 @@ parallel_gen=false  # whether to parallel batch generation: slow when tested in 
 #=======================================================================================================================
 #=======================================================================================================================
 #===================================== PT:: BELOW TILL THE END ARE THE SAME FOR ALL DATASETS ===========================
+if [ "${dlm_wgt}" == "true" ]
+then
+  loss_obj="dlm"
+else
+  loss_obj="mlm"
+fi
+
+if [ "${task_type}" == "pretrain-cl" ]
+then
+  pt_obj="cl"
+else
+  pt_obj="gen"
+fi
+
 if [ ${attention_dropout} -eq 0 ]
 then adp=""
 else adp="_adp${attention_dropout}"
@@ -112,7 +125,7 @@ then lsi=""
 else lsi="_lsi${layer_scale_init_val}"
 fi
 
-suffix="_t${trial}_vp${valid_percent}_mlm_lr${lr}${adp}${pdp}${edp}${mdp}${lsi}_${stacked_feat_agg_method}_${stack_method}_wd${weight_decay}"
+suffix="_t${trial}_vp${valid_percent}_${pt_obj}_${loss_obj}_lr${lr}${adp}${pdp}${edp}${mdp}${lsi}_${stacked_feat_agg_method}_${stack_method}_wd${weight_decay}"
 
 # env config
 data_dir_prefix="./data"
@@ -241,16 +254,15 @@ raw_udf="
   --training.valid_percent=${valid_percent}
   --training.do_generation=${do_generation}
   --training.pt_eval_only=${pt_eval_only}
+  --training.do_infer=${do_infer}
   --training.tot_samples=${tot_samples}
   --training.focal_gamma=${focal_gamma}
   --model.model_type='${model_type}'
   --model.max_position_embeddings=${max_position_embeddings}
-  --model.tie_word_embeddings=${tie_word_embeddings}
   --model.num_hidden_layers=${num_hidden_layers}
   --model.hidden_size=${hidden_size}
   --model.intermediate_size=${intermediate_size}
   --model.num_attention_heads=${num_attention_heads}
-  --model.hidden_act='${hidden_act}'
   --model.graph_input.stacked_feat_agg_method='${stacked_feat_agg_method}'
   --model.graph_input.stack_method='${stack_method}'
   --model.dropout_settings.attention_dropout=${attention_dropout}
