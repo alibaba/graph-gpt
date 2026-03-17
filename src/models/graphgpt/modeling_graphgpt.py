@@ -150,7 +150,7 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
             print("\nSet attention mask to non-causal attention!\n")
         self.model = LlamaModel(config)
         self.smtp_inside = config.smtp_inside  # apply mask in side model
-        self.smtp_power = 1
+        self.smtp_power = config.smtp_power
         # 1.1 Embedding dropout
         self.embed_dropout = None
         if config.embed_pdrop > 0:
@@ -279,7 +279,6 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
             # [bz, seq, num_feats]
             input_ids = input_ids[:, :, : self.config.stacked_feat]
 
-            # print(f"[DEBUG] before -> input_ids:\n{input_ids}")
             input_ids, labels = prepare_for_2d_smtp_inputs_labels(
                 input_ids,
                 node_idx,
@@ -289,7 +288,6 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
                 vocab=self.config.vocab_size,
                 global_2d_mask=False,
             )
-            # print(f"[DEBUG] after -> input_ids:\n{input_ids}\nlabels:\n{labels}")
 
         input_ids, inputs_embeds, in_ = self.prepare_inputs_embeds(
             input_ids, inputs_embeds, inputs_raw_embeds, labels
@@ -394,14 +392,13 @@ class GraphGPTPosPred(LlamaForCausalLM):
 
         # 2. set-up 2D-SMTP pre-train
         # randomly pick some sample, then randomly mask their attrs for 2d-smtp
-        self.smtp_2d_rate = 0.1
+        self.smtp_2d_rate = config.pt_smtp_2d_rate
         # `smtp_2d_replace_rate` -> rate of replacing [mask] with randomly drawn tokens => inject noise to 2D tokens
-        # turns out to making fine-tune results worse
-        self.smtp_2d_replace_rate = 0
+        self.smtp_2d_replace_rate = config.smtp_2d_replace_rate
         # `sep_2d3d_inputs` -> 3D/2D-SMTP use separate samples: 2D-SMTP samples' pos set to 0
-        self.sep_2d3d_inputs = True
+        self.sep_2d3d_inputs = config.sep_2d3d_inputs
         # `global_2d_mask` -> apply 2d mask on all samples, including 2D/3D
-        self.global_2d_mask = False
+        self.global_2d_mask = config.global_2d_mask
         if self.config.next_n_token > 1:
             self.n_token_proj = nn.Linear(
                 config.hidden_size,
@@ -413,20 +410,18 @@ class GraphGPTPosPred(LlamaForCausalLM):
 
         # 3. prepare for 3D pre-train
         # 3.1 init general params
-        # pos-smtp-line|pos-smtp-cube|pos-smtp-mix  -> pos-smtp-mix means 2D-smtp & 3D-smtp together
-        # turns out denoise-pos-smtp-line to be the best!!!
-        self.problem_type = "pos-smtp-line"
-        self.smtp_3d_power = 1  # polynomial: 0.75/1/1.25, cosine: -1, arccosine: -2
-        self.smtp_3d_noise_scale = 0.2
+        self.problem_type = config.pt_problem_type
+        self.smtp_3d_power = config.smtp_3d_power
+        self.smtp_3d_noise_scale = config.smtp_3d_noise_scale
         # coord_lvl_mask: mask position in per coordinate level instead of position level
         # (i.e., 3 coordinates together for one position)
-        self.coord_lvl_mask = True
-        self.num_bins = self.config.pos_bins = 1024
+        self.coord_lvl_mask = config.coord_lvl_mask
+        self.num_bins = self.config.pos_bins = config.pt_num_bins
         # `apply_denoise == True` means un-masked noisy coord will be predicted using clean coord as the target!
-        self.apply_denoise = False
+        self.apply_denoise = config.apply_denoise
         # 3.2 init for different pre-train objectives
-        self.label_smoothing = 0
-        self.config.pos_agg_method = self.pos_agg_method = "gated"
+        self.label_smoothing = config.label_smoothing
+        self.config.pos_agg_method = self.pos_agg_method = config.pt_pos_agg_method
         if self.problem_type == "pos-smtp-line":
             self._init_line_token_transform()
         elif self.problem_type == "pos-smtp-cube":
@@ -435,7 +430,7 @@ class GraphGPTPosPred(LlamaForCausalLM):
             self._init_mix_token_transform()
 
         # 4. raw-pos input projection
-        self.use_pos_proj = False
+        self.use_pos_proj = config.use_pos_proj
         if self.use_pos_proj:
             self.in_pos_layernorm = modeling_llama.LlamaRMSNorm(
                 3, eps=config.rms_norm_eps
@@ -443,8 +438,8 @@ class GraphGPTPosPred(LlamaForCausalLM):
             self.in_pos_proj = nn.Linear(3, config.hidden_size, bias=False)
 
         # 5. SMTP loss aggregation
-        self.loss_agg = "token-lvl"  # token-lvl|sample-lvl
-        self.config.pos_range = pos_range = "p1p"
+        self.loss_agg = config.loss_agg
+        self.config.pos_range = pos_range = config.pt_pos_range
 
         print(f"problem_type: {self.problem_type}, num_bins: {self.num_bins}")
         self.register_buffer(
@@ -456,7 +451,7 @@ class GraphGPTPosPred(LlamaForCausalLM):
         self.register_buffer("range_max", range_max, persistent=False)
 
         # 6. whether to add CL-loss
-        self.use_discriminative = False
+        self.use_discriminative = config.pt_use_discriminative
         if self.use_discriminative:
             self.ratio_dis = 1
             self.cl_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
@@ -483,8 +478,6 @@ class GraphGPTPosPred(LlamaForCausalLM):
         self.embed_pos_token = nn.Embedding(
             pos_vocab, self.config.hidden_size, padding_idx=0
         )  # [pad]->0, [mask]->1
-        # tie weights if needed: in `modeling_utils.py`
-        # self._tie_or_clone_weights(self.pos_bins_head, self.embed_pos_token)
         tmp_config = deepcopy(self.config)
         tmp_config.stacked_feat = 3
         tmp_config.stacked_feat_agg_method = self.pos_agg_method  # sum|gated
@@ -529,7 +522,7 @@ class GraphGPTPosPred(LlamaForCausalLM):
 
     def _init_mix_token_transform(self):
         # a). deal with line tokens, i.e., each pos with 3 coordinates form 3 tokens
-        self.num_bins_line = 256
+        self.num_bins_line = self.config.pt_num_bins_line
         if self.pos_agg_method == "sum":
             pos_token_shift = torch.tensor(
                 [[[0, self.num_bins_line, self.num_bins_line * 2]]],
@@ -557,7 +550,7 @@ class GraphGPTPosPred(LlamaForCausalLM):
         )
 
         # b). deal with cube tokens, i.e., each pos with 3 coordinates form one token
-        self.num_bins_cube = 32
+        self.num_bins_cube = self.config.pt_num_bins_cube
         self.cube_token_vocab = self.num_bins_cube**3 + 2
 
         self.embed_cube_token = nn.Embedding(
@@ -640,10 +633,8 @@ class GraphGPTPosPred(LlamaForCausalLM):
             apply_denoise = False
             global_2d_mask = False
         if self.use_discriminative:
-            # print(f"[DEBUG] before mask -> raw_pos: {raw_pos}")
             raw_pos = utils_graphgpt.apply_sample_lvl_mask_alternative(raw_pos)
             smtp_2d_rate = 0
-            # print(f"[DEBUG] after mask -> raw_pos: {raw_pos}")
         elif self.sep_2d3d_inputs:
             raw_pos = utils_graphgpt.apply_sample_lvl_mask_pos(raw_pos, smtp_2d_rate)
             # 2D-SMTP samples is picked together with pos mask, so no need to pick again in the following process
@@ -661,7 +652,6 @@ class GraphGPTPosPred(LlamaForCausalLM):
             vocab=self.config.vocab_size,
             global_2d_mask=global_2d_mask,
         )
-        # print(f"[DEBUG] input_ids:\n{input_ids}\nlabels_2d:\n{labels_2d}")
 
         input_ids, inputs_embeds, in_ = _get_stacked_inputs_embeds(
             self, input_ids, inputs_embeds
@@ -701,14 +691,7 @@ class GraphGPTPosPred(LlamaForCausalLM):
                 noisy_pos_embeds = self.embed_dropout(noisy_pos_embeds)
             inputs_embeds += noisy_pos_embeds
 
-        # print(f"[DEBUG] labels_3d:\n{labels}")
-        # print(
-        #     f"[Debug] pos_bins_head:\n{self.pos_bins_head.weight.data}\n{self.pos_bins_head.weight.data.shape}\n"
-        #     f"[Debug] embed_pos_token:\n{self.embed_pos_token.weight.data}\n{self.embed_pos_token.weight.data.shape}\n\n\n"
-        # )
         # 1. run backbone transformer
-        # position_ids = None
-        # print(f"[DEBUG] position_ids:\n{position_ids}")
         if not self.config.causal_attention:
             attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
         outputs = self.model(
@@ -879,11 +862,6 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
 
         self.pooling_method = config.pooling_method  # "last|sum|mean"
         print(f"Pooling in last layer is {self.pooling_method}!")
-        print(f"[BEFORE] Rotary Embedding is set to {self.model.rotary_emb}!")
-        # self.model.rotary_emb = utils_graphgpt.ResonanceLlamaRotaryEmbedding(
-        #     config=config
-        # )
-        print(f"[AFTER] Rotary Embedding is set to {self.model.rotary_emb}!")
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1056,7 +1034,6 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
 
         if not self.config.causal_attention:
             attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
-        # print(f"attention_mask: {attention_mask.shape}\n{attention_mask}")
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1227,16 +1204,15 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
     def __init__(self, config):
         super().__init__(config)
         # 1. Init for Denoising Head
-        # self.denoise = nn.Linear(config.hidden_size, 3, bias=False)
         self.denoise = utils_graphgpt.AtomTaskHead(config)
-        self.noise_scale = 0.35
-        self.denoise_wgt = 1
-        self.denoise_schedule_pow = 0
-        self.bi_causal = False
-        r_2d, r_3d, r_both = 4.0, 0.0, 6.0  # 2D:3D:2D&3D
+        self.noise_scale = config.noise_scale
+        self.denoise_wgt = config.denoise_wgt
+        self.denoise_schedule_pow = config.denoise_schedule_pow
+        self.bi_causal = config.bi_causal
+        r_2d, r_3d, r_both = config.r_2d, config.r_3d, config.r_both
         self.mask_3d_ratio = r_2d / (r_2d + r_3d + r_both)
         self.mask_2d_ratio = r_3d / (r_3d + r_both)
-        self.add_pos_type = True
+        self.add_pos_type = config.add_pos_type
         if self.bi_causal:
             self.model.bi_causal = self.bi_causal
             self.scale = MOL_ENERGY_SCALE
@@ -1265,7 +1241,7 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
             # embed 3D position type, 0~4: 0->pad, 1->(0,0,0), 2->(0,0,z), 3->(0,y,z), 4->(x,y,z)
             self.embed_pos_type = nn.Embedding(5, config.hidden_size, padding_idx=0)
         # 2. Use various transformation on 3D coordinates
-        self.inputs_transform = "token-line"  # zero|raw|token-line|token-cube|token-mix
+        self.inputs_transform = config.inputs_transform
         self.num_bins = self.config.pos_bins
         assert self.inputs_transform in (
             "token-line",
@@ -1278,41 +1254,37 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         elif self.inputs_transform == "token-cube":
             self._init_cube_token_transform()
         elif self.inputs_transform == "token-mix":
-            self.num_bins_line = 256
+            self.num_bins_line = config.num_bins_line
             self.pos_agg_method = self.config.pos_agg_method  # sum|gated
-            self.num_bins_cube = 32
+            self.num_bins_cube = config.num_bins_cube
             self._init_mix_token_transform()
         # 2.5 pos-bins config
-        if hasattr(self.config, "pos_range"):
-            pos_range = self.config.pos_range
-        else:
-            pos_range = "1p"
+        pos_range = config.dn_pos_range
         range_min, range_max = DICT_range[pos_range]
         print(f"pos_range: {pos_range} -> {(range_min, range_max)}")
         self.register_buffer("range_min", range_min, persistent=False)
         self.register_buffer("range_max", range_max, persistent=False)
         # 2.7 raw-pos input projection
-        self.use_pos_proj = False
+        self.use_pos_proj = config.dn_use_pos_proj
         if self.use_pos_proj:
             self.in_pos_layernorm = modeling_llama.LlamaRMSNorm(
                 3, eps=config.rms_norm_eps
             )
             self.in_pos_proj = nn.Linear(3, config.hidden_size, bias=False)
         # 3. Add additional aux-loss: pos-SMTP
-        self.smtp_3d = False
+        self.smtp_3d = config.smtp_3d
         if self.smtp_3d:
-            self.smtp_wgt = 1
-            self.smtp_3d_scheduler_power = 0.1
-            # `smtp_denoise == True` means un-masked noisy coord will be predicted using clean coord as the target!
-            self.smtp_denoise = True
-            self.smtp_vocab = 256
+            self.smtp_wgt = config.smtp_wgt
+            self.smtp_3d_scheduler_power = config.smtp_3d_scheduler_power
+            self.smtp_denoise = config.smtp_denoise
+            self.smtp_vocab = config.smtp_vocab
             self.smtp_proj = nn.Linear(
                 config.hidden_size, 3 * config.hidden_size, bias=False
             )
             self.smtp_head = nn.Linear(config.hidden_size, self.smtp_vocab, bias=False)
         # randomly select samples + non-3d-info samples:: mask their node/edge attrs for training, not for inferring
-        self.smtp_2d_rate = 0
-        self.smtp_2d_scheduler_power = 0
+        self.smtp_2d_rate = config.dn_smtp_2d_rate
+        self.smtp_2d_scheduler_power = config.smtp_2d_scheduler_power
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1542,7 +1514,6 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
             noise_scale=self.noise_scale,
             node_idx=node_idx,
         )  # noise_mask: [bz, seq, 1]
-        # print(f"[DEBUG] noise:\n{noise}\nnoise_mask:\n{noise_mask}")
 
         # 0.4 3D-SMTP: mask positions in node-lvl, polynomial scheduler
         mask_per_token = None
@@ -1573,7 +1544,6 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
                 pos_token_shift=self.pos_token_shift,
                 denoise=self.smtp_denoise,
             )
-            # print(f"[DEBUG] clean_pos:\n{clean_pos}\nsmtp_labels:\n{smtp_labels}")
         if self.denoise_schedule_pow != 0:
             assert self.smtp_3d is False
             (
@@ -1615,8 +1585,6 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
             inputs_embeds += noisy_pos_embeds
 
         # 1. run backbone transformer
-        # position_ids = None
-        # print(f"[DEBUG] position_ids: {position_ids}")
         if not self.config.causal_attention:
             attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
         outputs = self.model(
@@ -1660,7 +1628,6 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
                 loss_fct = nn.BCEWithLogitsLoss(reduction="none")
 
                 task_loss = loss_fct(logits.float(), labels.float())
-                # print(f"[DEBUG] logits:\n{logits}\nlabels:\n{labels}\ntask_loss:\n{task_loss}")
                 task_loss = task_loss * self.bin_label_wgt.float()
                 task_loss = task_loss.mean()
             else:
@@ -1726,9 +1693,7 @@ def _use_dropout(config):
 
 
 def _update_causal_mask(self, attention_mask, input_tensor, **kwargs):
-    # print(attention_mask)
     if hasattr(self, "bi_causal") and self.bi_causal:
-        # print(_prepare_4d_bi_causal_attention_mask(attention_mask, input_tensor.dtype))
         return _prepare_4d_bi_causal_attention_mask(attention_mask, input_tensor.dtype)
     if len(attention_mask.size()) == 2:
         return _prepare_4d_attention_mask(attention_mask, input_tensor.dtype)
@@ -1797,7 +1762,6 @@ def _get_stacked_inputs_embeds(
             ratio = 1 / nonzero_feat.to(inputs_embeds.dtype)  # [bz, seq, 1]
             ratio = torch.clamp(ratio, max=1)
             inputs_embeds = inputs_embeds * ratio
-            # print(f"nonzero_feat: {nonzero_feat}\nratio: {ratio}")
     else:
         in_ = input_ids  # [bz, seq]
     input_ids = None
@@ -1813,7 +1777,6 @@ def _get_ce_loss(
     label_smoothing: float = 0,
     focal_gamma: float = 0,
 ):
-    # print(f"[DEBUG] wgt: {wgt}, focal_gamma: {focal_gamma}")
     # Flatten the tokens
     logits = logits.view(-1, vocab_size)
     labels = labels.view(-1)
@@ -1847,7 +1810,6 @@ def _get_dlm_ce_loss(
     *,
     wgt,
 ):
-    # print(f"[DEBUG] wgt: {wgt}, focal_gamma: {focal_gamma}")
     # Flatten the tokens
     logits = logits.view(-1, vocab_size)
     labels = labels.view(-1)
@@ -2088,8 +2050,6 @@ def prepare_for_2d_smtp_inputs_labels(
     eps = _EPSILON
     bz_idx = torch.arange(bz, device=device).view((-1, 1))
     raw_input_ids = input_ids.clone()
-    # print(f"[DEBUG] Invoking `prepare_for_2d_smtp_inputs`. input_ids:\n{input_ids}\npos:\n{pos}\nnode_idx:\n{node_idx}")
-    # print(f"[DEBUG] smtp_2d_rate: {smtp_2d_rate}, power: {power}")
 
     # 1. get sample-lvl mask for samples for 2D-smtp
     sample_mask = (
@@ -2099,7 +2059,6 @@ def prepare_for_2d_smtp_inputs_labels(
     if pos is not None:
         sample_mask_pos = (pos.abs() < eps).all(dim=-1).all(dim=-1)
         sample_mask = sample_mask_pos[:, None, None] | sample_mask
-    # print(f"[DEBUG] sample_mask:\n{sample_mask}")
     # 2. mask/pad samples for 2D-smtp
     mr_per_sample = torch.rand((bz, 1, 1), dtype=torch.float32, device=device)
     # apply polynomial mask on node-idx level
@@ -2110,27 +2069,18 @@ def prepare_for_2d_smtp_inputs_labels(
     # BELOW: ONLY mask samples of no pos info, i.e., pos all 0's
     if not global_2d_mask:
         mask_per_node = mask_per_node & sample_mask
-    # print(f"[DEBUG] mask_per_node:\n{mask_per_node}")
     mask_per_token = mask_per_node[bz_idx, node_idx]  # look-up
-    # print(f"[DEBUG] mask_per_token:\n{mask_per_token}")
     mask_per_token = mask_per_token & (input_ids > 0)
-    # print(f"[DEBUG] mask_per_token:\n{mask_per_token}")
     labels = input_ids.clone().masked_fill_(~mask_per_token, label_pad_token_id)
-    # print(f"[DEBUG] labels:\n{labels}")
     input_ids = input_ids.clone().masked_fill_(mask_per_token, mask_token_id)
-    # print(f"[DEBUG] input_ids:\n{input_ids}")
     # 3. For [mask] tokens, randomly replace some with `token draw from vocab`
     # rnd_tokens = _get_uniform_rnd_tokens(raw_input_ids, vocab)
     rnd_tokens = _get_gaussian_rnd_tokens(raw_input_ids, vocab)
-    # print(f"[DEBUG] rnd_tokens:\n{rnd_tokens}")
     replace_mask = (
         torch.rand((bz, seq, feat), dtype=torch.float32, device=device) < replace_rate
     )
-    # print(f"[DEBUG] replace_mask:\n{replace_mask}")
     replace_mask = mask_per_token & replace_mask
-    # print(f"[DEBUG] replace_mask:\n{replace_mask}")
     input_ids = input_ids * (~replace_mask).long() + rnd_tokens * replace_mask.long()
-    # print(f"[DEBUG] input_ids:\n{input_ids}")
     return input_ids, labels
 
 
@@ -2155,30 +2105,24 @@ def _get_gaussian_rnd_tokens(input_ids, vocab):
 
 def _get_sample_lvl_mask(pos: torch.Tensor):
     mask = pos.abs() < _EPSILON  # [bz, seq, 3]
-    # print(f"[DEBUG] mask:\n{mask}")
     # [bz, seq, 3] -> [bz, seq] -> [bz]
     sample_mask = mask.all(dim=-1).all(dim=-1, keepdim=True)  # [bz, 1]
-    # print(f"[DEBUG] sample_mask:\n{sample_mask}")
     return sample_mask
 
 
 def _mask_pos_in_node_lvl_on_schedule(
     noise, noisy_pos, noise_mask, pad_mask, node_idx, power
 ):
-    # print(f"[DEBUG] INIT, noise:\n{noise}\nnoisy_pos:\n{noisy_pos}\nnoise_mask:\n{noise_mask}")
     mask_per_node, mask_per_coord, bz_idx = _preprocess_pos_smtp_masks(
         noisy_pos, power=power
     )  # power==0 <=> no 3d-SMTP
-    # print(f"[DEBUG] mask_per_node:\n{mask_per_node}")
     mask_per_token = _get_mask_per_token_for_line(
         mask_per_node, mask_per_coord, pad_mask, bz_idx, node_idx, False
     )  # [bz, seq, 3]
     mask_per_token = mask_per_token[:, :, 0:1]
-    # print(f"[DEBUG] mask_per_token:\n{mask_per_token}")
     noise = noise.masked_fill_(mask_per_token, 0)
     noisy_pos = noisy_pos.masked_fill_(mask_per_token, 0)
     noise_mask = noise_mask | mask_per_token
-    # print(f"[DEBUG] AFTER mask_per_token, noise:\n{noise}\nnoisy_pos:\n{noisy_pos}\nnoise_mask:\n{noise_mask}")
     return mask_per_token, noise, noisy_pos, noise_mask
 
 
@@ -2191,18 +2135,14 @@ def _mask_pad_pos_token_for_line(
     mask_token_id: int = 1,
     pad_token_id: int = 0,
 ):
-    # print(f"[DEBUG] 0. pos_tokens:\n{pos_tokens}")
     # 1. fill the sample lvl: [mask]!
     # IF [pad], slightly worse results => for transfer learning where mols' pos it not available
     pos_tokens = pos_tokens.masked_fill_(sample_mask[:, :, None], mask_token_id)
-    # print(f"[DEBUG] 1. pos_tokens:\n{pos_tokens}")
     # 2. fill token-coordinate-lvl masked positions with [mask]
     if mask_per_token is not None:
         pos_tokens = pos_tokens.masked_fill_(mask_per_token, mask_token_id)
-        # print(f"[DEBUG] 2. pos_tokens:\n{pos_tokens}")
     # 3. fill the token lvl: [pad]
     pos_tokens = pos_tokens.masked_fill_(~pad_mask[:, :, None], pad_token_id)
-    # print(f"[DEBUG] 3. pad_mask:\n{pad_mask}\npos_tokens:\n{pos_tokens}")
     return pos_tokens
 
 
@@ -2249,11 +2189,8 @@ def _mask_pad_pos_token_for_cube(
 ):
     # 1.31 fill the sample lvl: [mask]
     pos_tokens = pos_tokens.masked_fill_(sample_mask, mask_token_id)
-    # print(f"[DEBUG] pos_tokens:\n{pos_tokens}")
     # 1.32 fill the token lvl: [pad]
-    # print(f"[DEBUG] pad_mask:\n{pad_mask}")
     pos_tokens = pos_tokens.masked_fill_(~pad_mask, pad_token_id)
-    # print(f"[DEBUG] pos_tokens:\n{pos_tokens}")
     return pos_tokens
 
 
@@ -2269,11 +2206,8 @@ def transform_input_pos_via_cube_token(self, pos, pos_type):
         range_min=self.range_min,
         range_max=self.range_max,
     )
-    # print(f"[DEBUG] Invoking `transform_pos_via_3d_token`")
-    # print(f"[DEBUG] pos:\n{pos}\npos_tokens:\n{pos_tokens}")
     # [bz, seq, 3] & [1, 3] -> [bz, seq, 3] -> [bz, seq]
     pos_tokens = (pos_tokens * self.idx_multiplier[None, :, :]).sum(dim=-1) + 2
-    # print(f"[DEBUG] pos_tokens:\n{pos_tokens}\npos_tokens.shape:\n{pos_tokens.shape}")
 
     # 1.2 get sample-level mask
     sample_mask = _get_sample_lvl_mask(pos)
@@ -2292,7 +2226,6 @@ def transform_input_pos_via_cube_token(self, pos, pos_type):
 
 def transform_input_pos_via_mix_token(self, pos, pos_type):
     # pos -> [bz, seq, 3]  pos_type -> [bz, seq]
-    # print(f"[DEBUG] pos:\n{pos}\npos_type:{pos_type}")
     # 0. get sample-level mask
     sample_mask = _get_sample_lvl_mask(pos)
     pad_mask = pos_type > 0
@@ -2309,7 +2242,6 @@ def transform_input_pos_via_mix_token(self, pos, pos_type):
         mask_per_token=None,
         pos_token_shift=self.pos_token_shift,
     )
-    # print(f"[DEBUG] line-tokens:\n{pos_tokens}")
     # turn tokens into embeds
     line_embeds = self.embed_line_token(pos_tokens)  # [bz, seq, 3, dim]
     if self.embed_dropout is not None:
@@ -2329,7 +2261,6 @@ def transform_input_pos_via_mix_token(self, pos, pos_type):
     pos_tokens = (pos_tokens * self.idx_multiplier[None, :, :]).sum(dim=-1) + 2
     # mask and pad the cube-tokens
     pos_tokens = _mask_pad_pos_token_for_cube(pos_tokens, sample_mask, pad_mask)
-    # print(f"[DEBUG] cube-tokens:\n{pos_tokens}")
     # turn tokens into embeds
     cube_embeds = self.embed_cube_token(pos_tokens)  # [bz, seq, dim]
     if self.embed_dropout is not None:
@@ -2345,8 +2276,6 @@ def prepare_pos_smtp_line_token_inputs_and_labels(
     # SMTP scheduler
     power = self.smtp_3d_power
     gt_rate = 0  # rate to unveil [mask] node's coord
-    # print(f"[DEBUG] invoking prepare_pos_smtp_line_token_inputs_and_labels.\npos:{pos}\npos_type:\n{pos_type}\nnode_idx:\n{node_idx}")
-    # print(f"[DEBUG] invoking prepare_pos_smtp_line_token_inputs_and_labels.\nrange_min:{self.range_min}\nrange_max:{self.range_max}\nnum_bins:{self.num_bins}")
 
     # 1. add noise, and get sample-level mask, pad-mask
     pos, noisy_pos, sample_mask, pad_mask, _, _ = _add_pos_noise_and_get_masks(
@@ -2386,11 +2315,9 @@ def prepare_pos_smtp_line_token_inputs_and_labels(
 
     # 4. obtain pos-bins tokens's embedding
     pos_embeds = self.embed_pos_token(input_tokens)  # [bz, seq, 3, dim]
-    # print(f"[DEBUG] pos_embeds:\n{pos_embeds}\npos_embeds.shape: {pos_embeds.shape}")
     if self.embed_dropout is not None:
         pos_embeds = self.embed_dropout(pos_embeds)
     pos_embeds = self.pos_token_agg(pos_embeds)  # [bz, seq, dim]
-    # print(f"[DEBUG] pos_embeds:\n{pos_embeds}\npos_embeds.shape: {pos_embeds.shape}")
     return pos_embeds, labels, _mask_raw_pos(noisy_pos, mask_per_token)
 
 
@@ -2415,8 +2342,6 @@ def _get_inputs_for_line_token(
         range_min=range_min,
         range_max=range_max,
     )  # [bz, seq, 3]
-    # print(f"[DEBUG] Invoking `_get_inputs_for_line_token`.\ninput_tokens:\n{input_tokens}")
-    # print(f"[DEBUG] mask_per_token:\n{mask_per_token}")
     input_tokens = input_tokens + pos_token_shift + 2
     # 2. fill sample-lvl zeros' positions with [mask], and pad with [pad]
     input_tokens = _mask_pad_pos_token_for_line(
@@ -2454,13 +2379,11 @@ def _get_labels_for_line_token(
     labels = labels + pos_token_shift
     # 1. fill sample-lvl zeros' positions with [label-pad]
     labels = labels.masked_fill_(sample_mask[:, :, None], label_pad_token_id)
-    # print(f"[DEBUG] 1. labels:\n{labels}")
     # 2. fill token-lvl non-masked positions with [label-pad]
     if denoise:
         labels = labels.masked_fill_(~pad_mask[:, :, None], label_pad_token_id)
     else:
         labels = labels.masked_fill_(~mask_per_token, label_pad_token_id)
-    # print(f"[DEBUG] 2. labels:\n{labels}")
     return labels
 
 
@@ -2470,8 +2393,6 @@ def prepare_pos_smtp_cube_token_inputs_and_labels(self, pos, pos_type, node_idx)
     # SMTP scheduler
     power = self.smtp_3d_power
     gt_rate = 0  # rate to unveil [mask] node's coord
-    # print(f"[DEBUG] invoking prepare_pos_smtp_cubic_token_inputs_and_labels.\npos:{pos}\npos_type:\n{pos_type}\nnode_idx:\n{node_idx}")
-    # print(f"[DEBUG] range_min:{self.range_min}\nrange_max:{self.range_max}\nnum_bins:{self.num_bins}")
 
     # 1. add noise, and get sample-level mask, pad-mask
     pos, noisy_pos, sample_mask, pad_mask, _, _ = _add_pos_noise_and_get_masks(
@@ -2501,10 +2422,8 @@ def prepare_pos_smtp_cube_token_inputs_and_labels(self, pos, pos_type, node_idx)
 
     # 4. obtain pos-bins tokens's embedding
     pos_embeds = self.embed_pos_token(input_tokens)  # [bz, seq, dim]
-    # print(f"[DEBUG] pos_embeds:\n{pos_embeds}\npos_embeds.shape: {pos_embeds.shape}")
     if self.embed_dropout is not None:
         pos_embeds = self.embed_dropout(pos_embeds)
-    # print(f"[DEBUG] pos_embeds:\n{pos_embeds}\npos_embeds.shape: {pos_embeds.shape}")
     return pos_embeds, labels, _mask_raw_pos(noisy_pos, mask_per_token)
 
 
@@ -2532,18 +2451,14 @@ def _get_inputs_and_labels_for_cube_token(
         range_min=range_min,
         range_max=range_max,
     )  # [bz, seq, 3]
-    # print(f"[DEBUG] input_tokens:\n{input_tokens}")
     # 3.1 deal with inputs pos tokens
     # 3.11 fill sample-lvl zeros' positions with [mask]
     input_tokens = (input_tokens * idx_multiplier[None, :, :]).sum(dim=-1) + 2
     input_tokens = input_tokens.masked_fill_(sample_mask, mask_token_id)
-    # print(f"[DEBUG] 3.11 input_tokens:\n{input_tokens}")
     # 3.12 fill token-lvl masked positions with [mask]
     input_tokens = input_tokens.masked_fill_(mask_per_token, mask_token_id)
-    # print(f"[DEBUG] 3.12 input_tokens:\n{input_tokens}")
     # 3.13 fill token-lvl padded positions wtih [pad]
     input_tokens = input_tokens.masked_fill_(~pad_mask, pad_token_id)
-    # print(f"[DEBUG] 3.13 input_tokens:\n{input_tokens}")
     # 3.2 deal with labels of pos tokens from clean pos
     labels = discrete_pos(
         clean_pos,
@@ -2552,14 +2467,11 @@ def _get_inputs_and_labels_for_cube_token(
         range_min=range_min,
         range_max=range_max,
     )  # [bz, seq, 3]
-    # print(f"[DEBUG] 3.2 labels:\n{labels}")
     # 3.21 fill sample-lvl zeros' positions with [label-pad]
     labels = (labels * idx_multiplier[None, :, :]).sum(dim=-1) + 2
     labels = labels.masked_fill_(sample_mask, label_pad_token_id)
-    # print(f"[DEBUG] 3.21 labels:\n{labels}")
     # 3.22 fill token-lvl non-masked positions with [label-pad]
     labels = labels.masked_fill_(~mask_per_token, label_pad_token_id)
-    # print(f"[DEBUG] 3.22 labels:\n{labels}")
     return input_tokens, labels
 
 
@@ -2571,8 +2483,6 @@ def prepare_pos_smtp_mix_token_inputs_and_labels(
     # SMTP scheduler
     power = self.smtp_3d_power
     gt_rate = 0  # rate to unveil [mask] node's coord
-    # print(f"[DEBUG] invoking prepare_pos_smtp_mix_token_inputs_and_labels.\npos:{pos}\npos_type:\n{pos_type}\nnode_idx:\n{node_idx}")
-    # print(f"[DEBUG] range_min:{self.range_min}\nrange_max:{self.range_max}\nnum_bins_line:{self.num_bins_line}\nnum_bins_cube:{self.num_bins_cube}")
 
     # 1. add noise, and get sample-level mask, pad-mask
     pos, noisy_pos, sample_mask, pad_mask, _, _ = _add_pos_noise_and_get_masks(
@@ -2587,12 +2497,10 @@ def prepare_pos_smtp_mix_token_inputs_and_labels(
     mask_per_token_line = _get_mask_per_token_for_line(
         mask_per_node, mask_per_coord, pad_mask, bz_idx, node_idx
     )
-    # print(f"[DEBUG] mask_per_token_line:\n{mask_per_token_line}\nmask_per_token_line.shape: {mask_per_token_line.shape}")
     # b). For cube token
     mask_per_token_cube = _get_mask_per_token_for_cube(
         mask_per_node, mask_per_coord, pad_mask, bz_idx, node_idx
     )
-    # print(f"[DEBUG] mask_per_token_cube:\n{mask_per_token_cube}\nmask_per_token_cube.shape: {mask_per_token_cube.shape}")
 
     # 3. get pos tokens, and then mask with 0
     # a). For line token
@@ -2633,13 +2541,11 @@ def prepare_pos_smtp_mix_token_inputs_and_labels(
 
     # 4. obtain pos-bins tokens's embedding
     line_embeds = self.embed_line_token(input_tokens_line)  # [bz, seq, 3, dim]
-    # print(f"[DEBUG] line_embeds:\n{line_embeds}\nline_embeds.shape: {line_embeds.shape}")
     cube_embeds = self.embed_cube_token(input_tokens_cube)  # [bz, seq, dim]
     if self.embed_dropout is not None:
         line_embeds = self.embed_dropout(line_embeds)
         cube_embeds = self.embed_dropout(cube_embeds)
     line_embeds = self.line_token_agg(line_embeds)  # [bz, seq, dim]
-    # print(f"[DEBUG] line_embeds:\n{line_embeds}\nline_embeds.shape: {line_embeds.shape}")
     pos_embeds = line_embeds + cube_embeds
     return (
         pos_embeds,
@@ -2659,16 +2565,13 @@ def _preprocess_pos_smtp_masks(pos, power: float, gt_rate: float = 0):
         mr_per_sample = 0.5 * torch.cos(torch.pi * mr_per_sample) + 0.5
     else:  # polynomial scheduler
         mr_per_sample = mr_per_sample**power
-    # print(f"[DEBUG] power: {power}\nmr_per_sample:\n{mr_per_sample}")
     # apply polynomial mask on node-idx level
     mask_per_node = (
         torch.rand((bz, seq, 3), dtype=torch.float32, device=device) > mr_per_sample
     )
-    # print(f"[DEBUG] mask_per_node:\n{mask_per_node}")
     mask_per_coord = (
         torch.rand((bz, seq, 3), dtype=torch.float32, device=device) > gt_rate
     )
-    # print(f"[DEBUG] mask_per_coord:\n{mask_per_coord}")
     bz_idx = torch.arange(bz, device=device).view((-1, 1))
     return mask_per_node, mask_per_coord, bz_idx
 
@@ -2684,14 +2587,10 @@ def _add_pos_noise_and_get_masks(
     bz = pos.size()[0]
     device = pos.device
     bz_idx = torch.arange(bz, device=device).view((-1, 1))
-    # print(f"[DEBUG] invoking `_add_pos_noise_and_get_masks`")
-    # print(f"[DEBUG] noise_scale: {noise_scale}\npos_type:\n{pos_type}")
     # 1. get sample-level mask
     eps = _EPSILON
     mask = pos.abs() < eps  # [bz, seq, 3]
-    # print(f"[DEBUG] mask:\n{mask}")
     pos = pos.masked_fill_(mask, 0)
-    # print(f"[DEBUG] pos:\n{pos}\npos.shape: {pos.shape}")
     # 2. obtain noise-mask, new sample-mask directly from pos: will include mol with pos==0
     sample_mask = mask.all(dim=-1).all(dim=-1, keepdim=True)  # [bz, 1]
     if pos_type is not None:
@@ -2700,15 +2599,12 @@ def _add_pos_noise_and_get_masks(
     else:
         noise_mask = mask.all(dim=-1)  # [bz, seq]
         pad_mask = ~noise_mask
-    # print(f"[DEBUG] noise_mask:\n{noise_mask}")
     noise_mask = noise_mask[:, :, None]
     # 3. add noise to clean pos, and apply mask
     gnoise = torch.randn(pos.shape).to(pos) * noise_scale
     gnoise = gnoise[bz_idx, node_idx].contiguous()
     noise = gnoise.masked_fill_(noise_mask, 0.0)
-    # print(f"[DEBUG] noise:\n{noise}\nnode_idx:\n{node_idx}")
     noisy_pos = pos + noise
-    # print(f"[DEBUG] noisy_pos:\n{noisy_pos}\nnoisy_pos.shape: {noisy_pos.shape}")
     return pos, noisy_pos, sample_mask, pad_mask, noise, noise_mask
 
 
@@ -2721,15 +2617,12 @@ def _get_mask_per_token_for_line(
     coord_lvl_mask: bool = False,
 ):
     # a). For line token
-    # print(f"[DEBUG] Invoking `_get_mask_per_token_for_line`.\ncoord_lvl_mask: {coord_lvl_mask}")
     if not coord_lvl_mask:
         mask_per_node = mask_per_node[:, :, 0:1]  # [bz, seq, 1]
     mask_per_node = mask_per_node & mask_per_coord
-    # print(f"[DEBUG] mask_per_node:\n{mask_per_node}")
     # get mask on line token level through look-up
     mask_per_token = mask_per_node[bz_idx, node_idx]
     mask_per_token = mask_per_token & pad_mask[:, :, None]
-    # print(f"[DEBUG] mask_per_node & pad_mask -> mask_per_node:\n{mask_per_node}")
     return mask_per_token
 
 
@@ -2746,7 +2639,6 @@ def _get_mask_per_token_for_cube(
     # get mask on cube token level through look-up
     mask_per_token = mask_per_node[bz_idx, node_idx]
     mask_per_token = mask_per_token & pad_mask
-    # print(f"[DEBUG] mask_per_token & pad_mask -> mask_per_token:\n{mask_per_token_cube}")
     return mask_per_token
 
 

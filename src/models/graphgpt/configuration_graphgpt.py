@@ -65,6 +65,47 @@ class GraphGPTConfig(LlamaConfig):
         dropout: float = 0,
         loss_type: Optional[str] = None,
         num_neg: Optional[int] = None,
+        # --- Position pretraining head (GraphGPTPosPred) ---
+        smtp_power: float = 1.0,
+        pt_problem_type: str = "pos-smtp-line",
+        smtp_3d_power: float = 1.0,
+        smtp_3d_noise_scale: float = 0.2,
+        coord_lvl_mask: bool = True,
+        pt_num_bins: int = 1024,
+        pt_num_bins_line: int = 256,
+        pt_num_bins_cube: int = 32,
+        apply_denoise: bool = False,
+        label_smoothing: float = 0.0,
+        pt_pos_agg_method: str = "gated",
+        use_pos_proj: bool = False,
+        loss_agg: str = "token-lvl",
+        pt_pos_range: str = "p1p",
+        pt_smtp_2d_rate: float = 0.1,
+        smtp_2d_replace_rate: float = 0.0,
+        sep_2d3d_inputs: bool = True,
+        global_2d_mask: bool = False,
+        pt_use_discriminative: bool = False,
+        # --- Denoising regression head ---
+        noise_scale: float = 0.35,
+        denoise_wgt: float = 1.0,
+        denoise_schedule_pow: float = 0.0,
+        bi_causal: bool = False,
+        r_2d: float = 4.0,
+        r_3d: float = 0.0,
+        r_both: float = 6.0,
+        add_pos_type: bool = True,
+        inputs_transform: str = "token-line",
+        num_bins_line: int = 256,
+        num_bins_cube: int = 32,
+        dn_pos_range: str = "1p",
+        dn_use_pos_proj: bool = False,
+        smtp_3d: bool = False,
+        smtp_wgt: float = 1.0,
+        smtp_3d_scheduler_power: float = 0.1,
+        smtp_denoise: bool = True,
+        smtp_vocab: int = 256,
+        dn_smtp_2d_rate: float = 0.0,
+        smtp_2d_scheduler_power: float = 0.0,
         **kwargs,
     ):
         self.causal_attention = causal_attention
@@ -97,6 +138,47 @@ class GraphGPTConfig(LlamaConfig):
         self.loss_type = loss_type
         self.num_neg = num_neg
         self.rope_3d = False
+        # 3. Position pretraining head (GraphGPTPosPred)
+        self.smtp_power = smtp_power
+        self.pt_problem_type = pt_problem_type
+        self.smtp_3d_power = smtp_3d_power
+        self.smtp_3d_noise_scale = smtp_3d_noise_scale
+        self.coord_lvl_mask = coord_lvl_mask
+        self.pt_num_bins = pt_num_bins
+        self.pt_num_bins_line = pt_num_bins_line
+        self.pt_num_bins_cube = pt_num_bins_cube
+        self.apply_denoise = apply_denoise
+        self.label_smoothing = label_smoothing
+        self.pt_pos_agg_method = pt_pos_agg_method
+        self.use_pos_proj = use_pos_proj
+        self.loss_agg = loss_agg
+        self.pt_pos_range = pt_pos_range
+        self.pt_smtp_2d_rate = pt_smtp_2d_rate
+        self.smtp_2d_replace_rate = smtp_2d_replace_rate
+        self.sep_2d3d_inputs = sep_2d3d_inputs
+        self.global_2d_mask = global_2d_mask
+        self.pt_use_discriminative = pt_use_discriminative
+        # 4. Denoising regression head
+        self.noise_scale = noise_scale
+        self.denoise_wgt = denoise_wgt
+        self.denoise_schedule_pow = denoise_schedule_pow
+        self.bi_causal = bi_causal
+        self.r_2d = r_2d
+        self.r_3d = r_3d
+        self.r_both = r_both
+        self.add_pos_type = add_pos_type
+        self.inputs_transform = inputs_transform
+        self.num_bins_line = num_bins_line
+        self.num_bins_cube = num_bins_cube
+        self.dn_pos_range = dn_pos_range
+        self.dn_use_pos_proj = dn_use_pos_proj
+        self.smtp_3d = smtp_3d
+        self.smtp_wgt = smtp_wgt
+        self.smtp_3d_scheduler_power = smtp_3d_scheduler_power
+        self.smtp_denoise = smtp_denoise
+        self.smtp_vocab = smtp_vocab
+        self.dn_smtp_2d_rate = dn_smtp_2d_rate
+        self.smtp_2d_scheduler_power = smtp_2d_scheduler_power
         print(
             f"[BEFORE] hidden_size: {hidden_size}, num_attention_heads: {num_attention_heads}"
         )
@@ -193,6 +275,47 @@ def convert_to_legacy_config(model_config: GraphGPTModelConfig) -> GraphGPTConfi
         "num_labels": model_config.ft_head.num_labels,
         "problem_type": model_config.ft_head.problem_type,
         "use_aux": model_config.ft_head.task_ratio < 1,
+        # Parameters from `pos_pt_head` (position pretraining)
+        "smtp_power": model_config.pos_pt_head.smtp_power,
+        "pt_problem_type": model_config.pos_pt_head.problem_type,
+        "smtp_3d_power": model_config.pos_pt_head.smtp_3d_power,
+        "smtp_3d_noise_scale": model_config.pos_pt_head.smtp_3d_noise_scale,
+        "coord_lvl_mask": model_config.pos_pt_head.coord_lvl_mask,
+        "pt_num_bins": model_config.pos_pt_head.num_bins,
+        "pt_num_bins_line": model_config.pos_pt_head.num_bins_line,
+        "pt_num_bins_cube": model_config.pos_pt_head.num_bins_cube,
+        "apply_denoise": model_config.pos_pt_head.apply_denoise,
+        "label_smoothing": model_config.pos_pt_head.label_smoothing,
+        "pt_pos_agg_method": model_config.pos_pt_head.pos_agg_method,
+        "use_pos_proj": model_config.pos_pt_head.use_pos_proj,
+        "loss_agg": model_config.pos_pt_head.loss_agg,
+        "pt_pos_range": model_config.pos_pt_head.pos_range,
+        "pt_smtp_2d_rate": model_config.pos_pt_head.smtp_2d_rate,
+        "smtp_2d_replace_rate": model_config.pos_pt_head.smtp_2d_replace_rate,
+        "sep_2d3d_inputs": model_config.pos_pt_head.sep_2d3d_inputs,
+        "global_2d_mask": model_config.pos_pt_head.global_2d_mask,
+        "pt_use_discriminative": model_config.pos_pt_head.use_discriminative,
+        # Parameters from `denoise_head` (denoising regression)
+        "noise_scale": model_config.denoise_head.noise_scale,
+        "denoise_wgt": model_config.denoise_head.denoise_wgt,
+        "denoise_schedule_pow": model_config.denoise_head.denoise_schedule_pow,
+        "bi_causal": model_config.denoise_head.bi_causal,
+        "r_2d": model_config.denoise_head.r_2d,
+        "r_3d": model_config.denoise_head.r_3d,
+        "r_both": model_config.denoise_head.r_both,
+        "add_pos_type": model_config.denoise_head.add_pos_type,
+        "inputs_transform": model_config.denoise_head.inputs_transform,
+        "num_bins_line": model_config.denoise_head.num_bins_line,
+        "num_bins_cube": model_config.denoise_head.num_bins_cube,
+        "dn_pos_range": model_config.denoise_head.pos_range,
+        "dn_use_pos_proj": model_config.denoise_head.use_pos_proj,
+        "smtp_3d": model_config.denoise_head.smtp_3d,
+        "smtp_wgt": model_config.denoise_head.smtp_wgt,
+        "smtp_3d_scheduler_power": model_config.denoise_head.smtp_3d_scheduler_power,
+        "smtp_denoise": model_config.denoise_head.smtp_denoise,
+        "smtp_vocab": model_config.denoise_head.smtp_vocab,
+        "dn_smtp_2d_rate": model_config.denoise_head.smtp_2d_rate,
+        "smtp_2d_scheduler_power": model_config.denoise_head.smtp_2d_scheduler_power,
     }
 
     # 处理 rope_scaling 配置

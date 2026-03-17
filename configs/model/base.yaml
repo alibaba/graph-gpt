@@ -83,6 +83,88 @@ model:
     # Whether to prepare SMTP inputs and labels inside the model's forward pass.
     smtp_inside: false
 
+  # --- Position Pretraining Head Settings (GraphGPTPosPred) ---
+  pos_pt_head:
+    # SMTP scheduler power for base pretrain
+    smtp_power: 1.0
+    # Pretraining problem type: pos-smtp-line|pos-smtp-cube|pos-smtp-mix
+    problem_type: "pos-smtp-line"
+    # 3D SMTP polynomial scheduler power (0.75/1/1.25, cosine: -1, arccosine: -2)
+    smtp_3d_power: 1.0
+    # Noise scale for 3D SMTP
+    smtp_3d_noise_scale: 0.2
+    # Mask position at per-coordinate level instead of per-position level
+    coord_lvl_mask: true
+    # Number of bins for discretizing 3D positions in PosPred
+    num_bins: 1024
+    # Number of bins for line token transformation in PosPred
+    num_bins_line: 256
+    # Number of bins for cube token transformation in PosPred
+    num_bins_cube: 32
+    # Whether un-masked noisy coords are predicted using clean coords as target
+    apply_denoise: false
+    # Label smoothing for cross-entropy loss
+    label_smoothing: 0.0
+    # Aggregation method for 3D position tokens (sum|gated)
+    pos_agg_method: "gated"
+    # Whether to use raw-pos input projection
+    use_pos_proj: false
+    # Loss aggregation: token-lvl|sample-lvl
+    loss_agg: "token-lvl"
+    # Position range for discretization
+    pos_range: "p1p"
+    # Rate of samples selected for 2D-SMTP masking
+    smtp_2d_rate: 0.1
+    # Rate of replacing [mask] with random tokens (noise injection to 2D tokens)
+    smtp_2d_replace_rate: 0.0
+    # Whether 3D/2D-SMTP use separate samples
+    sep_2d3d_inputs: true
+    # Whether to apply 2D mask globally on all samples
+    global_2d_mask: false
+    # Whether to use discriminative (CL) loss in PosPred
+    use_discriminative: false
+
+  # --- Denoising Regression Head Settings ---
+  denoise_head:
+    # Noise scale for coordinate denoising
+    noise_scale: 0.35
+    # Weight for denoising loss
+    denoise_wgt: 1.0
+    # Power for denoising schedule (0 = no schedule)
+    denoise_schedule_pow: 0.0
+    # Whether to use bi-directional causal attention
+    bi_causal: false
+    # Ratio components for 2D/3D/both mask sampling (used to derive mask_3d_ratio, mask_2d_ratio)
+    r_2d: 4.0
+    r_3d: 0.0
+    r_both: 6.0
+    # Whether to embed 3D position type
+    add_pos_type: true
+    # Input transform for 3D coordinates: token-line|token-cube|token-mix
+    inputs_transform: "token-line"
+    # Number of bins for line token transform
+    num_bins_line: 256
+    # Number of bins for cube token transform
+    num_bins_cube: 32
+    # Position range for discretization
+    pos_range: "1p"
+    # Whether to use raw-pos input projection
+    use_pos_proj: false
+    # Whether to add auxiliary 3D-SMTP loss
+    smtp_3d: false
+    # Weight for SMTP loss
+    smtp_wgt: 1.0
+    # Scheduler power for 3D-SMTP
+    smtp_3d_scheduler_power: 0.1
+    # Whether un-masked noisy coords are denoised in SMTP
+    smtp_denoise: true
+    # Vocabulary size for SMTP
+    smtp_vocab: 256
+    # Rate of samples for 2D-SMTP masking
+    smtp_2d_rate: 0.0
+    # Scheduler power for 2D-SMTP
+    smtp_2d_scheduler_power: 0.0
+
   # --- Finetuning Task Head Settings ---
   ft_head:
     # task_type -> pretrain|graph|edge|node; shall be copied from tokenization config

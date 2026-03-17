@@ -108,6 +108,133 @@ class FinetuningHeadConfig:
     """Number of labels for classification tasks; =1 for regression."""
 
 
+@dataclass
+class PositionPretrainingConfig:
+    """Config for 3D position prediction and SMTP pretraining objectives (GraphGPTPosPred)."""
+
+    smtp_power: float = 1.0
+    """Polynomial scheduler power for SMTP in base pretrain."""
+
+    problem_type: str = "pos-smtp-line"
+    """Pretraining problem type: pos-smtp-line|pos-smtp-cube|pos-smtp-mix."""
+
+    smtp_3d_power: float = 1.0
+    """3D SMTP scheduler power (polynomial: 0.75/1/1.25, cosine: -1, arccosine: -2)."""
+
+    smtp_3d_noise_scale: float = 0.2
+    """Noise scale for 3D SMTP."""
+
+    coord_lvl_mask: bool = True
+    """Mask position at per-coordinate level instead of per-position level."""
+
+    num_bins: int = 1024
+    """Number of bins for discretizing 3D positions in PosPred."""
+
+    num_bins_line: int = 256
+    """Number of bins for line token transformation in PosPred."""
+
+    num_bins_cube: int = 32
+    """Number of bins for cube token transformation in PosPred."""
+
+    apply_denoise: bool = False
+    """Whether un-masked noisy coords are predicted using clean coords as target."""
+
+    label_smoothing: float = 0.0
+    """Label smoothing for cross-entropy loss."""
+
+    pos_agg_method: str = "gated"
+    """Aggregation method for 3D position tokens: sum|gated."""
+
+    use_pos_proj: bool = False
+    """Whether to use raw-pos input projection."""
+
+    loss_agg: str = "token-lvl"
+    """Loss aggregation level: token-lvl|sample-lvl."""
+
+    pos_range: str = "p1p"
+    """Position range for discretization."""
+
+    smtp_2d_rate: float = 0.1
+    """Rate of samples selected for 2D-SMTP masking."""
+
+    smtp_2d_replace_rate: float = 0.0
+    """Rate of replacing [mask] with random tokens (noise injection to 2D tokens)."""
+
+    sep_2d3d_inputs: bool = True
+    """Whether 3D/2D-SMTP use separate samples (2D-SMTP samples' pos set to 0)."""
+
+    global_2d_mask: bool = False
+    """Whether to apply 2D mask globally on all samples."""
+
+    use_discriminative: bool = False
+    """Whether to use discriminative (CL) loss in PosPred."""
+
+
+@dataclass
+class DenoisingRegressionConfig:
+    """Config for denoising regression double-heads model."""
+
+    noise_scale: float = 0.35
+    """Noise scale for coordinate denoising."""
+
+    denoise_wgt: float = 1.0
+    """Weight for denoising loss."""
+
+    denoise_schedule_pow: float = 0.0
+    """Power for denoising schedule (0 = no schedule)."""
+
+    bi_causal: bool = False
+    """Whether to use bi-directional causal attention."""
+
+    r_2d: float = 4.0
+    """Ratio component for 2D mask sampling."""
+
+    r_3d: float = 0.0
+    """Ratio component for 3D mask sampling."""
+
+    r_both: float = 6.0
+    """Ratio component for 2D&3D combined mask sampling."""
+
+    add_pos_type: bool = True
+    """Whether to embed 3D position type."""
+
+    inputs_transform: str = "token-line"
+    """Input transform for 3D coordinates: token-line|token-cube|token-mix."""
+
+    num_bins_line: int = 256
+    """Number of bins for line token transformation."""
+
+    num_bins_cube: int = 32
+    """Number of bins for cube token transformation."""
+
+    pos_range: str = "1p"
+    """Position range for discretization."""
+
+    use_pos_proj: bool = False
+    """Whether to use raw-pos input projection."""
+
+    smtp_3d: bool = False
+    """Whether to add auxiliary 3D-SMTP loss."""
+
+    smtp_wgt: float = 1.0
+    """Weight for SMTP loss."""
+
+    smtp_3d_scheduler_power: float = 0.1
+    """Scheduler power for 3D-SMTP."""
+
+    smtp_denoise: bool = True
+    """Whether un-masked noisy coords are denoised in SMTP."""
+
+    smtp_vocab: int = 256
+    """Vocabulary size for SMTP."""
+
+    smtp_2d_rate: float = 0.0
+    """Rate of samples for 2D-SMTP masking."""
+
+    smtp_2d_scheduler_power: float = 0.0
+    """Scheduler power for 2D-SMTP."""
+
+
 # ========================================================
 
 
@@ -161,6 +288,8 @@ class GraphGPTModelConfig:
     graph_input: GraphInputConfig = field(default_factory=GraphInputConfig)
     geometric_input: GeometricInputConfig = field(default_factory=GeometricInputConfig)
     pt_head: PretrainingHeadConfig = field(default_factory=PretrainingHeadConfig)
+    pos_pt_head: PositionPretrainingConfig = field(default_factory=PositionPretrainingConfig)
+    denoise_head: DenoisingRegressionConfig = field(default_factory=DenoisingRegressionConfig)
     ft_head: FinetuningHeadConfig = field(default_factory=FinetuningHeadConfig)
 
     # -------------------------------------------------------------------

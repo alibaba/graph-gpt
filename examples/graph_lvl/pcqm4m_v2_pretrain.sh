@@ -301,7 +301,6 @@ echo ${udf}
 
 if [ ${env} = "cpu" ]
 then
-  export TOKENIZERS_PARALLELISM=false
   python ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
 else
   deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
