@@ -1,5 +1,7 @@
 #!/bin/bash
 
+env="cpu"  # cpu | gpu
+
 # i. data config
 data_dir="OGB"
 dataset_source="PCQM4Mv2"  # molecule|PCQM4Mv2
@@ -72,14 +74,31 @@ parallel_gen=false  # whether to parallel batch generation: slow when tested in 
 #===================================== ABOVE section is task-specific ==================================
 
 #=================== BELOW FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
-#model_name="tiny"
-#batch_size=128
-#workerCount=1
-#num_cpus=4
-#total_tokens=1e9
-#warmup_tokens=1e8
-#pretrain_cpt=""
-#tot_samples=100
+model_name="tiny"
+batch_size=128
+workerCount=1
+num_cpus=4
+total_tokens=1e9
+warmup_tokens=1e8
+pretrain_cpt=""
+tot_samples=100
+
+if [ ${env} = "cpu" ]
+then
+  max_position_embeddings=128
+  pretrain_cpt=""
+  workerCount=1
+  model_name="tiny"
+  batch_size=4
+  num_cpus=2
+  deepspeed_config=""
+  use_ema=0
+  total_tokens=1e6  # 1e11  1e9
+  warmup_tokens=1e5  # 1e9  1e8
+#  valid_percent=0.001
+  pt_eval_only=false
+  tot_samples=100  # num of samples for estimating tokens-per-sample
+fi
 #=================== ABOVE FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
 
 
@@ -280,7 +299,13 @@ udf=${udf//--/}
 
 echo ${udf}
 
-deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+if [ ${env} = "cpu" ]
+then
+  export TOKENIZERS_PARALLELISM=false
+  python ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+else
+  deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+fi
 
 echo $raw_udf
 echo "Train and evaluation finished"
