@@ -37,6 +37,7 @@ model:
   rope_scaling: null
 
   use_cache: false  # Whether the model should return the last key/values attentions.
+  attn_implementation: sdpa  # Attention backend: sdpa (recommended) | eager | flash_attention_2
 
   # -------------------------------------------------------------------
   # 通用和 GraphGPT 特有参数 (General & Graph-Specific Parameters)

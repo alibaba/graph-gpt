@@ -273,6 +273,7 @@ class GraphGPTModelConfig:
     rope_theta: float = 10000.0
     rope_scaling: Optional[RopeScalingConfig] = None
     use_cache: bool = False
+    attn_implementation: str = "sdpa"
 
     # -------------------------------------------------------------------
     # GraphGPT 特有参数 (General & Graph-Specific Parameters)

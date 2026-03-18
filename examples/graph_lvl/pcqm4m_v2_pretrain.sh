@@ -1,6 +1,6 @@
 #!/bin/bash
 
-env="cpu"  # cpu | gpu
+env="gpu"  # cpu | gpu
 
 # i. data config
 data_dir="OGB"

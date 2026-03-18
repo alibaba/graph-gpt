@@ -199,7 +199,9 @@ class GraphGPTConfig(LlamaConfig):
             **kwargs,
         )
         print(
-            f"[AFTER] head_dim: {self.head_dim}, hidden_size: {self.hidden_size}, num_attention_heads: {self.num_attention_heads}"
+            f"[AFTER] head_dim: {self.head_dim}, hidden_size: {self.hidden_size}, "
+            f"num_attention_heads: {self.num_attention_heads}, "
+            f"attn_implementation: {getattr(self, '_attn_implementation', 'N/A')}"
         )
 
     def update(self, config_dict: dict[str, Any]):
@@ -238,6 +240,7 @@ def convert_to_legacy_config(model_config: GraphGPTModelConfig) -> GraphGPTConfi
         "tie_word_embeddings": model_config.tie_word_embeddings,
         "rope_theta": model_config.rope_theta,
         "use_cache": model_config.use_cache,
+        "attn_implementation": model_config.attn_implementation,
         # Tokenizer 相关
         "pad_token_id": model_config.pad_token_id,
         "bos_token_id": model_config.bos_token_id,
