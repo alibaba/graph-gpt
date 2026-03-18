@@ -35,6 +35,14 @@ Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.co
 
 ## Update:
 
+***03/18/2026***
+1. v0.7.0 released. Check `CHANGELOG.md` for details.
+2. Major codebase refactoring:
+   - **Model decomposition**: Monolithic `modeling_graphgpt.py` split into `modeling_common.py`, `modeling_helpers.py`, `modeling_pretrain.py`, `modeling_finetune.py`, and `configuration_graphgpt.py`. Backward-compatible imports preserved.
+   - **Data source generalization**: Registry-driven factory pattern (`DatasetSpec` + `read_graph_dataset()`) replaces monolithic `data_sources.py`. Adding new datasets requires only a spec definition. 80% line reduction.
+   - **Unified training pipeline**: Strategy-based `TrainingPipeline` with `TrainingMode` ABC eliminates ~240 lines of duplicated code between pre-training and fine-tuning scripts. Entry scripts reduced to ~18 lines each.
+3. Externalized model configuration with structured YAML (`configs/model/base.yaml`) and dataclass configs.
+
 ***12/23/2025***
 1. v0.6.1 released. Check `CHANGELOG.md` for details.
 2. Config code refactoring for edge-level tasks `ogbl-ppa`.
@@ -229,12 +237,52 @@ to download and preprocess dataset separately.
 
 1. Pre-train: Modify parameters in `./examples/graph_lvl/pcqm4m_v2_pretrain.sh`, e.g., `dataset_name`, `model_name`,
   `batch_size`, `workerCount` and etc, and then run `./examples/graph_lvl/pcqm4m_v2_pretrain.sh` to pretrain
-  the model with the PCQM4M-v2 dataset. 
+  the model with the PCQM4M-v2 dataset.
    - To run toy example, run `./examples/toy_examples/reddit_pretrain.sh` directly.
 2. Fine-tune: Modify parameters in `./examples/graph_lvl/pcqm4m_v2_supervised.sh`, e.g., `dataset_name`, `model_name`,
   `batch_size`, `workerCount`, `pretrain_cpt` and etc, and then run `./examples/graph_lvl/pcqm4m_v2_supervised.sh`
   to fine-tune with downstream tasks.
    - To run toy example, run `./examples/toy_examples/reddit_supervised.sh` directly.
+
+
+## Project Structure
+
+```
+graph-gpt/
+├── configs/                          # Hydra/OmegaConf YAML configurations
+│   └── model/base.yaml               # Model architecture configuration
+├── examples/
+│   ├── train_pretrain.py              # Pre-training entry point (thin wrapper)
+│   └── train_supervised.py            # Fine-tuning entry point (thin wrapper)
+├── src/
+│   ├── conf/                          # Dataclass-based configuration
+│   │   └── model/model_configs.py     # Structured model config dataclasses
+│   ├── data/
+│   │   ├── data_sources.py            # Dataset spec registry and entry point
+│   │   ├── _graph_factory.py          # DatasetSpec + generic read_graph_dataset()
+│   │   ├── _readers/                  # Dataset-specific readers
+│   │   │   ├── pcqm4mv2.py            #   PCQM4M-v2 molecular dataset
+│   │   │   ├── edge_level.py          #   Edge-level tasks (link prediction)
+│   │   │   └── node_level.py          #   Node-level tasks (classification)
+│   │   └── _helpers/                  # Reusable data utilities
+│   │       ├── edge_formatting.py
+│   │       ├── graph_utils.py
+│   │       └── node_encoding.py
+│   ├── models/graphgpt/
+│   │   ├── configuration_graphgpt.py  # GraphGPTConfig + legacy bridge
+│   │   ├── modeling_common.py         # Shared model infrastructure
+│   │   ├── modeling_helpers.py        # Helper functions (masks, losses, embeddings)
+│   │   ├── modeling_pretrain.py       # Pre-training models (NTP/SMTP/PosPred)
+│   │   ├── modeling_finetune.py       # Fine-tuning models (task/denoise heads)
+│   │   └── modeling_graphgpt.py       # Backward-compatible re-exports
+│   ├── training/
+│   │   ├── pipeline.py                # TrainingPipeline (shared orchestration)
+│   │   ├── mode.py                    # TrainingMode ABC (strategy interface)
+│   │   ├── pretrain_mode.py           # PretrainMode (step-level training)
+│   │   └── finetune_mode.py           # FinetuneMode (epoch-level training)
+│   └── utils/                         # Utility functions
+└── requirements.txt
+```
 
 
 ## Code Norm

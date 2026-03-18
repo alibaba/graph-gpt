@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-03-18
+
+### Code Refactoring
+
+Major codebase refactoring across three areas to improve modularity, reduce duplication,
+and make the project easier to extend.
+
+#### Proposal 1: Model Decomposition
+
+Decomposed the monolithic `modeling_graphgpt.py` into focused, single-responsibility modules:
+- `modeling_common.py`: Shared infrastructure (output dataclasses, initialization helpers, stacked feature aggregation)
+- `modeling_helpers.py`: Standalone helper functions organized by category (attention masks, embeddings, loss functions, label/logit preparation, SMTP handling, 3D position transforms)
+- `modeling_pretrain.py`: Pre-training models (`GraphGPTPretrainBase`, `GraphGPTPosPred`)
+- `modeling_finetune.py`: Fine-tuning models (`GraphGPTTaskModel`, `GraphGPTDoubleHeadsModel`, `GraphGPTDenoisingRegressionDoubleHeadsModel`)
+- `configuration_graphgpt.py`: Externalized `GraphGPTConfig` with `convert_to_legacy_config()` bridge function
+- `modeling_graphgpt.py` retained as a thin backward-compatible re-export shim (29 lines)
+
+#### Proposal 2: Data Source Generalization
+
+Replaced the monolithic `data_sources.py` (2,036 lines) with a registry-driven factory pattern:
+- `_graph_factory.py`: Generic `DatasetSpec` dataclass and `read_graph_dataset()` factory function
+- `_readers/pcqm4mv2.py`: Specialized reader for PCQM4M-v2 molecular datasets
+- `_readers/edge_level.py`: Readers for edge-level prediction datasets (link prediction, edge classification)
+- `_readers/node_level.py`: Readers for node-level prediction datasets (OGB, TUDataset)
+- `_helpers/edge_formatting.py`, `graph_utils.py`, `node_encoding.py`: Extracted reusable utilities
+- `data_sources.py` reduced to 412 lines (80% reduction), serving as a streamlined entry point with dataset spec registrations
+
+Adding new datasets now requires only defining a `DatasetSpec`; no changes to reader logic needed.
+
+#### Proposal 3: Unified Training Pipeline
+
+Consolidated duplicated training logic between `train_pretrain.py` (458 lines) and `train_supervised.py` (412 lines) using a strategy pattern:
+- `src/training/pipeline.py`: `TrainingPipeline` class with 9 shared methods orchestrating a 17-step training flow (config extraction, distributed setup, model creation, checkpoint handling, cleanup)
+- `src/training/mode.py`: `TrainingMode` abstract base class defining the strategy interface (6 abstract methods, 3 overridable properties)
+- `src/training/pretrain_mode.py`: `PretrainMode` strategy (step-level checkpointing, token packing, generation evaluation)
+- `src/training/finetune_mode.py`: `FinetuneMode` strategy (epoch-level evaluation, layer freezing, eval_only/infer_only modes)
+- `examples/train_pretrain.py` and `examples/train_supervised.py` reduced to ~18 line thin wrappers (96% reduction)
+
+### Configuration
+
+- Add externalized YAML configuration for position pre-training and denoising regression parameters (`configs/model/base.yaml`)
+- Add structured dataclass-based model configuration (`src/conf/model/model_configs.py`)
+
 ## [0.6.1] - 2025-12-23
 
 ### Model
