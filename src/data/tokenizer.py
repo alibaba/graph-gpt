@@ -367,9 +367,9 @@ class GSTTokenizer(object):
     def pack_token_seq(
         self, token_res: tokenizer_utils.TokenizationOutput, previous_idx: int
     ):
-        ls_tokens = token_res.ls_tokens
-        ls_labels = token_res.ls_labels
-        ls_embed = token_res.ls_embed
+        ls_tokens = list(token_res.ls_tokens)
+        ls_labels = list(token_res.ls_labels)
+        ls_embed = list(token_res.ls_embed) if token_res.ls_embed else token_res.ls_embed
         token_compontens = self.get_token_components(ls_tokens)
         token_len = len(ls_tokens) + 1
         ls_len = [token_len]
@@ -415,10 +415,13 @@ class GSTTokenizer(object):
             # Drop this sample if it would exceed mpe
             if token_len + len(seps) + len(new_ls_tokens) >= self.mpe:
                 break
-            ls_tokens = ls_tokens + seps + new_ls_tokens
-            ls_labels = ls_labels + label_seps + new_ls_labels
+            ls_tokens.extend(seps)
+            ls_tokens.extend(new_ls_tokens)
+            ls_labels.extend(label_seps)
+            ls_labels.extend(new_ls_labels)
             if ls_embed:
-                ls_embed = ls_embed + embed_seps + new_ls_embed
+                ls_embed.extend(embed_seps)
+                ls_embed.extend(new_ls_embed)
 
             previous_idx = idx
             token_len = len(ls_tokens) + 1

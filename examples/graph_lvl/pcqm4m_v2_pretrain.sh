@@ -28,6 +28,7 @@ layer_scale_init_val=0
 trial=1
 batch_size=256
 pack_tokens=1
+token_per_sample=20
 
 # iii.a training::training machines
 workerCount=1
@@ -111,7 +112,7 @@ fi
 # Force batch_size=1 when pack_tokens is enabled (required for variable-length packed sequences)
 if (( pack_tokens != 0 ))
 then
-  max_position_embeddings=$((batch_size * max_position_embeddings))
+  max_position_embeddings=$((batch_size * token_per_sample))
   batch_size=1
   echo "pack_tokens=${pack_tokens}: forcing batch_size=1"
 fi

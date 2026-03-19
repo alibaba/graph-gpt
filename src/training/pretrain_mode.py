@@ -197,7 +197,15 @@ class PretrainMode(TrainingMode):
         print(f"\n[{datetime.now()}] tokens_per_sample: {tokens_per_sample}")
 
         # 1.52 inspect tokenization results
+        # Temporarily cap mpe for inspection to avoid packing hundreds of
+        # thousands of graphs during a diagnostic call (O(n^2) slow).
+        _saved_mpe = gtokenizer.mpe
+        if gtokenizer.mpe is not None:
+            # Use the *original* (un-packed) max_position_embeddings so we
+            # still see a small packing example in the log.
+            gtokenizer.mpe = min(gtokenizer.mpe, 1024)
         inspect_tokenization_results(dataset, gtokenizer)
+        gtokenizer.mpe = _saved_mpe
         # 1.53 re-init to avoid pickle error
         gtokenizer.dataset = train_dataset if train_cfg.pack_tokens > 0 else None
 
