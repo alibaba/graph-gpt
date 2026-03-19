@@ -49,7 +49,9 @@ def ft_infer_hidden_states(model, loader, cfg: Config, eval_name: str):
     for j, test_data in enumerate(loader, 1):
         input_ids = test_data["input_ids"].to(device)
         attention_mask = test_data["attention_mask"].to(device)
-        position_ids = test_data["position_ids"].to(device)
+        position_ids = test_data.get("position_ids", None)
+        if position_ids is not None:
+            position_ids = position_ids.to(device)
         inputs_raw_embeds = None
         if "embed" in test_data:
             inputs_raw_embeds = test_data["embed"].to(device)
@@ -97,7 +99,9 @@ def ft_evaluate(model, loader, cfg: Config, eval_name: str):
     for j, test_data in enumerate(loader, 1):
         input_ids = test_data["input_ids"].to(device)
         attention_mask = test_data["attention_mask"].to(device)
-        position_ids = test_data["position_ids"].to(device)
+        position_ids = test_data.get("position_ids", None)
+        if position_ids is not None:
+            position_ids = position_ids.to(device)
         task_labels = test_data[f"{task_level}_labels"].to(device)
         task_labels = (
             task_labels.float()
@@ -174,7 +178,9 @@ def pt_infer_hidden_states(model, loader, cfg: Config):
     for j, test_data in enumerate(loader, 1):
         input_ids = test_data["input_ids"].to(device)
         attention_mask = test_data["attention_mask"].to(device)
-        position_ids = test_data["position_ids"].to(device)
+        position_ids = test_data.get("position_ids", None)
+        if position_ids is not None:
+            position_ids = position_ids.to(device)
         inputs_raw_embeds = None
         if "embed" in test_data:
             inputs_raw_embeds = test_data["embed"].to(device)
@@ -263,7 +269,9 @@ def evaluate(
     for test_data in loader:
         input_ids = test_data["input_ids"].to(device)
         attention_mask = test_data["attention_mask"].to(device)
-        position_ids = test_data["position_ids"].to(device)
+        position_ids = test_data.get("position_ids", None)
+        if position_ids is not None:
+            position_ids = position_ids.to(device)
         labels = test_data["labels"].to(device)
         inputs_raw_embeds = None
         if "embed" in test_data:
@@ -276,7 +284,7 @@ def evaluate(
             attention_mask=attention_mask,
             labels=labels,
             inputs_raw_embeds=inputs_raw_embeds,
-            # position_ids=position_ids,
+            position_ids=position_ids,
             sample_wgt=sample_wgt,
         )  # Perform a single forward pass.
         loss = res.head1_loss
@@ -889,13 +897,15 @@ def evaluate_v0(
     for test_data in loader:
         input_ids = test_data["input_ids"].to(device)
         attention_mask = test_data["attention_mask"].to(device)
-        position_ids = test_data["position_ids"].to(device)
+        position_ids = test_data.get("position_ids", None)
+        if position_ids is not None:
+            position_ids = position_ids.to(device)
         labels = test_data["labels"].to(device)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=None,
-            # position_ids=position_ids,
+            position_ids=position_ids,
         )  # Perform a single forward pass.
         logits = res.head1_logits  # [bz, seq, vocab]
         batch_size = input_ids.shape[0]

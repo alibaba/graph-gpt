@@ -343,14 +343,6 @@ def prepare_inputs_for_pretrain_mlm(
         )
     in_dict["input_ids"] = input_ids
     in_dict["labels"] = labels_mask
-    in_dict["position_ids"].extend(
-        list(
-            range(
-                len(in_dict["position_ids"]),
-                len(in_dict["position_ids"]) + len_extended_tokens,
-            )
-        )
-    )
     if gtokenizer.mpe is None:
         in_dict["attention_mask"].extend([1] * len_extended_tokens)
         in_dict["split_lens"] = [len(in_dict["input_ids"])]
@@ -413,14 +405,6 @@ def prepare_inputs_for_pretrain_coord(
     assert len(gtokenizer.config.get("ensemble_datasets", [])) == 0
     assert gtokenizer.mpe is None
     in_dict["input_ids"] = input_ids
-    in_dict["position_ids"].extend(
-        list(
-            range(
-                len(in_dict["position_ids"]),
-                len(in_dict["position_ids"]) + len_extended_tokens,
-            )
-        )
-    )
     in_dict["attention_mask"].extend([1] * len_extended_tokens)
     if "embed" in in_dict:
         dim = len(in_dict["embed"][0])
@@ -786,17 +770,6 @@ def _extend_input_dict(
             for token_id in ls_extend_tokens
         ]
     in_dict["input_ids"].extend(ls_extend_tokens)
-    in_dict["position_ids"].extend(
-        list(
-            [
-                ele % cmpe
-                for ele in range(
-                    in_dict["position_ids"][-1] + 1,
-                    in_dict["position_ids"][-1] + 1 + len_extended_tokens,
-                )
-            ]
-        )
-    )
     labels_instance = in_dict["labels"][0]
     if isinstance(labels_instance, List):
         ls_extend_labels = [[-100] * len(labels_instance)] * len_extended_tokens

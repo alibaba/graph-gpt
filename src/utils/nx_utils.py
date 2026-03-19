@@ -244,17 +244,10 @@ def get_structure_raw_node2idx_mapping(
         path_s = [src for src, tgt in path]
         path_s.append(path[-1][-1])
         uniques = list(dict.fromkeys(path_s))
-        if mapping_type == 2:
-            rnd_idx = random.sample(range(scope), k=len(uniques))
-            dict_map = {
-                old_idx: _rebase_idx(idx, scope_base)
-                for idx, old_idx in zip(rnd_idx, uniques)
-            }
-        else:
-            dict_map = {
-                old_idx: _rebase_idx(idx % scope, scope_base)
-                for idx, old_idx in enumerate(uniques, start=start_idx)
-            }
+        dict_map = {
+            old_idx: _rebase_idx(idx % scope, scope_base)
+            for idx, old_idx in enumerate(uniques, start=start_idx)
+        }
     else:  # in case `path=[]` when graph has ONLY 1 node
         dict_map = {0: _rebase_idx(start_idx % scope, scope_base)}
     return dict_map

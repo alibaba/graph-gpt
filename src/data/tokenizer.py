@@ -296,9 +296,10 @@ class GSTTokenizer(object):
             feature["input_ids"] = _merge_two_ls(
                 feature["input_ids"], padded_input_ids, self.padding_side
             )
-            feature["position_ids"] = _merge_two_ls(
-                feature["position_ids"], padded_position_ids, self.padding_side
-            )
+            if "position_ids" in feature:
+                feature["position_ids"] = _merge_two_ls(
+                    feature["position_ids"], padded_position_ids, self.padding_side
+                )
             feature["labels"] = _merge_two_ls(
                 feature["labels"], padded_labels, self.padding_side
             )
@@ -557,15 +558,6 @@ class GSTTokenizer(object):
             seq_labels_id,
             self.label_to_be_padded,
             self.label_pad_token_id,
-            self.cmpe,
-            self.cyclic_mpe,
-            self.get_node_idx_token_ids().union(
-                {
-                    self.get_eos_token_id(),
-                    self.get_jump_token_id(),
-                    self.get_gsum_token_id(),
-                }
-            ),
         )
         return in_dict
 
@@ -656,9 +648,6 @@ def get_input_dict_from_seq_tokens_id(
     seq_labels_id: List[Union[int, List[int]]],
     label_to_be_pad: Set[int],
     label_pad_token_id: int,
-    mpe: int = 1024,
-    cyclic: bool = False,
-    node_idx_token_ids: Set = set(),
 ):
     seq_tokens_id = list(seq_tokens_id)
     if seq_labels_id is None:
@@ -676,25 +665,10 @@ def get_input_dict_from_seq_tokens_id(
             token_id if token_id not in label_to_be_pad else label_pad_token_id
             for token_id in labels
         ]
-    # `random.randint` Return random integer in range [a, b], including both end points.
-    # v1: cyclic version
-    start_idx = random.randint(0, mpe - 1) if cyclic else 0
-    position_ids = list(
-        [ele % mpe for ele in range(start_idx, start_idx + len(input_ids))]
-    )
-    # v2: non-cyclic version
-    # start_idx = random.randint(0, max(0, mpe - len(input_ids) - 5)) if cyclic else 0
-    # position_ids = list(range(start_idx, start_idx + len(input_ids)))
-    # v3: pe relying on node positions
-    if cyclic:  # TODO: use another params to turn on/off this functionality
-        ls_tf = [1 if x in node_idx_token_ids else 0 for x in input_ids]
-        ls_tf = [1] * len(input_ids) if not isinstance(input_ids[0], int) else ls_tf
-        position_ids = (np.cumsum(ls_tf) - 1).tolist()
 
     attention_mask = [1] * len(input_ids)
     return {
         "input_ids": input_ids,
-        "position_ids": position_ids,
         "labels": labels,
         "attention_mask": attention_mask,
     }
@@ -854,7 +828,7 @@ def get_semantics_attr_mapping(
         ), "Supporting both discrete and continuous attr is NOT implemented yet!"
         ignored_val = config["semantics"][node_or_edge]["ignored_val"]
         tmp_map = func_attr_mapping(path, data, continuous_attr)
-        dict_map["discrete"] = {
+        dict_map["continuous"] = {
             k: _tokenize_continuous_attr(
                 v.astype(str), world_identifier, node_or_edge, ignored_val, attr_shuffle
             )
@@ -1147,8 +1121,6 @@ class StackedGSTTokenizer(GSTTokenizer):
             seq_labels_id,
             set(),
             None,
-            self.cmpe,
-            self.cyclic_mpe,
         )
         # in_dict["labels"] = [token_ids[0] for token_ids in in_dict["labels"]]
         return in_dict
