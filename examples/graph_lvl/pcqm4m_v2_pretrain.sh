@@ -1,6 +1,6 @@
 #!/bin/bash
 
-env="gpu"  # cpu | gpu
+env="cpu"  # cpu | gpu
 
 # i. data config
 data_dir="OGB"
@@ -15,6 +15,7 @@ model_name="base"  # tiny mini small medium base base24 base48 base64 large xlar
 stack_method="short"
 stacked_feat_agg_method="sum"  # gated|sum
 max_position_embeddings=1024
+attn_implementation="sdpa"  # sdpa | flex_attention
 
 # ii.a model::dropout & lsi
 attention_dropout=0.1
@@ -25,8 +26,8 @@ layer_scale_init_val=0
 
 # iii. training config
 trial=1
-pack_tokens=0
 batch_size=256
+pack_tokens=1
 
 # iii.a training::training machines
 workerCount=1
@@ -107,6 +108,14 @@ fi
 #=======================================================================================================================
 #=======================================================================================================================
 #===================================== PT:: BELOW TILL THE END ARE THE SAME FOR ALL DATASETS ===========================
+# Force batch_size=1 when pack_tokens is enabled (required for variable-length packed sequences)
+if (( pack_tokens != 0 ))
+then
+  max_position_embeddings=$((batch_size * max_position_embeddings))
+  batch_size=1
+  echo "pack_tokens=${pack_tokens}: forcing batch_size=1"
+fi
+
 if [ "${dlm_wgt}" == "true" ]
 then
   loss_obj="dlm"
@@ -279,6 +288,7 @@ raw_udf="
   --training.focal_gamma=${focal_gamma}
   --model.model_type='${model_type}'
   --model.max_position_embeddings=${max_position_embeddings}
+  --model.attn_implementation='${attn_implementation}'
   --model.num_hidden_layers=${num_hidden_layers}
   --model.hidden_size=${hidden_size}
   --model.intermediate_size=${intermediate_size}

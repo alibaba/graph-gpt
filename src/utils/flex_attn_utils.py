@@ -4,7 +4,7 @@ Flex attention utilities for GraphGPT.
 Functions adapted from holon/data/data_utils.py to support the split_lens/attn_modes
 attention mask abstraction. These utilities can produce either:
   - SDPA path: per-sample 2D attention masks (prepare_attention_mask_per_sample)
-  - Flex path: mask_mod closures for torch.nn.attention.flex_attention (create_sparse_mask_v3)
+  - Flex path: mask_mod closures for torch.nn.attention.flex_attention (create_sparse_mask)
 """
 
 from typing import List
@@ -16,8 +16,11 @@ import torch
 # Flex attention mask utilities (from holon)
 # ---------------------------------------------------------------------------
 
-def create_ids(document_lens, split_lens, attn_modes, device):
-    """Create ID tensors that encode the split structure for flex attention.
+def create_sparse_mask(document_lens, split_lens, attn_modes, device):
+    """Create ID tensors and a flat mask_mod closure for flex_attention.
+
+    Combines ID creation and mask closure into one function, following the
+    holon reference implementation.
 
     Args:
         document_lens: list[int] — length of each document/sample in packed sequence
@@ -26,60 +29,36 @@ def create_ids(document_lens, split_lens, attn_modes, device):
         device: torch.device
 
     Returns:
-        dict with three 1D int32 tensors of shape (sum(split_lens),):
-          - full_and_noise_seq_id: split index for 'full'/'noise' splits, -1 for 'causal'
-          - noise_seq_id: split index for 'noise' splits, -1 otherwise
-          - document_id: document index per position (1-indexed)
+        A mask_mod function with signature (b, h, q_idx, kv_idx) -> bool
+        that encodes: (causal OR same_full_split) AND same_document.
     """
+    def causal_mask(b, h, q_idx, kv_idx):
+        return q_idx >= kv_idx
+
+    def full_and_noise_mask(b, h, q_idx, kv_idx):
+        return (full_and_noise_seq_id[q_idx] == full_and_noise_seq_id[kv_idx]) & (full_and_noise_seq_id[q_idx] >= 0)
+
+    def remove_noise_mask(b, h, q_idx, kv_idx):
+        return (~((noise_seq_id[kv_idx] >= 0) & (noise_seq_id[q_idx] != noise_seq_id[kv_idx])))
+
+    def sample_mask(b, h, q_idx, kv_idx):
+        return document_id[q_idx] == document_id[kv_idx]
+
     full_and_noise_tmp = []
     noise_tmp = []
 
-    for i, (length, mode) in enumerate(zip(split_lens, attn_modes)):
-        value = i if mode in ['full', 'noise'] else -1
+    for i, (length, model) in enumerate(zip(split_lens, attn_modes)):
+        value = i if model in ['full', 'noise'] else -1
         full_and_noise_tmp.extend([value] * length)
-        value_noise = i if mode == 'noise' else -1
+        value_noise = i if model == 'noise' else -1
         noise_tmp.extend([value_noise] * length)
 
-    full_and_noise_seq_id = torch.tensor(full_and_noise_tmp, dtype=torch.int32).to(device)
-    noise_seq_id = torch.tensor(noise_tmp, dtype=torch.int32).to(device)
+    full_and_noise_seq_id = torch.Tensor(full_and_noise_tmp).to(device)
+    noise_seq_id = torch.Tensor(noise_tmp).to(device)
 
-    document_id = torch.cat([
-        torch.full((l,), i, device=device, dtype=torch.int32)
-        for i, l in enumerate(document_lens, start=1)
-    ])
-    return {
-        "full_and_noise_seq_id": full_and_noise_seq_id,
-        "noise_seq_id": noise_seq_id,
-        "document_id": document_id,
-    }
+    document_id = torch.cat([torch.full((l,), i, device=device) for i, l in enumerate(document_lens, start=1)])
 
-
-def create_sparse_mask_v3(full_and_noise_seq_id, noise_seq_id, document_id):
-    """Create a flat mask_mod closure for flex_attention.
-
-    Returns a function with signature (b, h, q_idx, kv_idx) -> bool
-    that encodes: (causal OR same_full_split) AND same_document.
-    """
-    def unified_mask(b, h, q_idx, kv_idx):
-        # 1. Causal mask
-        causal = q_idx >= kv_idx
-
-        # 2. Full and Noise mask
-        full_q = full_and_noise_seq_id[q_idx]
-        full_kv = full_and_noise_seq_id[kv_idx]
-        fn_mask = (full_q == full_kv) & (full_q >= 0)
-
-        # Combined: causal OR same full/noise split
-        base_cond = causal | fn_mask
-
-        # 3. Document mask: same document only
-        doc_q = document_id[q_idx]
-        doc_kv = document_id[kv_idx]
-        same_doc = doc_q == doc_kv
-
-        return base_cond & same_doc
-
-    return unified_mask
+    return and_masks(or_masks(causal_mask, full_and_noise_mask), remove_noise_mask, sample_mask)
 
 
 def prepare_attention_mask_per_sample(split_lens, attn_modes, device="cpu"):
@@ -212,12 +191,7 @@ def build_flex_block_mask(
         flat_split_lens.extend(sl)
         flat_attn_modes.extend(am)
 
-    ids = create_ids(document_lens, flat_split_lens, flat_attn_modes, device)
-    mask_mod = create_sparse_mask_v3(
-        ids["full_and_noise_seq_id"],
-        ids["noise_seq_id"],
-        ids["document_id"],
-    )
+    mask_mod = create_sparse_mask(document_lens, flat_split_lens, flat_attn_modes, device)
 
     block_mask = create_block_mask(
         mask_mod,

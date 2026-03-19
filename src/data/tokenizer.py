@@ -414,6 +414,9 @@ class GSTTokenizer(object):
             if ls_embed:
                 dim = len(ls_embed[0])
                 embed_seps = np.zeros((1, dim), dtype=np.float32).tolist()
+            # Drop this sample if it would exceed mpe
+            if token_len + len(seps) + len(new_ls_tokens) >= self.mpe:
+                break
             ls_tokens = ls_tokens + seps + new_ls_tokens
             ls_labels = ls_labels + label_seps + new_ls_labels
             if ls_embed:
@@ -636,6 +639,8 @@ def _merge_two_ls(ls_main, ls_side, side="left"):
 
 def _get_batch_seq_len(ls_seq_len, pad_to_multiple_of, max_position_embeddings):
     if pad_to_multiple_of is None:
+        batch_seq_len = max_position_embeddings
+    elif len(ls_seq_len) == 1:  # single sequence -> packed multiple samples
         batch_seq_len = max_position_embeddings
     else:
         max_seq_len = max(ls_seq_len)

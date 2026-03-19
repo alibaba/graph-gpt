@@ -247,7 +247,10 @@ def prepare_inputs_for_pretrain_mlm(
         input_ids.extend(ls_extend_tokens)
         len_extended_tokens += len(ls_extend_tokens)
 
-    ls_len[-1] = ls_len[-1] + len_extended_tokens
+    # Only update ls_len[-1] if NOT using packed sequences (mpe is None)
+    # For packed sequences, ls_len already accounts for the EOS token from pack_token_seq
+    if gtokenizer.mpe is None:
+        ls_len[-1] = ls_len[-1] + len_extended_tokens
 
     # 1. set-up parameters for SMTP: scheduled masked token prediction
     mask_token_id = gtokenizer.get_mask_token_id()
@@ -358,6 +361,11 @@ def prepare_inputs_for_pretrain_mlm(
         in_dict["attention_mask"].extend([1] * len_extended_tokens)
         in_dict["split_lens"] = [int(l) for l in lens]
         in_dict["attn_modes"] = ["full"] * len(lens)
+        # Reset position_ids per document so RoPE restarts for each packed sample
+        new_pos = []
+        for l in lens:
+            new_pos.extend(range(int(l)))
+        in_dict["position_ids"] = new_pos
     if "embed" in in_dict:
         dim = len(in_dict["embed"][0])
         extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
