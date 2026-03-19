@@ -57,9 +57,6 @@ class GSTTokenizer(object):
         self.token_components = None
         self.random_ratio = 1
         self.label_to_be_padded = self.get_label_token_id_to_be_padded()
-        # cyclic mpe
-        self.cmpe = 100000
-        self.cyclic_mpe = False
         self.node_idx_tokens = None
         self.node_idx_token_ids = None
         self.all_token_ids = None

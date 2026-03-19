@@ -548,7 +548,7 @@ def prepare_inputs_for_graph_lvl_task(
     else:
         ls_extend_tokens = []
         bin_labels = None
-    in_dict = _extend_input_dict(in_dict, ls_extend_tokens, cmpe=gtokenizer.cmpe)
+    in_dict = _extend_input_dict(in_dict, ls_extend_tokens)
     in_dict["graph_labels"] = torch.squeeze(graph.y).tolist()
     in_dict["labels"] = bin_labels or in_dict["labels"]
 
@@ -621,11 +621,7 @@ def prepare_inputs_for_edge_lvl_task(
                 x[0]: y for x, y in zip(in_dict["input_ids"], in_dict["embed"])
             }
             ls_extend_emb = [list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens]
-    in_dict = _extend_input_dict(
-        in_dict,
-        ls_extend_tokens,
-        cmpe=gtokenizer.cmpe,
-    )
+    in_dict = _extend_input_dict(in_dict, ls_extend_tokens)
     in_dict["idx"] = (
         graph.seed_node.tolist() if hasattr(graph, "seed_node") else ls_src_dst
     )
@@ -676,11 +672,7 @@ def prepare_inputs_for_node_lvl_task(
                 x[0]: y for x, y in zip(in_dict["input_ids"], in_dict["embed"])
             }
             ls_extend_emb = [list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens]
-    in_dict = _extend_input_dict(
-        in_dict,
-        ls_extend_tokens,
-        cmpe=gtokenizer.cmpe,
-    )
+    in_dict = _extend_input_dict(in_dict, ls_extend_tokens)
     in_dict["idx"] = ls_token_ids
     assert graph.num_nodes == graph.y.shape[0]
     in_dict["node_labels"] = graph.y[graph.root_n_id].tolist()
@@ -750,7 +742,6 @@ def prepare_inputs_for_node_v2_token_lvl_task(
         in_dict = _extend_input_dict(
             in_dict,
             ls_extend_tokens,
-            cmpe=gtokenizer.cmpe,
             keys=("nodev2_labels", "raw_node_idx"),
             vals=(-100, -100),
         )
@@ -760,7 +751,7 @@ def prepare_inputs_for_node_v2_token_lvl_task(
 
 
 def _extend_input_dict(
-    in_dict, ls_extend_tokens, cmpe=int(1e8), keys=tuple(), vals=tuple()
+    in_dict, ls_extend_tokens, keys=tuple(), vals=tuple()
 ):
     len_extended_tokens = len(ls_extend_tokens)
     inputs_instance = in_dict["input_ids"][0]

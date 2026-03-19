@@ -200,7 +200,6 @@ class Config:
     eulerian_position: int = 0  # use eulerian position encoding/ntk
     tot_samples: int = 10000  # num of samples for estimating tokens-per-sample
     rope_scaling_factor: int = 0  # finetuning
-    cyclic_mpe: int = 0  # whether to use cycle mpe; finetuning
 
 
 def init_stacked_feat(cfg: Config):
