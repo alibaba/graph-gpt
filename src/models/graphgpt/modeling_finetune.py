@@ -248,6 +248,8 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        split_lens=None,
+        attn_modes=None,
         **kwargs,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
         output_attentions, output_hidden_states, return_dict, position_ids = (
@@ -262,8 +264,14 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
             input_ids, inputs_embeds, inputs_raw_embeds=inputs_raw_embeds
         )
 
-        if not self.config.causal_attention:
-            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
+        if not self.config.causal_attention or (
+            split_lens is not None and
+            getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
+        ):
+            attention_mask = _update_causal_mask(
+                self, attention_mask, inputs_embeds,
+                split_lens=split_lens, attn_modes=attn_modes
+            )
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -365,6 +373,8 @@ class GraphGPTDoubleHeadsModel(GraphGPTTaskModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        split_lens=None,
+        attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
         r"""
         Args:
@@ -394,6 +404,8 @@ class GraphGPTDoubleHeadsModel(GraphGPTTaskModel):
             task_labels=task_labels,
             cls_idx=cls_idx,
             sample_wgt=sample_wgt,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )
 
         hidden_states = res.hidden_states  # [N, seq, dim]
@@ -691,12 +703,28 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        split_lens=None,
+        attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
         output_attentions, output_hidden_states, return_dict, position_ids = (
             resolve_forward_defaults(
                 self, output_attentions, output_hidden_states, return_dict, position_ids
             )
         )
+
+        # --- bi_causal on-the-fly fallback ---
+        if self.bi_causal and split_lens is None:
+            # Compute split_lens from attention_mask for backward compat:
+            # prefix = full-attention (valid non-causal tokens),
+            # suffix = causal-attention (remaining valid tokens)
+            valid_lens = attention_mask.sum(dim=-1).tolist()  # [bz]
+            causal_len = self.config.stacked_feat  # num causal suffix tokens
+            split_lens = [
+                [max(int(vl) - causal_len, 0), min(causal_len, int(vl))]
+                for vl in valid_lens
+            ]
+            attn_modes = [["full", "causal"]] * len(split_lens)
+
         # 0. pre-process
         # 0.1 pre-process input_ids
         pos_deco = input_ids[:, :, self.config.stacked_feat :]  # [bz, seq, 3 or 4]
@@ -808,8 +836,14 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
             inputs_embeds += noisy_pos_embeds
 
         # 1. run backbone transformer
-        if not self.config.causal_attention:
-            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
+        if not self.config.causal_attention or (
+            split_lens is not None and
+            getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
+        ):
+            attention_mask = _update_causal_mask(
+                self, attention_mask, inputs_embeds,
+                split_lens=split_lens, attn_modes=attn_modes
+            )
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,

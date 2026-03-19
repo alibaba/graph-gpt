@@ -165,6 +165,8 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[bool] = None,
+        split_lens=None,
+        attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
         output_attentions, output_hidden_states, return_dict, position_ids = (
             resolve_forward_defaults(
@@ -192,8 +194,14 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
             input_ids, inputs_embeds, inputs_raw_embeds, labels
         )
 
-        if not self.config.causal_attention:
-            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
+        if not self.config.causal_attention or (
+            split_lens is not None and
+            getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
+        ):
+            attention_mask = _update_causal_mask(
+                self, attention_mask, inputs_embeds,
+                split_lens=split_lens, attn_modes=attn_modes
+            )
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -485,6 +493,8 @@ class GraphGPTPosPred(LlamaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[bool] = None,
+        split_lens=None,
+        attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
         output_attentions, output_hidden_states, return_dict, position_ids = (
             resolve_forward_defaults(
@@ -571,8 +581,14 @@ class GraphGPTPosPred(LlamaForCausalLM):
             inputs_embeds += noisy_pos_embeds
 
         # 1. run backbone transformer
-        if not self.config.causal_attention:
-            attention_mask = _update_causal_mask(self, attention_mask, inputs_embeds)
+        if not self.config.causal_attention or (
+            split_lens is not None and
+            getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
+        ):
+            attention_mask = _update_causal_mask(
+                self, attention_mask, inputs_embeds,
+                split_lens=split_lens, attn_modes=attn_modes
+            )
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,

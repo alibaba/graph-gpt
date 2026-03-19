@@ -144,7 +144,7 @@ class TrainingConfig:
         int
     ] = None  # small to avoid OOM when evaluating during finetuning
     max_length: Optional[int] = None  # used in finetuning
-    pad_to_multiple_of: int = 8
+    pad_to_multiple_of: int = 128  # 128 for flex_attention block size compatibility
     pack_tokens: float = 0
     num_workers: int = 8  # num of workers for data processing in train DataLoader
     num_workers_eval: int = 8  # num of workers for data processing in eval DataLoader

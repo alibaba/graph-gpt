@@ -29,13 +29,28 @@ from . import utils_graphgpt
 from .modeling_common import _EPSILON, _prepare_4d_bi_causal_attention_mask
 from src.utils.loss_utils import _dist_infonce
 from src.utils.mol_utils import discrete_pos
+from src.utils.flex_attn_utils import build_4d_from_splits, build_flex_block_mask
 from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
 
 
 # ===========================================================================
 # A. Attention mask utilities
 # ===========================================================================
-def _update_causal_mask(self, attention_mask, input_tensor, **kwargs):
+def _update_causal_mask(self, attention_mask, input_tensor,
+                        *, split_lens=None, attn_modes=None, **kwargs):
+    # --- NEW: split_lens/attn_modes primary path ---
+    if split_lens is not None:
+        attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
+        if attn_impl == 'flex_attention':
+            return build_flex_block_mask(
+                split_lens, attn_modes, attention_mask, input_tensor
+            )
+        else:
+            return build_4d_from_splits(
+                split_lens, attn_modes, attention_mask, input_tensor
+            )
+
+    # --- EXISTING: backward-compatible fallback ---
     if hasattr(self, "bi_causal") and self.bi_causal:
         return _prepare_4d_bi_causal_attention_mask(attention_mask, input_tensor.dtype)
     if len(attention_mask.size()) == 2:

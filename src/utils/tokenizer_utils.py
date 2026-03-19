@@ -20,6 +20,8 @@ get_inputs_preparation_func = _inputs_deco.get  # return the func
 
 @_inputs_deco("pretrain")
 def prepare_inputs_for_pretrain(in_dict, **kwargs):
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["full"]
     return in_dict
 
 
@@ -348,11 +350,14 @@ def prepare_inputs_for_pretrain_mlm(
     )
     if gtokenizer.mpe is None:
         in_dict["attention_mask"].extend([1] * len_extended_tokens)
+        in_dict["split_lens"] = [len(in_dict["input_ids"])]
+        in_dict["attn_modes"] = ["full"]
     else:
-        # create block-wise bi-attention for packed sequences
-        lens = np.array(ls_len) - np.array([0] + ls_len[:-1])
-        attns = [np.ones([each_len, each_len], dtype=int) for each_len in lens]
-        in_dict["attention_mask"] = block_diag(*attns)
+        # create split_lens for packed sequences (replaces block_diag)
+        lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
+        in_dict["attention_mask"].extend([1] * len_extended_tokens)
+        in_dict["split_lens"] = [int(l) for l in lens]
+        in_dict["attn_modes"] = ["full"] * len(lens)
     if "embed" in in_dict:
         dim = len(in_dict["embed"][0])
         extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
@@ -422,6 +427,8 @@ def prepare_inputs_for_pretrain_coord(
         in_dict["input_ids"],
     )
     in_dict["input_ids"] = input_ids.tolist()
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["full"]
     return in_dict
 
 
@@ -472,6 +479,8 @@ def _attach_node_mask_to_inputs(ls_raw_node_idx, len_extended_tokens, input_ids)
 def prepare_inputs_for_last_token_pred_in_pretrain(in_dict, **kwargs):
     raw_labels = in_dict["labels"]
     in_dict["labels"] = [-100] * (len(raw_labels) - 1) + raw_labels[-1:]
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["causal"]
     return in_dict
 
 
@@ -496,6 +505,8 @@ def prepare_inputs_for_last_token_pred_in_pretrain(in_dict, *, gtokenizer, **kwa
         if flag == 1:
             new_labels[i] = raw_labels[i]
     in_dict["labels"] = new_labels
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["causal"]
     return in_dict
 
 
@@ -564,6 +575,8 @@ def prepare_inputs_for_graph_lvl_task(
             in_dict["input_ids"],
         )
         in_dict["input_ids"] = input_ids.tolist()
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["full"]
     return in_dict
 
 
@@ -630,6 +643,8 @@ def prepare_inputs_for_edge_lvl_task(
         assert len(in_dict["input_ids"]) == len(in_dict["embed"])
     if hasattr(graph, "wgt"):
         in_dict["wgt"] = graph.wgt.item()
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["full"]
     return in_dict
 
 
@@ -682,6 +697,8 @@ def prepare_inputs_for_node_lvl_task(
         assert len(in_dict["input_ids"]) == len(in_dict["embed"])
     if hasattr(graph, "wgt"):
         in_dict["wgt"] = graph.wgt.item()
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["full"]
     return in_dict
 
 
@@ -745,6 +762,8 @@ def prepare_inputs_for_node_v2_token_lvl_task(
             keys=("nodev2_labels", "raw_node_idx"),
             vals=(-100, -100),
         )
+    in_dict["split_lens"] = [len(in_dict["input_ids"])]
+    in_dict["attn_modes"] = ["full"]
     return in_dict
 
 

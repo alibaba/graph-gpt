@@ -25,6 +25,10 @@ def batch_training(
     if "wgt" in data:
         sample_wgt = data["wgt"].to(device)
 
+    # flex attention metadata (kept as Python lists, not tensors)
+    split_lens = data.get("split_lens", None)
+    attn_modes = data.get("attn_modes", None)
+
     loss = main_loss = aux_loss = None
     if train_stats.use_deepspeed:
         output = model(
@@ -34,6 +38,8 @@ def batch_training(
             inputs_raw_embeds=inputs_raw_embeds,
             # position_ids=position_ids,
             sample_wgt=sample_wgt,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         main_loss = output.head1_loss
         aux_loss = output.head2_loss
@@ -58,6 +64,8 @@ def batch_training(
                 inputs_raw_embeds=inputs_raw_embeds,
                 # position_ids=position_ids,
                 sample_wgt=sample_wgt,
+                split_lens=split_lens,
+                attn_modes=attn_modes,
             )  # Perform a single forward pass.
             main_loss = output.head1_loss
             aux_loss = output.head2_loss
@@ -132,6 +140,10 @@ def ft_batch_training(
     if "noise" in data:
         labels = data["noise"].to(device)
 
+    # flex attention metadata (kept as Python lists, not tensors)
+    split_lens = data.get("split_lens", None)
+    attn_modes = data.get("attn_modes", None)
+
     if train_stats.use_deepspeed:
         output = model(
             input_ids=input_ids,
@@ -142,6 +154,8 @@ def ft_batch_training(
             inputs_raw_embeds=inputs_raw_embeds,
             sample_wgt=sample_wgt,
             position_ids=position_ids,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         aux_loss = output.pretrain_loss
         task_loss = output.task_loss
@@ -172,6 +186,8 @@ def ft_batch_training(
                 inputs_raw_embeds=inputs_raw_embeds,
                 sample_wgt=sample_wgt,
                 position_ids=position_ids,
+                split_lens=split_lens,
+                attn_modes=attn_modes,
             )  # Perform a single forward pass.
             aux_loss = output.pretrain_loss
             task_loss = output.task_loss

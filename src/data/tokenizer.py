@@ -248,8 +248,14 @@ class GSTTokenizer(object):
                 if key not in batch_outputs:
                     batch_outputs[key] = []
                 batch_outputs[key].append(value)
+        # split_lens and attn_modes stay as Python lists-of-lists (not tensors)
+        _list_only_keys = {"split_lens", "attn_modes"}
         batch_outputs = {
-            key: func(val) if not isinstance(val[0], str) else np.array(val)
+            key: (
+                val if key in _list_only_keys
+                else func(val) if not isinstance(val[0], str)
+                else np.array(val)
+            )
             for key, val in batch_outputs.items()
         }
         if "attention_mask_bi" in batch_outputs:
@@ -326,6 +332,10 @@ class GSTTokenizer(object):
                     feature[name] = _merge_two_ls(
                         feature[name], padded_vecs, self.padding_side
                     )
+            # Append padding split to split_lens/attn_modes
+            if "split_lens" in feature and padding_len > 0:
+                feature["split_lens"].append(padding_len)
+                feature["attn_modes"].append("causal")
         else:
             keys_set = {
                 "input_ids",
