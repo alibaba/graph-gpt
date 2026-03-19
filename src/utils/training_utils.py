@@ -16,7 +16,9 @@ def batch_training(
 
     input_ids = data["input_ids"].to(device)
     attention_mask = data["attention_mask"].to(device)
-    position_ids = data["position_ids"].to(device)
+    position_ids = data.get("position_ids", None)
+    if position_ids is not None:
+        position_ids = position_ids.to(device)
     labels = data["labels"].to(device)
     inputs_raw_embeds = None
     if train_stats.has_embeds_input:
@@ -36,7 +38,7 @@ def batch_training(
             attention_mask=attention_mask,
             labels=labels,
             inputs_raw_embeds=inputs_raw_embeds,
-            # position_ids=position_ids,
+            position_ids=position_ids,
             sample_wgt=sample_wgt,
             split_lens=split_lens,
             attn_modes=attn_modes,
@@ -122,7 +124,9 @@ def ft_batch_training(
     ) if i == 0 else None
     input_ids = data["input_ids"].to(device)
     attention_mask = data["attention_mask"].to(device)
-    position_ids = data["position_ids"].to(device)
+    position_ids = data.get("position_ids", None)
+    if position_ids is not None:
+        position_ids = position_ids.to(device)
     labels = data["labels"].to(device)
     task_labels = data[f"{fthead_cfg.task_type}_labels"].to(device)
     task_labels = (
