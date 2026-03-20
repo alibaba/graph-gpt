@@ -26,11 +26,10 @@ from torch.nn import CrossEntropyLoss
 from typing import Optional
 
 from . import utils_graphgpt
-from .modeling_common import _EPSILON, _prepare_4d_bi_causal_attention_mask
+from .modeling_common import _EPSILON
 from src.utils.loss_utils import _dist_infonce
 from src.utils.mol_utils import discrete_pos
 from src.utils.flex_attn_utils import build_4d_from_splits, build_flex_block_mask
-from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
 
 
 # ===========================================================================
@@ -39,44 +38,17 @@ from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
 def _update_causal_mask(self, attention_mask, input_tensor,
                         *, split_lens=None, attn_modes=None, **kwargs):
     # --- NEW: split_lens/attn_modes primary path ---
-    if split_lens is not None:
-        attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
-        if attn_impl == 'flex_attention':
-            return build_flex_block_mask(
-                split_lens, attn_modes, attention_mask, input_tensor
-            )
-        else:
-            return build_4d_from_splits(
-                split_lens, attn_modes, attention_mask, input_tensor
-            )
-
-    # --- EXISTING: backward-compatible fallback ---
-    if hasattr(self, "bi_causal") and self.bi_causal:
-        return _prepare_4d_bi_causal_attention_mask(attention_mask, input_tensor.dtype)
-    if len(attention_mask.size()) == 2:
-        return _prepare_4d_attention_mask(attention_mask, input_tensor.dtype)
-    elif len(attention_mask.size()) == 3:
-        return _expand_mask_from_3d_mask(attention_mask, input_tensor.dtype)
-    else:
-        raise NotImplementedError(
-            f"attention_mask of shape {attention_mask.size()} is not Implemented"
+    assert split_lens is not None
+    assert attn_modes is not None
+    attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
+    if attn_impl == 'flex_attention':
+        return build_flex_block_mask(
+            split_lens, attn_modes, attention_mask, input_tensor
         )
-
-
-def _expand_mask_from_3d_mask(mask: torch.Tensor, dtype: torch.dtype):
-    """
-    refer to: transformers/modeling_attn_mask_utils.py::AttentionMaskConverter._expand_mask
-    Expands attention_mask from `[bsz, tgt_seq_len, src_seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
-    It's usually from block-wise attention for training with packed sequence
-    """
-    bsz, tgt_len, src_len = mask.size()
-    expanded_mask = (
-        mask[:, None, :, :].expand(bsz, 1, tgt_len, src_len).to(dtype).contiguous()
-    )
-    inverted_mask = 1.0 - expanded_mask
-    return inverted_mask.masked_fill(
-        inverted_mask.to(torch.bool), torch.finfo(dtype).min
-    )
+    else:
+        return build_4d_from_splits(
+            split_lens, attn_modes, attention_mask, input_tensor
+        )
 
 
 # ===========================================================================

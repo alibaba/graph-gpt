@@ -38,9 +38,6 @@ from src.utils.tokenizer_utils import MOL_ENERGY_BIN_LEN
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_prepare_4d_bi_causal_attention_mask = partial(
-    _prepare_4d_bi_causal_attention_mask, MOL_ENERGY_BIN_LEN - 1
-)  # -1 because the last binary digit won't be used in input_ids, but ONLY in labels
 _EPSILON = 1e-7
 # POS_TYPE_mask_lookup is only for molecular 3D data
 POS_TYPE_mask_lookup = torch.tensor(

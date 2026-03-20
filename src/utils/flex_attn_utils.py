@@ -10,6 +10,7 @@ attention mask abstraction. These utilities can produce either:
 from typing import List
 
 import torch
+from torch.nn.attention.flex_attention import and_masks, or_masks
 
 
 # ---------------------------------------------------------------------------

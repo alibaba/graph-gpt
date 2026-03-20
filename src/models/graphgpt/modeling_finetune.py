@@ -272,6 +272,11 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
                 self, attention_mask, inputs_embeds,
                 split_lens=split_lens, attn_modes=attn_modes
             )
+        # flex_attention is compiled via torch.compile; DynamicCache causes
+        # symbolic batch-dimension mismatches inside the inductor lowering
+        # (flex_decoding asserts Bq == Bkv).  Disable caching to avoid this.
+        if getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention':
+            use_cache = False
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -844,6 +849,11 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
                 self, attention_mask, inputs_embeds,
                 split_lens=split_lens, attn_modes=attn_modes
             )
+        # flex_attention is compiled via torch.compile; DynamicCache causes
+        # symbolic batch-dimension mismatches inside the inductor lowering
+        # (flex_decoding asserts Bq == Bkv).  Disable caching to avoid this.
+        if getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention':
+            use_cache = False
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,

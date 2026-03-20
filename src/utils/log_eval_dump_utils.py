@@ -55,11 +55,15 @@ def ft_infer_hidden_states(model, loader, cfg: Config, eval_name: str):
         inputs_raw_embeds = None
         if "embed" in test_data:
             inputs_raw_embeds = test_data["embed"].to(device)
+        split_lens = test_data.get("split_lens", None)
+        attn_modes = test_data.get("attn_modes", None)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             inputs_raw_embeds=inputs_raw_embeds,
             position_ids=position_ids,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         # `idx` is finalized inside `collator`
         idx = test_data["idx"].to(device)
@@ -116,6 +120,8 @@ def ft_evaluate(model, loader, cfg: Config, eval_name: str):
         sample_wgt = None
         if "wgt" in test_data:
             sample_wgt = test_data["wgt"].to(device)
+        split_lens = test_data.get("split_lens", None)
+        attn_modes = test_data.get("attn_modes", None)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -125,6 +131,8 @@ def ft_evaluate(model, loader, cfg: Config, eval_name: str):
             inputs_raw_embeds=inputs_raw_embeds,
             sample_wgt=sample_wgt,
             position_ids=position_ids,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         # record loss
         test_loss += res.task_loss
@@ -184,11 +192,15 @@ def pt_infer_hidden_states(model, loader, cfg: Config):
         inputs_raw_embeds = None
         if "embed" in test_data:
             inputs_raw_embeds = test_data["embed"].to(device)
+        split_lens = test_data.get("split_lens", None)
+        attn_modes = test_data.get("attn_modes", None)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             inputs_raw_embeds=inputs_raw_embeds,
             position_ids=position_ids,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         # `idx` is finalized inside `collator`
         idx = test_data["idx"].to(device)
@@ -279,6 +291,9 @@ def evaluate(
         sample_wgt = None
         if "wgt" in test_data:
             sample_wgt = test_data["wgt"].to(device)
+        # flex attention metadata (kept as Python lists, not tensors)
+        split_lens = test_data.get("split_lens", None)
+        attn_modes = test_data.get("attn_modes", None)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -286,6 +301,8 @@ def evaluate(
             inputs_raw_embeds=inputs_raw_embeds,
             position_ids=position_ids,
             sample_wgt=sample_wgt,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         loss = res.head1_loss
         aux_loss = res.head2_loss
@@ -901,11 +918,15 @@ def evaluate_v0(
         if position_ids is not None:
             position_ids = position_ids.to(device)
         labels = test_data["labels"].to(device)
+        split_lens = test_data.get("split_lens", None)
+        attn_modes = test_data.get("attn_modes", None)
         res = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=None,
             position_ids=position_ids,
+            split_lens=split_lens,
+            attn_modes=attn_modes,
         )  # Perform a single forward pass.
         logits = res.head1_logits  # [bz, seq, vocab]
         batch_size = input_ids.shape[0]
