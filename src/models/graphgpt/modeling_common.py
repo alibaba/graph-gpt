@@ -21,7 +21,6 @@ Shared constants, dataclasses, modules, and init helpers used by both
 pretrain and finetune GraphGPT model classes.
 """
 import math
-from functools import partial
 
 import torch
 from dataclasses import dataclass
@@ -32,8 +31,6 @@ from transformers.utils import ModelOutput
 from transformers.models.llama import modeling_llama
 
 from . import utils_graphgpt
-from src.utils.attn_mask_utils import _prepare_4d_bi_causal_attention_mask
-from src.utils.tokenizer_utils import MOL_ENERGY_BIN_LEN
 
 # ---------------------------------------------------------------------------
 # Constants

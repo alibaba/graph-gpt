@@ -32,6 +32,124 @@ from src.utils.mol_utils import discrete_pos
 from src.utils.flex_attn_utils import build_4d_from_splits, build_flex_block_mask
 
 
+# ---------------------------------------------------------------------------
+# Custom flex_attention forward: replaces transformers' flex_attention_forward
+# via the public AttentionInterface.register() API.
+#
+# Why: transformers' WrappedFlexAttention omits dynamic=False for most
+# PyTorch versions in eval mode, causing symbolic batch-dimension
+# mismatches (flex_decoding asserts Bq == Bkv).  Compiling once at
+# module level with dynamic=False (following holon's pattern) avoids
+# the issue entirely.
+# ---------------------------------------------------------------------------
+try:
+    from torch.nn.attention.flex_attention import (
+        flex_attention as _raw_flex_attn, BlockMask,
+    )
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+    from transformers.utils.import_utils import is_torchdynamo_compiling
+
+    torch._dynamo.config.cache_size_limit = 512
+    torch._dynamo.config.accumulated_cache_size_limit = 4096
+
+    _compiled_flex_attention = torch.compile(_raw_flex_attn, dynamic=False)
+
+    def _repeat_kv(hidden_states, n_rep):
+        batch, num_kv_heads, slen, head_dim = hidden_states.shape
+        if n_rep == 1:
+            return hidden_states
+        hidden_states = hidden_states[:, :, None, :, :].expand(
+            batch, num_kv_heads, n_rep, slen, head_dim
+        )
+        return hidden_states.reshape(batch, num_kv_heads * n_rep, slen, head_dim)
+
+    def graphgpt_flex_attention_forward(
+        module, query, key, value, attention_mask,
+        scaling=None, softcap=None, **kwargs,
+    ):
+        dropout_p = kwargs.get("dropout", 0.0)
+
+        block_mask = None
+        score_mask = None
+        if isinstance(attention_mask, BlockMask):
+            block_mask = attention_mask
+        else:
+            score_mask = attention_mask
+
+        if score_mask is not None:
+            score_mask = score_mask[:, :, :, : key.shape[-2]]
+
+        # --- Dropout via score_mod (holon pattern) ---
+        # flex_attention doesn't support traditional dropout on attention weights.
+        # Instead, implement it by masking scores to -inf using a hash-based
+        # pseudo-random function compiled into the Triton kernel.
+        apply_dropout = dropout_p > 0 and module.training
+        if apply_dropout:
+            _dropout_threshold = int((1.0 - dropout_p) * 0x7FFFFFFF)
+            _dropout_seed = torch.randint(
+                0, 0x7FFFFFFF, (), device=query.device, dtype=torch.int32
+            )
+
+        def score_mod(score, batch_idx, head_idx, q_idx, kv_idx):
+            if softcap is not None:
+                score = softcap * torch.tanh(score / softcap)
+            if score_mask is not None:
+                score = score + score_mask[batch_idx][0][q_idx][kv_idx]
+            if apply_dropout:
+                # MurmurHash3 finalizer for pseudo-random dropout mask
+                h_val = (
+                    _dropout_seed
+                    ^ (batch_idx * 0x27D4EB2D)
+                    ^ (head_idx * 0x37518F67)
+                    ^ (q_idx * 0x61C88647)
+                    ^ (kv_idx * 0x9E3779B1)
+                )
+                h_val = (h_val ^ (h_val >> 16)) * 0x85EBCA6B
+                h_val = (h_val ^ (h_val >> 13)) * 0xC2B2AE35
+                h_val = (h_val ^ (h_val >> 16)) & 0x7FFFFFFF
+                score = torch.where(h_val < _dropout_threshold, score, float("-inf"))
+            return score
+
+        enable_gqa = True
+        num_q_heads = query.shape[1]
+        if not ((num_q_heads & (num_q_heads - 1)) == 0):
+            key = _repeat_kv(key, num_q_heads // key.shape[1])
+            value = _repeat_kv(value, num_q_heads // value.shape[1])
+            enable_gqa = False
+
+        flex_fn = (
+            _raw_flex_attn if is_torchdynamo_compiling()
+            else _compiled_flex_attention
+        )
+        return_lse = query.device.type != "cpu"
+
+        output = flex_fn(
+            query, key, value,
+            score_mod=score_mod,
+            block_mask=block_mask,
+            enable_gqa=enable_gqa,
+            scale=scaling,
+            kernel_options=kwargs.get("kernel_options"),
+            return_lse=return_lse,
+        )
+
+        if return_lse:
+            attn_output, lse = output
+            lse = lse.to(value.dtype)
+        else:
+            attn_output = output
+            lse = None
+
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        return attn_output, lse
+
+    ALL_ATTENTION_FUNCTIONS.register(
+        "flex_attention", graphgpt_flex_attention_forward
+    )
+except (ImportError, AttributeError):
+    pass
+
+
 # ===========================================================================
 # A. Attention mask utilities
 # ===========================================================================

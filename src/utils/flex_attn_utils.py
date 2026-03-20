@@ -201,5 +201,7 @@ def build_flex_block_mask(
         Q_LEN=seq_len,
         KV_LEN=seq_len,
         device=device,
+        BLOCK_SIZE=128,
+        _compile=True,
     )
     return block_mask
