@@ -534,26 +534,6 @@ def _extend_input_dict(
     return in_dict
 
 
-def _get_bin_inputs_labels(
-    input_ids, graph, gtokenizer, scale: float = 1000, max_len: int = 16
-):
-    num_feat = len(input_ids[0]) if isinstance(input_ids[0], list) else 0
-    seq = len(input_ids)
-
-    bi_str = bin(int(round(torch.squeeze(graph.y).tolist() * scale)))
-    bi_str = bi_str[2:]
-    bi_str = "0" * (max_len - len(bi_str)) + bi_str
-    bi_ls = list(bi_str)
-
-    token_ids = gtokenizer._map_tokens_to_ids([f"<{ele}>" for ele in bi_ls[:-1]])
-    if num_feat > 0:
-        ls_extend_tokens = np.array([token_ids] * num_feat).T.tolist()
-    else:
-        ls_extend_tokens = list(token_ids)
-    bin_labels = [-100] * (seq - 1) + [int(ele) for ele in bi_ls]
-    return ls_extend_tokens, bin_labels
-
-
 # Unused but kept for backward compatibility
 def prepare_inputs_for_oneid_a2c_pred_as_node_pred(in_dict, **kwargs):
     raw_labels = in_dict["labels"]
