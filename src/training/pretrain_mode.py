@@ -5,6 +5,7 @@ from pprint import pprint, pformat
 from torch.utils.data import DataLoader, IterableDataset
 from deepspeed.profiling.flops_profiler import FlopsProfiler
 from omegaconf import OmegaConf
+import torch
 
 import deepspeed
 
@@ -462,6 +463,27 @@ class PretrainMode(TrainingMode):
                     loader_stats.train_loader, train_stats.i_local
                 ):
                     train_stats.i = i
+                    # ========== 添加打印代码 ===========
+                    if i == 0 and epoch == 0:  # 只在第一个 epoch 的第一个 batch 打印
+                        print("\n" + "="*80)
+                        print("DATALOADER OUTPUT INSPECTION")
+                        print("="*80)
+                        for key, value in data.items():
+                            if isinstance(value, torch.Tensor) and value.numel() > 0:
+                                print(f"{key}:")
+                                print(f"  shape: {value.shape}")
+                                print(f"  dtype: {value.dtype}")
+                                print(f"  min: {value.min():.4f}, max: {value.max():.4f}")
+                                print(f"  mean: {value.float().mean():.4f}, std: {value.float().std():.4f}")
+                                print(f"  value: {value}")
+                                if key == "input_ids":
+                                    print(f"  unique values: {value.unique().shape[0]}")
+                            elif isinstance(value, (list, tuple)):
+                                print(f"{key}: {type(value).__name__} with {len(value)} items\n{value}")
+                            else:
+                                print(f"{key}: {type(value).__name__} = {value}")
+                        print("="*80 + "\n")
+                    # ===================================
                     training_utils.batch_training(
                         data, model, train_cfg, train_stats, opt_stats
                     )

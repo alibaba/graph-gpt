@@ -15,7 +15,7 @@ model_name="base"  # tiny mini small medium base base24 base48 base64 large xlar
 stack_method="short"
 stacked_feat_agg_method="sum"  # gated|sum
 max_position_embeddings=1024
-attn_implementation="sdpa"  # sdpa | flex_attention
+attn_implementation="flex_attention"  # sdpa | flex_attention
 
 # ii.a model::dropout & lsi
 attention_dropout=0.1
@@ -38,11 +38,11 @@ num_cpus=12
 total_tokens=1e9  # 1e11  1e9
 warmup_tokens=1e8  # 1e9  1e8
 steps_per_saving=1000  # From samples_per_saving=1000000 -> (1000000/(64*16) ≈ 976)
-let samples_per_saving=steps_per_saving*batch_size*workerCount
+samples_per_saving=$((steps_per_saving * batch_size * workerCount))
 logging_steps=100
 
 # iii.c training::eval/infer settings
-valid_percent=0.1
+valid_percent=0
 pt_eval_only=false
 do_infer=false
 

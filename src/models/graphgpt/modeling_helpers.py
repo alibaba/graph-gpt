@@ -26,10 +26,14 @@ from torch.nn import CrossEntropyLoss
 from typing import Optional
 
 from . import utils_graphgpt
-from .modeling_common import _EPSILON
 from src.utils.loss_utils import _dist_infonce
 from src.utils.mol_utils import discrete_pos
 from src.utils.flex_attn_utils import build_4d_from_splits, build_flex_block_mask
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+_EPSILON = 1e-7
 
 
 # ---------------------------------------------------------------------------

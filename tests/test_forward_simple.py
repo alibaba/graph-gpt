@@ -43,22 +43,62 @@ def test_pretrain_forward():
     print("PRE-TRAINING FORWARD PASS TEST")
     print("=" * 80)
     
-    # Create minimal config
-    cfg = Config()
-    cfg.training.task_type = "pretrain"
-    cfg.training.batch_size = 2
-    cfg.model.max_position_embeddings = 128
-    cfg.model.graph_input.stack_method = "sum"
-    cfg.model.graph_input.stacked_feat = 1
-    cfg.tokenization.add_eos = True
-    cfg.model.embed_dim = 0
-    cfg.model.vocab_size = 512
-    cfg.model.hidden_size = 64
-    cfg.model.num_hidden_layers = 2
-    cfg.model.num_attention_heads = 4
-    cfg.model.intermediate_size = 128
-    cfg.model.rms_norm_eps = 1e-5
-    cfg.model.initializer_range = 0.02
+    # Create minimal config using OmegaConf to properly handle nested structures
+    from omegaconf import OmegaConf
+    from src.conf.base_configs import Config as BaseConfig
+    
+    # Start with empty config and override
+    cfg_dict = {
+        'tokenization': {
+            'attr_world_identifier': '@',
+            'vocab_file': 'dummy_vocab.txt',
+            'label_tokens_to_pad': [],
+            'semantics': {
+                'node': {'discrete': None, 'dim': 0, 'continuous': None, 'ignored_val': None, 'embed': None, 'embed_dim': 0},
+                'edge': {'discrete': None, 'dim': 0, 'continuous': None, 'ignored_val': None, 'embed': None, 'embed_dim': 0},
+                'graph': {'discrete': None, 'dim': 0, 'continuous': None, 'ignored_val': None, 'embed': None, 'embed_dim': 0},
+                'common': {'reserved_token': ['<pad>', '<mask>'], 'numbers': []},
+                'instructions': {'enable': False, 'name': 'none', 'func': []}
+            },
+            'structure': {
+                'nx': {'enable': True, 'func': []},
+                'node': {'bos_token': '<bos>', 'eos_token': '<eos>', 'new_node_token': '<new_node>', 'node_scope': 1, 'scope_base': 10, 'cyclic': 0},
+                'edge': {'remove_edge_type_token': False, 'in_token': '<in>', 'out_token': '<out>', 'bi_token': '<bi>', 'jump_token': '<jump>'},
+                'graph': {'summary_token': '<summary>'},
+                'common': {'mask_token': '<mask>', 'icl_token': '<icl>', 'sep_token': '<sep>', 'reserved_token': ['<pad>', '<mask>']}
+            }
+        },
+        'training': {
+            'task_type': 'pretrain',
+            'batch_size': 2,
+            'pretrain_mlm': {
+                'name': 'mlm',
+                'params': {
+                    'fixed_ratio': 0.15,
+                    'power': 1,
+                    'mtp': [3],
+                    'umr_clip': [0.0, 1.0]
+                }
+            }
+        },
+        'model': {
+            'max_position_embeddings': 128,
+            'graph_input': {'stack_method': 'sum', 'stacked_feat': 1},
+            'embed_dim': 0,
+            'vocab_size': 512,
+            'hidden_size': 64,
+            'num_hidden_layers': 2,
+            'num_attention_heads': 4,
+            'intermediate_size': 128,
+            'rms_norm_eps': 1e-5,
+            'initializer_range': 0.02
+        }
+    }
+    
+    # Convert to OmegaConf and then to dataclass
+    cfg_omega = OmegaConf.create(cfg_dict)
+    cfg = OmegaConf.merge(OmegaConf.structured(BaseConfig), cfg_omega)
+    cfg = OmegaConf.to_object(cfg)
     
     # Create model
     print("\nCreating model...")

@@ -14,6 +14,7 @@ src/__pycache__/
 src/data/__pycache__/
 src/data/_helpers/__pycache__/
 src/data/_readers/__pycache__/
+src/data/tokenizer/__pycache__/
 src/conf/__pycache__/
 src/conf/generation/__pycache__/
 src/conf/model/__pycache__/
