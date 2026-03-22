@@ -311,18 +311,8 @@ def prepare_inputs_for_graph_lvl_task(
     ls_raw_node_idx: List[int],
     **kwargs,
 ):
-    if (
-        gtokenizer.config.get("task_conversion", None)
-        == "regression2binary_classification"
-    ):
-        scale = MOL_ENERGY_SCALE
-        max_len = MOL_ENERGY_BIN_LEN
-        ls_extend_tokens, bin_labels = _get_bin_inputs_labels(
-            in_dict["input_ids"], graph, gtokenizer, scale, max_len
-        )
-    else:
-        ls_extend_tokens = []
-        bin_labels = None
+    ls_extend_tokens = []
+    bin_labels = None
     in_dict = _extend_input_dict(in_dict, ls_extend_tokens)
     in_dict["graph_labels"] = torch.squeeze(graph.y).tolist()
     in_dict["labels"] = bin_labels or in_dict["labels"]
