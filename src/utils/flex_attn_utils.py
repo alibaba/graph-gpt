@@ -205,3 +205,84 @@ def build_flex_block_mask(
         _compile=True,
     )
     return block_mask
+
+# ---------------------------------------------------------------------------
+# Packed-sequence mask builders (used by packed LlamaModel)
+# ---------------------------------------------------------------------------
+
+def build_packed_flex_block_mask(
+    sample_lens: List[int],
+    split_lens: List[int],
+    attn_modes: List[str],
+    device,
+):
+    """Build a BlockMask for packed sequences (B=1, no batch padding).
+
+    Args:
+        sample_lens: List[int] — valid token count per sample (already packed, no pad)
+        split_lens:  List[int] — flat split lengths across all samples
+        attn_modes:  List[str] — attention mode per split ('causal', 'full', 'noise')
+        device: torch.device
+
+    Returns:
+        BlockMask with B=1, Q_LEN=KV_LEN=padded_total (multiple of BLOCK_SIZE=128)
+    """
+    import math
+    from torch.nn.attention.flex_attention import create_block_mask
+
+    total_len = sum(sample_lens)
+    BLOCK_SIZE = 128
+    padded_total = math.ceil(total_len / BLOCK_SIZE) * BLOCK_SIZE
+
+    mask_mod = create_sparse_mask(sample_lens, split_lens, attn_modes, device)
+    return create_block_mask(
+        mask_mod, B=1, H=None,
+        Q_LEN=padded_total, KV_LEN=padded_total,
+        device=device, BLOCK_SIZE=BLOCK_SIZE, _compile=True,
+    )
+
+def build_packed_sdpa_masks(
+    sample_lens: List[int],
+    split_lens,
+    attn_modes,
+    causal_attention: bool,
+    device,
+) -> List[torch.Tensor]:
+    """Build per-sample SDPA masks for packed sequences.
+
+    Args:
+        sample_lens:      List[int] — valid token count per sample
+        split_lens:       List[int] | None — flat split lengths across all samples;
+                          None means simple causal/full attention
+        attn_modes:       List[str] | None — attention mode per split; None means simple causal/full
+        causal_attention: bool — used when split_lens is None
+        device: torch.device
+
+    Returns:
+        List[Tensor] — each element shape [1, 1, sample_len_i, sample_len_i],
+        float, 0=attend / -inf=mask
+    """
+    masks = []
+    split_offset = 0
+    for sample_len in sample_lens:
+        if split_lens is not None:
+            # Collect splits belonging to this sample by accumulating until we reach sample_len
+            sample_splits, sample_modes = [], []
+            accumulated = 0
+            idx = split_offset
+            while accumulated < sample_len:
+                sample_splits.append(split_lens[idx])
+                sample_modes.append(attn_modes[idx])
+                accumulated += split_lens[idx]
+                idx += 1
+            split_offset = idx
+            mask_2d = prepare_attention_mask_per_sample(sample_splits, sample_modes, device=device)
+        else:
+            # Simple causal or full attention (no split structure)
+            if causal_attention:
+                mask_2d = torch.full((sample_len, sample_len), float("-inf"), device=device)
+                mask_2d = mask_2d.triu(diagonal=1)  # upper triangle=-inf, lower=0
+            else:
+                mask_2d = torch.zeros(sample_len, sample_len, device=device)
+        masks.append(mask_2d.unsqueeze(0).unsqueeze(0))  # [1, 1, L, L]
+    return masks
