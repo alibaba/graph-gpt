@@ -29,6 +29,7 @@ trial=1
 batch_size=256
 pack_tokens=1
 token_per_sample=20
+max_length=${max_position_embeddings}
 
 # iii.a training::training machines
 workerCount=1
@@ -112,7 +113,7 @@ fi
 # Force batch_size=1 when pack_tokens is enabled (required for variable-length packed sequences)
 if (( pack_tokens != 0 ))
 then
-  max_position_embeddings=$((batch_size * token_per_sample))
+  max_length=$((batch_size * token_per_sample))
   batch_size=1
   echo "pack_tokens=${pack_tokens}: forcing batch_size=1"
 fi
@@ -270,6 +271,7 @@ raw_udf="
   --training.task_type='${task_type}'
   --training.batch_size=${batch_size}
   --training.pack_tokens=${pack_tokens}
+  --training.max_length=${max_length}
   --training.num_workers=${num_cpus}
   --training.optimizer.lr=${lr}
   --training.optimizer.weight_decay=${weight_decay}

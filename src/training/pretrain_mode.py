@@ -169,7 +169,7 @@ class PretrainMode(TrainingMode):
 
         # 1.51 token packing
         if train_cfg.pack_tokens > 0:
-            gtokenizer.mpe = model_cfg.max_position_embeddings
+            gtokenizer.mpe = train_cfg.max_length
             gtokenizer.dataset = train_dataset
             gtokenizer.sampler = (
                 tuple(self.pt_sampler.train_sampler)
@@ -177,13 +177,13 @@ class PretrainMode(TrainingMode):
                 else None
             )
             gtokenizer.random_ratio = train_cfg.pack_tokens
-            tokens_per_sample = model_cfg.max_position_embeddings
+            tokens_per_sample = train_cfg.max_length
         else:
             tokens_per_sample = misc_utils.estimate_tokens_per_sample(
                 gtokenizer,
                 train_dataset,
                 self.pt_sampler.train_sampler,
-                model_cfg.max_position_embeddings,
+                train_cfg.max_length,
                 train_cfg.distributed.world_size,
                 train_cfg.tot_samples
                 if not (train_cfg.pt_eval_only or train_cfg.do_infer)
@@ -335,7 +335,7 @@ class PretrainMode(TrainingMode):
         # 4.3 init collator
         self.collator_fn = collator.DataCollatorForGST(
             tokenizer=pipeline.gtokenizer,
-            max_length=model_cfg.max_position_embeddings,
+            max_length=train_cfg.max_length,
             pad_to_multiple_of=train_cfg.pad_to_multiple_of,
             return_tensors="pt",
         )
