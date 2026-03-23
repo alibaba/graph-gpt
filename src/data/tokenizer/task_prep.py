@@ -5,7 +5,6 @@ Each function is registered via ``@_inputs_deco("task_type")`` so that
 the correct handler.
 """
 
-import math
 import random
 from typing import Dict, Iterable, List, Tuple, Union
 
@@ -15,12 +14,12 @@ from torch_geometric.data import Data
 
 from ...utils import control_flow
 from .masking import (
+    _get_mask_ratio,
     _mask_input_ids,
     _mask_stacked_input_ids_v2,
     _pad_stacked_targets,
     get_mask_of_raw_seq,
 )
-from .types import MOL_ENERGY_BIN_LEN, MOL_ENERGY_SCALE
 
 _inputs_deco = control_flow.Register()
 prepare_inputs_for_task = _inputs_deco.build  # return func results
@@ -76,34 +75,16 @@ def prepare_inputs_for_pretrain_mlm(
     assert mask_token_id != pad_token_id
     conf = gtokenizer.config["pretrain_mlm"]
     assert conf["name"] in {"polynomial", "cosine", "fixed"}
-    if conf["name"] == "fixed":
-        alpha_t = conf["params"]["fixed_ratio"]
-    elif conf["name"] == "polynomial":
-        # 3-> cubic, 2-> square, 1-> linear, 0.5-> sqrt
-        powers = conf["params"]["power"]
-        umr_min, umr_max = gtokenizer.train_cfg.pretrain_mlm.params.umr_clip
-        assert 0 <= umr_min <= umr_max <= 1
-        r = random.random()
-        t = umr_min + (umr_max - umr_min) * r  # rescale to [mr_min, mr_max]
-        alpha_t = 1 - t**powers
-        alpha_t_prime = -powers * t ** (powers - 1)
-        # Fig. 1 @ https://arxiv.org/pdf/2406.04329
-        wgt = powers / t  # - alpha_t_prime / (1 - alpha_t)
-        if gtokenizer.train_cfg.pretrain_mlm.dlm_wgt:
-            in_dict["wgt"] = wgt
-    else:
-        alpha_t = math.cos(random.random() * math.pi) * 0.5 + 0.5
     mask_token_precent = conf["params"]["mtp"]
     all_vocab_ids = gtokenizer.get_all_vocab_ids()
     # 2. mask input_ids and generate corresponding labels for training
-    new_input_ids, new_labels_mask = [], []
+    new_input_ids, new_labels_mask, wgts = [], [], []
     idx_left = 0
     for idx_right in ls_len:
         _input_ids = input_ids[idx_left:idx_right]
         idx_left = idx_right
-        curr_mask_ratio = alpha_t
-        if (gtokenizer.mpe is not None) and (idx_right > gtokenizer.mpe):
-            curr_mask_ratio = 0
+        curr_mask_ratio, wgt = _get_mask_ratio(conf, gtokenizer)
+        wgts.append(wgt)
         if isinstance(input_ids[0], Iterable):
             if add_eos:
                 last_token_id = _input_ids[-1][0]
@@ -137,6 +118,8 @@ def prepare_inputs_for_pretrain_mlm(
         new_input_ids.extend(_input_ids)
         new_labels_mask.extend(_labels_mask)
     input_ids, labels_mask = new_input_ids, new_labels_mask
+    if gtokenizer.train_cfg.pretrain_mlm.dlm_wgt:
+        in_dict["wgt"] = wgts
     if hasattr(gtokenizer, "stack_method") and gtokenizer.stack_method == "long":
         node_attr_dim = gtokenizer.config["semantics"]["node"]["dim"]
         labels_mask = [
@@ -154,8 +137,6 @@ def prepare_inputs_for_pretrain_mlm(
     in_dict["labels"] = labels_mask
     if gtokenizer.mpe is None:
         in_dict["attention_mask"].extend([1] * len_extended_tokens)
-        in_dict["split_lens"] = [len(in_dict["input_ids"])]
-        in_dict["attn_modes"] = ["full"]
     else:
         lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
         sequence_len = sum(lens)

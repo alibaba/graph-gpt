@@ -1,6 +1,7 @@
 """Masking strategies for token-level prediction tasks."""
 
 import random
+import math
 from typing import List, Tuple
 
 import numpy as np
@@ -50,6 +51,24 @@ def _get_keys(idx, ls: List[int], ls_of_ls: List[List[int]]):
 # ---------------------------------------------------------------------------
 # Masking strategies
 # ---------------------------------------------------------------------------
+def _get_mask_ratio(conf, gtokenizer):
+    wgt = None
+    if conf["name"] == "fixed":
+        alpha_t = conf["params"]["fixed_ratio"]
+    elif conf["name"] == "polynomial":
+        # 3-> cubic, 2-> square, 1-> linear, 0.5-> sqrt
+        powers = conf["params"]["power"]
+        umr_min, umr_max = gtokenizer.train_cfg.pretrain_mlm.params.umr_clip
+        assert 0 <= umr_min <= umr_max <= 1
+        r = random.random()
+        t = umr_min + (umr_max - umr_min) * r  # rescale to [mr_min, mr_max]
+        alpha_t = 1 - t**powers
+        alpha_t_prime = -powers * t ** (powers - 1)
+        # Fig. 1 @ https://arxiv.org/pdf/2406.04329
+        wgt = powers / t  # - alpha_t_prime / (1 - alpha_t)
+    else:
+        alpha_t = math.cos(random.random() * math.pi) * 0.5 + 0.5
+    return alpha_t, wgt
 
 
 def _mask_stacked_input_ids(
