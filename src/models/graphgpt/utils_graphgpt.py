@@ -25,7 +25,6 @@ Dropout to be implemented in 3 modules
 2. LlamaAttention -> GPT2Attention :: attention dropout
 3. LlamaModel -> GPT2Model :: token embedding dropout
 """
-import warnings
 from typing import List, Optional, Tuple, Union, Callable
 import numpy as np
 import math
@@ -40,10 +39,13 @@ from transformers.models.llama import modeling_llama
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.beit.modeling_beit import BeitDropPath
 from transformers.modeling_layers import GradientCheckpointingLayer
-from transformers.utils.import_utils import is_torch_fx_available
 from transformers.modeling_rope_utils import dynamic_rope_update
 from transformers.modeling_outputs import BaseModelOutputWithPast
+from transformers.modeling_utils import AttentionInterface
+from transformers.integrations.sdpa_attention import sdpa_attention_forward
 from src.models.graphgpt.modeling_helpers import _compiled_flex_attention, get_flex_dropout_mod
+
+AttentionInterface.register("flex_attention", sdpa_attention_forward)  # overwrite so that training with flex and valid with sdpa
 
 apply_rotary_pos_emb = modeling_llama.apply_rotary_pos_emb
 repeat_kv = modeling_llama.repeat_kv
@@ -324,7 +326,7 @@ class AtomTaskHead(modeling_llama.LlamaAttention):
     """
 
     def __init__(self, config):
-        super().__init__(config)
+        super().__init__(config, None)
         self.is_causal = False
         self.embed_dim = self.hidden_size
         self.force_proj1: Callable[[Tensor], Tensor] = nn.Linear(self.embed_dim, 1)

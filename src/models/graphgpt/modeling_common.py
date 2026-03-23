@@ -28,7 +28,6 @@ from torch import nn
 from typing import Optional, Tuple
 
 from transformers.utils import ModelOutput
-from transformers.models.llama import modeling_llama
 
 from . import utils_graphgpt
 
