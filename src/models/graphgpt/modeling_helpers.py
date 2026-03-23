@@ -129,7 +129,7 @@ def _update_causal_mask(self, attention_mask, input_tensor, num_heads,
             num_heads, sample_lens, split_lens, attn_modes, attention_mask, input_tensor
         )
     else:
-        return _prepare_4d_attention_mask(attention_mask, input_tensor.shape[:2], input_tensor)
+        return _prepare_4d_attention_mask(attention_mask, input_tensor.shape[:2], input_tensor, None)
 
 
 # ===========================================================================

@@ -36,7 +36,6 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch.autograd import Variable
-from transformers.utils import logging
 from transformers.models.llama import modeling_llama
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.beit.modeling_beit import BeitDropPath
@@ -67,7 +66,10 @@ class PackedAttention(modeling_llama.LlamaAttention):
         sample_lens: Optional[List[int]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        total_tokens = hidden_states.shape[0]
+        if sample_lens is None:  # batched sequence + SDPA path
+            return super().forward(hidden_states, position_embeddings, attention_mask, **kwargs)
+
+        total_tokens, hidden_size = hidden_states.shape
 
         query_states = self.q_proj(hidden_states).view(total_tokens, self.config.num_attention_heads, self.head_dim)
         key_states   = self.k_proj(hidden_states).view(total_tokens, self.config.num_key_value_heads, self.head_dim)
@@ -92,13 +94,8 @@ class PackedAttention(modeling_llama.LlamaAttention):
         attn_output = out[0, :, :total_tokens, :]  # (num_heads, total_tokens, head_dim)
 
         # (num_heads, total_tokens, head_dim) -> (total_tokens, hidden_size)
-        attn_output = attn_output.transpose(0, 1).reshape(total_tokens, self.hidden_size)
+        attn_output = attn_output.transpose(0, 1).reshape(total_tokens, hidden_size)
         return self.o_proj(attn_output), None  # None for attn_weights, compatible with LlamaAttention
-
-
-
-
-logger = logging.get_logger(__name__)
 
 
 class DropPath(BeitDropPath):
@@ -235,6 +232,8 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
                 )
 
         hidden_states = self.norm(hidden_states)
+        if sample_lens is not None:  # [seq, hidden_size] -> [1, seq, hidden_size]
+            hidden_states = hidden_states.unsqueeze(0)
         return BaseModelOutputWithPast(last_hidden_state=hidden_states)
 
 
@@ -560,11 +559,6 @@ class RotaryEmbedding3D(nn.Module):
             sin = emb.sin()
         ```
         """
-        if seq_len is not None:
-            logger.warning_once(
-                "The `seq_len` argument is deprecated and unused. It will be removed in v4.39."
-            )
-
         bs, seq, _ = position_ids.shape
         # [d/2] -> [1, 1, d/2]
         freq_expanded = self.freq[None, None, :].float()
