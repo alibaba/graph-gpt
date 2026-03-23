@@ -8,17 +8,17 @@ def _merge_two_ls(ls_main, ls_side, side="left"):
     return ls_side + ls_main if side == "left" else ls_main + ls_side
 
 
-def _get_batch_seq_len(ls_seq_len, pad_to_multiple_of, max_position_embeddings):
+def _get_batch_seq_len(ls_seq_len, pad_to_multiple_of, max_length):
     if pad_to_multiple_of is None:
-        batch_seq_len = max_position_embeddings
-    elif len(ls_seq_len) == 1:  # single sequence -> packed multiple samples
-        batch_seq_len = max_position_embeddings
+        batch_seq_len = max_length
+    elif len(ls_seq_len) == 1:  # single sequence -> packed multiple samples => NO padding
+        batch_seq_len = max(ls_seq_len)
     else:
         max_seq_len = max(ls_seq_len)
         batch_seq_len = pad_to_multiple_of * int(
             math.ceil(max_seq_len / pad_to_multiple_of)
         )
-        batch_seq_len = min(batch_seq_len, max_position_embeddings)
+        batch_seq_len = min(batch_seq_len, max_length)
     return batch_seq_len
 
 

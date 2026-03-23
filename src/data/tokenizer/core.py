@@ -74,7 +74,6 @@ class GSTTokenizer(object):
         self.pad_token_id = 0
         self.task_type = self.config["task_type"].lower()
         assert self.task_type in TASK_TYPES, f"{self.task_type} is not implemented!"
-        self.eos_idx = None
         self.semantics2tokens_mapping = get_semantics_raw_node_edge2attr_mapping
         # below for pack target token sequence with randomly sampled token sequence
         self.mpe = None
@@ -219,34 +218,6 @@ class GSTTokenizer(object):
         # output: id in vocabulary
         pass
 
-    def set_eos_idx(self, input_ids: List[Union[int, List[int]]]):
-        if self.eos_idx is None:
-            # every worker of Loader will calculate eos_idx independently!
-            eos_token_id = self.get_eos_token_id()
-            assert isinstance(input_ids, list)
-            try:
-                if self.mpe is None:
-                    # NO packing of token sequence
-                    if isinstance(input_ids[0], List):
-                        input_ids = [x[0] for x in input_ids]
-                    if self.task_type == "nodev2":
-                        idx = input_ids.index(eos_token_id)
-                        self.eos_idx = idx - len(input_ids)
-                    else:
-                        self.eos_idx = int(1e8)
-                else:
-                    # PACKING token sequences with <eos_token> as sep
-                    self.eos_idx = int(1e8)
-            except ValueError as e:
-                # print(f"ValueError: {e}:: {input_ids}")
-                self.eos_idx = int(1e8)
-            finally:
-                print(
-                    f"[Warning] Set eos_idx to {self.eos_idx} for task {self.task_type}!"
-                )
-            # print(f"SET eos_idx to be {self.eos_idx}")
-            # This will be executed every epoch at every worker of the loader
-
     def pad(
         self,
         features: List[Dict],
@@ -258,7 +229,6 @@ class GSTTokenizer(object):
     ):
         # features:: list of input dicts
         # params setting is compatible with HF transformers
-        self.set_eos_idx(features[0]["input_ids"])
         assert return_tensors in {"pt", "np"}
         func = {"pt": torch.tensor, "np": np.array}[return_tensors]
         ls_seq_len = [len(feat["input_ids"]) for feat in features]
@@ -271,8 +241,8 @@ class GSTTokenizer(object):
                 if key not in batch_outputs:
                     batch_outputs[key] = []
                 batch_outputs[key].append(value)
-        # split_lens and attn_modes stay as Python lists-of-lists (not tensors)
-        _list_only_keys = {"split_lens", "attn_modes"}
+        # sample_lens, split_lens and attn_modes stay as Python lists-of-lists (not tensors)
+        _list_only_keys = {"sample_lens", "split_lens", "attn_modes"}
         batch_outputs = {
             key: (
                 val if key in _list_only_keys
@@ -320,10 +290,6 @@ class GSTTokenizer(object):
             feature["attention_mask"] = _merge_two_ls(
                 feature["attention_mask"], padded_attention_mask, self.padding_side
             )
-            if "nodev2_labels" in feature:
-                feature["nodev2_labels"] = _merge_two_ls(
-                    feature["nodev2_labels"], padded_nodev2_labels, self.padding_side
-                )
             if "raw_node_idx" in feature:
                 feature["raw_node_idx"] = _merge_two_ls(
                     feature["raw_node_idx"], padded_nodev2_labels, self.padding_side
@@ -338,10 +304,6 @@ class GSTTokenizer(object):
                     feature[name] = _merge_two_ls(
                         feature[name], padded_vecs, self.padding_side
                     )
-            # Append padding split to split_lens/attn_modes
-            if "split_lens" in feature and padding_len > 0:
-                feature["split_lens"].append(padding_len)
-                feature["attn_modes"].append("causal")
         else:
             keys_set = {
                 "input_ids",
@@ -353,12 +315,6 @@ class GSTTokenizer(object):
                 "embed",
                 "noise",
             }
-            # eos_idx<0 or eos_idx=1e8
-            # the design of negative `eos_idx` is to keep the task-specific tails
-            # e.g., tail `<eos> <tgt-node>` for node task -> eos_idx=-2
-            # tail `<eos> <src-node> <dst-node>` for edge task -> eos_idx=-3
-            # tail `<eos> <gsum>` for graph task -> eos_idex=-2
-            mid_idx = pad_to + self.eos_idx if self.eos_idx < 0 else pad_to
             for key, val in feature.items():
                 if key in keys_set:
                     if isinstance(val, np.ndarray):
@@ -366,9 +322,7 @@ class GSTTokenizer(object):
                         assert key == "attention_mask", f"NOT for {key}"
                         feature[key] = val[:pad_to, :pad_to].tolist()
                     else:
-                        feature[key] = val[:mid_idx] + val[self.eos_idx :]
-            if ("cls_idx" in feature) and (self.eos_idx < 0):
-                feature["cls_idx"] = [pad_to + self.eos_idx + 1]
+                        feature[key] = val[:pad_to]
         return feature
 
     def pack_token_seq(

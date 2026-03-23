@@ -158,15 +158,17 @@ def prepare_inputs_for_pretrain_mlm(
         in_dict["attn_modes"] = ["full"]
     else:
         lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
-        in_dict["attention_mask"].extend([1] * len_extended_tokens)
-        in_dict["split_lens"] = [int(l) for l in lens]
-        pad_len = gtokenizer.mpe - sum(lens)  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
-        in_dict["sample_lens"] = list(in_dict["split_lens"]) + [pad_len]
-        in_dict["attn_modes"] = ["full"] * len(lens)
+        sequence_len = sum(lens)
+        pad_len = gtokenizer.mpe - sequence_len  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
+        in_dict["split_lens"] = [int(l) for l in lens] + [pad_len]
+        in_dict["sample_lens"] = [int(l) for l in lens] + [pad_len]
+        in_dict["attn_modes"] = ["full"] * len(lens) + ["causal"]
+        # In packed sequence and flex-attn, ONLY above 3 vars are `padded`, OTHER vars are NOT padded
         new_pos = []
         for l in lens:
             new_pos.extend(range(int(l)))
         in_dict["position_ids"] = new_pos
+        in_dict["attention_mask"].extend([1] * len_extended_tokens)
     if "embed" in in_dict:
         dim = len(in_dict["embed"][0])
         extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
