@@ -11,7 +11,6 @@ from typing import List, Optional
 
 import torch
 from torch.nn.attention.flex_attention import and_masks, or_masks
-from transformers.utils.import_utils import is_torch_fx_available
 
 
 # ---------------------------------------------------------------------------
@@ -64,44 +63,8 @@ def create_sparse_mask(document_lens, split_lens, attn_modes, device):
 
 
 # ---------------------------------------------------------------------------
-# Dispatcher helpers: build masks from split_lens/attn_modes
+# Dispatcher helpers: build flex attn masks from split_lens/attn_modes
 # ---------------------------------------------------------------------------
-# refer to: `transformers/modeling_attn_mask_utils.py::_prepare_4d_attention_mask`
-# @ transformers==4.36.2
-def _prepare_4d_attention_mask(
-    attention_mask: Optional[torch.Tensor],
-    input_shape: Union[torch.Size, Tuple, List],
-    inputs_embeds: torch.Tensor,
-    past_key_values_length: int,
-):
-    """
-    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
-    """
-    dtype = inputs_embeds.dtype
-    bsz, tgt_len = input_shape
-    src_len = tgt_len
-    tgt_len = tgt_len if tgt_len is not None else src_len
-
-    expanded_mask = (
-        attention_mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
-    )
-
-    inverted_mask = 1.0 - expanded_mask
-
-    return inverted_mask.masked_fill(
-        inverted_mask.to(torch.bool), torch.finfo(dtype).min
-    )
-
-
-# This makes `_prepare_4d_causal_attention_mask` a leaf function in the FX graph.
-# It means that the function will not be traced through and simply appear as a node in the graph.
-if is_torch_fx_available():
-    if not is_torch_greater_or_equal_than_1_13:
-        import torch.fx
-
-    _prepare_4d_attention_mask = torch.fx.wrap(_prepare_4d_attention_mask)
-
-
 def build_flex_block_mask(
     num_heads: Optional[int],
     sample_lens: List[List[int]],
@@ -123,8 +86,6 @@ def build_flex_block_mask(
         BlockMask for flex_attention, or falls back to 4D tensor if not on CUDA.
     """
     device = input_tensor.device
-    if sample_lens is None:  # batched data + SDPA path
-        return _prepare_4d_attention_mask(attention_mask, input_tensor.shape[:2], input_tensor)
 
     from torch.nn.attention.flex_attention import create_block_mask
 

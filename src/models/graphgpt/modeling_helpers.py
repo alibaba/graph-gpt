@@ -24,16 +24,26 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from typing import Optional
+from transformers.utils.import_utils import is_torch_fx_available
 
 from . import utils_graphgpt
 from src.utils.loss_utils import _dist_infonce
 from src.utils.mol_utils import discrete_pos
-from src.utils.flex_attn_utils import build_4d_from_splits, build_flex_block_mask
+from src.utils.flex_attn_utils import build_flex_block_mask
+from src.utils.attn_mask_utils import _prepare_4d_attention_mask
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 _EPSILON = 1e-7
+
+# This makes `_prepare_4d_causal_attention_mask` a leaf function in the FX graph.
+# It means that the function will not be traced through and simply appear as a node in the graph.
+if is_torch_fx_available():
+    if not is_torch_greater_or_equal_than_1_13:
+        import torch.fx
+
+    _prepare_4d_attention_mask = torch.fx.wrap(_prepare_4d_attention_mask)
 
 # --------------------------------------------------------
 # flex attention with dropout
@@ -119,9 +129,7 @@ def _update_causal_mask(self, attention_mask, input_tensor, num_heads,
             num_heads, sample_lens, split_lens, attn_modes, attention_mask, input_tensor
         )
     else:
-        return build_4d_from_splits(
-            split_lens, attn_modes, attention_mask, input_tensor
-        )
+        return _prepare_4d_attention_mask(attention_mask, input_tensor.shape[:2], input_tensor)
 
 
 # ===========================================================================
