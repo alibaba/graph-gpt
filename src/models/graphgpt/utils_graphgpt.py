@@ -226,6 +226,7 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
         attention_mask=None,        # [batch, seq] 1D padding mask (1=valid, 0=pad)
         position_ids=None,          # [batch, seq]
         inputs_embeds=None,         # [batch, seq, hidden_size]
+        sample_lens=None,           # List[int] flat across all samples, or None
         split_lens=None,            # List[int] flat across all samples, or None
         attn_modes=None,            # List[str] flat across all samples, or None
         use_cache=None,
@@ -238,7 +239,6 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
         assert inputs_embeds is not None
 
         # 1. Pack: extract valid tokens per sample, drop padding
-        sample_lens = [int(l) for l in attention_mask.sum(dim=-1).tolist()]
         packed_sequence = torch.cat([
             inputs_embeds[b, :sample_lens[b], :]
             for b in range(inputs_embeds.shape[0])

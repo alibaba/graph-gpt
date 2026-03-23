@@ -160,6 +160,8 @@ def prepare_inputs_for_pretrain_mlm(
         lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
         in_dict["attention_mask"].extend([1] * len_extended_tokens)
         in_dict["split_lens"] = [int(l) for l in lens]
+        pad_len = gtokenizer.mpe - sum(lens)  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
+        in_dict["sample_lens"] = list(in_dict["split_lens"]) + [pad_len]
         in_dict["attn_modes"] = ["full"] * len(lens)
         new_pos = []
         for l in lens:
