@@ -7,7 +7,7 @@ attention mask abstraction. These utilities can produce either:
   - Flex path: mask_mod closures for torch.nn.attention.flex_attention (create_sparse_mask)
 """
 
-from typing import List
+from typing import List, Optional
 
 import torch
 from torch.nn.attention.flex_attention import and_masks, or_masks
@@ -159,6 +159,8 @@ def build_4d_from_splits(
 
 
 def build_flex_block_mask(
+    num_heads: Optional[int],
+    sample_lens: List[List[int]],
     split_lens: List[List[int]],
     attn_modes: List[List[str]],
     attention_mask: torch.Tensor,
@@ -167,6 +169,7 @@ def build_flex_block_mask(
     """Build a BlockMask from split_lens/attn_modes (flex attention path).
 
     Args:
+        sample_lens: list of list of int — per-sample document/graph lengths
         split_lens: list of list of int — per-sample split lengths
         attn_modes: list of list of str — per-sample attention modes
         attention_mask: [bsz, seq_len] 1D padding mask
@@ -181,23 +184,18 @@ def build_flex_block_mask(
 
     from torch.nn.attention.flex_attention import create_block_mask
 
-    bsz = attention_mask.shape[0]
-    seq_len = attention_mask.shape[1]
-
     # Compute document_lens (per-sample total lengths) and flatten splits
-    document_lens = [sum(sl) for sl in split_lens]
-    flat_split_lens = []
-    flat_attn_modes = []
-    for sl, am in zip(split_lens, attn_modes):
-        flat_split_lens.extend(sl)
-        flat_attn_modes.extend(am)
+    assert len(sample_lens) == 1, f"bsz == {len(sample_lens)} != 1"
+    document_lens = sample_lens[0]
+    flat_split_lens = split_lens[0]
+    flat_attn_modes = attn_modes[0]
 
     mask_mod = create_sparse_mask(document_lens, flat_split_lens, flat_attn_modes, device)
-
+    seq_len = sum(sample_lens)
     block_mask = create_block_mask(
         mask_mod,
         B=bsz,
-        H=None,
+        H=num_heads,
         Q_LEN=seq_len,
         KV_LEN=seq_len,
         device=device,

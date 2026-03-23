@@ -248,13 +248,14 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        sample_lens=None,
         split_lens=None,
         attn_modes=None,
         **kwargs,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
-        output_attentions, output_hidden_states, return_dict, position_ids = (
+        output_attentions, output_hidden_states, return_dict = (
             resolve_forward_defaults(
-                self, output_attentions, output_hidden_states, return_dict, position_ids
+                self, output_attentions, output_hidden_states, return_dict
             )
         )
 
@@ -269,8 +270,8 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
             getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
         ):
             attention_mask = _update_causal_mask(
-                self, attention_mask, inputs_embeds,
-                split_lens=split_lens, attn_modes=attn_modes
+                self, attention_mask, inputs_embeds, self.config.num_attention_heads,
+                sample_lens=sample_lens, split_lens=split_lens, attn_modes=attn_modes
             )
         # flex_attention is compiled via torch.compile; DynamicCache causes
         # symbolic batch-dimension mismatches inside the inductor lowering
@@ -378,6 +379,7 @@ class GraphGPTDoubleHeadsModel(GraphGPTTaskModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        sample_lens=None,
         split_lens=None,
         attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
@@ -708,12 +710,13 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        sample_lens=None,
         split_lens=None,
         attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
-        output_attentions, output_hidden_states, return_dict, position_ids = (
+        output_attentions, output_hidden_states, return_dict = (
             resolve_forward_defaults(
-                self, output_attentions, output_hidden_states, return_dict, position_ids
+                self, output_attentions, output_hidden_states, return_dict
             )
         )
 

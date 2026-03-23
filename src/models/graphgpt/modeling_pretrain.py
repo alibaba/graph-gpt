@@ -59,8 +59,6 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
         super().__init__(config)
         # 1. Transformer's backbone
         init_backbone(self, config)
-        self.smtp_inside = config.smtp_inside  # apply mask in side model
-        self.smtp_power = config.smtp_power
         # 1.1 Embedding dropout
         init_embed_dropout(self, config)
         # 1.2 Node/edge attributes stacking
@@ -132,10 +130,7 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
             inputs_raw_embeds = inputs_raw_embeds.to(inputs_embeds.dtype)
             # For inputs corresponding to -100 label, its embed shall multiply 1, i.e., the embed will be kept
             # [N, seq, next_n] -> [N, seq, 1]
-            if self.smtp_inside:
-                embed_mask = labels[:, :, 0:1] == -100
-            else:
-                embed_mask = (labels == -100).sum(dim=-1, keepdim=True).to(bool)
+            embed_mask = (labels == -100).sum(dim=-1, keepdim=True).to(bool)
             # [N, seq, 1] * [1, 1, dim] -> [N, seq, dim]
             mask_part = (~embed_mask).to(inputs_embeds.dtype) * self.emb_mask_token
             # [N, seq, 1] * [N, seq, dim] -> [N, seq, dim]
@@ -165,30 +160,15 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[bool] = None,
+        sample_lens=None,
         split_lens=None,
         attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
-        output_attentions, output_hidden_states, return_dict, position_ids = (
+        output_attentions, output_hidden_states, return_dict = (
             resolve_forward_defaults(
-                self, output_attentions, output_hidden_states, return_dict, position_ids
+                self, output_attentions, output_hidden_states, return_dict
             )
         )
-
-        if self.smtp_inside:  # prepare the `input_ids` and `labels` for SMTP pre-train
-            pos_deco = input_ids[:, :, self.config.stacked_feat :]  # [bz, seq, 4]
-            node_idx = pos_deco[:, :, 2]  # [bz, seq]
-            # [bz, seq, num_feats]
-            input_ids = input_ids[:, :, : self.config.stacked_feat]
-
-            input_ids, labels = prepare_for_2d_smtp_inputs_labels(
-                input_ids,
-                node_idx,
-                smtp_2d_rate=1,
-                power=self.smtp_power,
-                replace_rate=0,
-                vocab=self.config.vocab_size,
-                global_2d_mask=False,
-            )
 
         input_ids, inputs_embeds, in_ = self.prepare_inputs_embeds(
             input_ids, inputs_embeds, inputs_raw_embeds, labels
@@ -199,8 +179,8 @@ class GraphGPTPretrainBase(LlamaForCausalLM):
             getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
         ):
             attention_mask = _update_causal_mask(
-                self, attention_mask, inputs_embeds,
-                split_lens=split_lens, attn_modes=attn_modes
+                self, attention_mask, inputs_embeds, self.config.num_attention_heads,
+                sample_lens=sample_lens, split_lens=split_lens, attn_modes=attn_modes
             )
         # flex_attention is compiled via torch.compile; DynamicCache causes
         # symbolic batch-dimension mismatches inside the inductor lowering
@@ -498,12 +478,13 @@ class GraphGPTPosPred(LlamaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[bool] = None,
+        sample_lens=None,
         split_lens=None,
         attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
-        output_attentions, output_hidden_states, return_dict, position_ids = (
+        output_attentions, output_hidden_states, return_dict = (
             resolve_forward_defaults(
-                self, output_attentions, output_hidden_states, return_dict, position_ids
+                self, output_attentions, output_hidden_states, return_dict
             )
         )
 
@@ -591,6 +572,7 @@ class GraphGPTPosPred(LlamaForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
+            sample_lens=sample_lens,
             split_lens=split_lens,
             attn_modes=attn_modes,
             output_attentions=output_attentions,

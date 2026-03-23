@@ -36,11 +36,11 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch.autograd import Variable
-from torch.nn.functional import scaled_dot_product_attention as sdpa_fn
 from transformers.utils import logging
 from transformers.models.llama import modeling_llama
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.beit.modeling_beit import BeitDropPath
+from transformers.modeling_layers import GradientCheckpointingLayer
 from transformers.utils.import_utils import is_torch_fx_available
 from transformers.modeling_rope_utils import dynamic_rope_update
 from transformers.modeling_outputs import BaseModelOutputWithPast
@@ -65,60 +65,41 @@ def pad_sequence(tensor, pad_size):
 class PackedAttention(modeling_llama.LlamaAttention):
     """Packed-sequence attention: input is [total_tokens, hidden_size] with no batch dim."""
 
-    def forward_train(
+    def forward(
         self,
         hidden_states: torch.Tensor,           # [total_tokens, hidden_size]
-        sample_lens: List[int],
-        attention_mask,                        # List[Tensor] (SDPA) or BlockMask (flex)
-        packed_position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],  # packed postion_embedings
+        attention_mask,                        # BlockMask (flex)
+        sample_lens: Optional[List[int]] = None,
+        **kwargs,
     ) -> torch.Tensor:
         total_tokens = hidden_states.shape[0]
 
-        query_states = self.q_proj(hidden_states).view(total_tokens, self.num_heads, self.head_dim)
-        key_states   = self.k_proj(hidden_states).view(total_tokens, self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(hidden_states).view(total_tokens, self.num_key_value_heads, self.head_dim)
+        query_states = self.q_proj(hidden_states).view(total_tokens, self.config.num_attention_heads, self.head_dim)
+        key_states   = self.k_proj(hidden_states).view(total_tokens, self.config.num_key_value_heads, self.head_dim)
+        value_states = self.v_proj(hidden_states).view(total_tokens, self.config.num_key_value_heads, self.head_dim)
 
-        packed_cos, packed_sin = packed_position_embeddings
+        packed_cos, packed_sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(
             query_states, key_states, packed_cos, packed_sin, unsqueeze_dim=1
         )
 
-        if isinstance(attention_mask, list):
-            # SDPA path: expand K/V for GQA, split by sample, compute per-sample
-            key_states   = key_states[:, :, None, :].repeat(1, 1, self.num_key_value_groups, 1).reshape(total_tokens, self.num_heads, self.head_dim)
-            value_states = value_states[:, :, None, :].repeat(1, 1, self.num_key_value_groups, 1).reshape(total_tokens, self.num_heads, self.head_dim)
-
-            # Transpose to (num_heads, total_tokens, head_dim) then split by sample
-            q_split = query_states.transpose(0, 1).split(sample_lens, dim=1)
-            k_split = key_states.transpose(0, 1).split(sample_lens, dim=1)
-            v_split = value_states.transpose(0, 1).split(sample_lens, dim=1)
-
-            outputs = []
-            for q_i, k_i, v_i, mask_i in zip(q_split, k_split, v_split, attention_mask):
-                out_i = sdpa_fn(q_i.unsqueeze(0), k_i.unsqueeze(0), v_i.unsqueeze(0), attn_mask=mask_i)
-                outputs.append(out_i.squeeze(0))
-            attn_output = torch.cat(outputs, dim=1)  # (num_heads, total_tokens, head_dim)
-        else:
-            # flex_attention path: pad to block-aligned length, call, trim
-            padded_total = sum(sample_lens)
-            pad_size = padded_total - total_tokens
-            q = pad_sequence(query_states.permute(1, 0, 2), pad_size)  # (num_heads, padded, head_dim)
-            k = pad_sequence(key_states.permute(1, 0, 2), pad_size)
-            v = pad_sequence(value_states.permute(1, 0, 2), pad_size)
-            out = _compiled_flex_attention(
-                q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0),
-                enable_gqa=True, block_mask=attention_mask,
-            )  # (1, num_heads, padded, head_dim)
-            attn_output = out[0, :, :total_tokens, :]  # (num_heads, total_tokens, head_dim)
+        # flex_attention path: pad to block-aligned length, call, trim
+        padded_total = sum(sample_lens)
+        pad_size = padded_total - total_tokens
+        q = pad_sequence(query_states.permute(1, 0, 2), pad_size)  # (num_heads, padded, head_dim)
+        k = pad_sequence(key_states.permute(1, 0, 2), pad_size)
+        v = pad_sequence(value_states.permute(1, 0, 2), pad_size)
+        out = _compiled_flex_attention(
+            q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0),
+            enable_gqa=True, block_mask=attention_mask,
+        )  # (1, num_heads, padded, head_dim)
+        attn_output = out[0, :, :total_tokens, :]  # (num_heads, total_tokens, head_dim)
 
         # (num_heads, total_tokens, head_dim) -> (total_tokens, hidden_size)
         attn_output = attn_output.transpose(0, 1).reshape(total_tokens, self.hidden_size)
-        return self.o_proj(attn_output)
+        return self.o_proj(attn_output), None  # None for attn_weights, compatible with LlamaAttention
 
-    def forward(self, *args, **kwargs):
-        # Callers always use forward_train() directly via LlamaDecoderLayer.
-        # This override prevents HF's standard forward from being called accidentally.
-        raise NotImplementedError("Use forward_train() for packed attention")
 
 # This makes `_prepare_4d_causal_attention_mask` a leaf function in the FX graph.
 # It means that the function will not be traced through and simply appear as a node in the graph.
@@ -150,12 +131,15 @@ class LlamaMLP(modeling_llama.LlamaMLP):
         return down_proj
 
 
-class LlamaDecoderLayer(nn.Module):
+class LlamaDecoderLayer(GradientCheckpointingLayer):
     def __init__(
         self, config: LlamaConfig, layer_idx: int, drop_prob: Optional[float] = None
     ):
         super().__init__()
-        self.self_attn = PackedAttention(config, layer_idx)
+        if getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention':
+            self.self_attn = PackedAttention(config, layer_idx)
+        else:
+            self.self_attn = modeling_llama.LlamaAttention(config, layer_idx)
         self.mlp = LlamaMLP(config)
         self.input_layernorm = modeling_llama.LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = modeling_llama.LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -177,28 +161,29 @@ class LlamaDecoderLayer(nn.Module):
 
     def forward(
         self,
-        packed_sequence: torch.Tensor,          # [total_tokens, hidden_size]
-        sample_lens: List[int],
-        attention_mask,                         # List[Tensor] (SDPA) or BlockMask (flex)
-        packed_position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        hidden_states: torch.Tensor,          # [bsz, seq, hidden_size] (SDPA) or [total_tokens, hidden_size] (flex)
+        attention_mask,                       # 4D tensor (SDPA) or BlockMask (flex)
+        position_embeddings: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],  # SDPA or Flex
+        sample_lens: Optional[List[int]] = None,  # None for SDPA, List[int] for flex
+        **kwargs,
     ) -> torch.Tensor:
-        residual = packed_sequence
-        hidden_states = self.input_layernorm(packed_sequence)
-        hidden_states = self.self_attn.forward_train(
-            hidden_states, sample_lens, attention_mask, packed_position_embeddings
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states, self_attn_weights = self.self_attn.forward(
+            hidden_states, position_embeddings, attention_mask, sample_lens=sample_lens
         )
         if self.lambda_1 is not None:
             hidden_states = self.lambda_1 * hidden_states
-        packed_sequence = residual + self.drop_path(hidden_states)
+        hidden_states = residual + self.drop_path(hidden_states)
 
-        residual = packed_sequence
-        hidden_states = self.post_attention_layernorm(packed_sequence)
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         if self.lambda_2 is not None:
             hidden_states = self.lambda_2 * hidden_states
-        packed_sequence = residual + self.drop_path(hidden_states)
+        hidden_states = residual + self.drop_path(hidden_states)
 
-        return packed_sequence  # [total_tokens, hidden_size]
+        return hidden_states  # [total_tokens, hidden_size]
 
 
 class LlamaModel(modeling_llama.LlamaPreTrainedModel):
@@ -223,12 +208,10 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
     def forward(
         self,
         input_ids=None,
-        attention_mask=None,        # [batch, seq] 1D padding mask (1=valid, 0=pad)
+        attention_mask=None,        # [batch, seq] attention mask (1=valid, 0=pad); blk_mask if `flex_attention`
         position_ids=None,          # [batch, seq]
         inputs_embeds=None,         # [batch, seq, hidden_size]
-        sample_lens=None,           # List[int] flat across all samples, or None
-        split_lens=None,            # List[int] flat across all samples, or None
-        attn_modes=None,            # List[str] flat across all samples, or None
+        sample_lens=None,           # List[List[int]] 1 sample per batch, or None
         use_cache=None,
         output_attentions=None,
         output_hidden_states=None,
@@ -237,58 +220,32 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
     ):
         # inputs_embeds is always provided by callers (embed_tokens called upstream)
         assert inputs_embeds is not None
+        if sample_lens is not None:  # packed sequence + Flex attn path
+            batch_size = inputs_embeds.size(0)
+            assert batch_size == 1, f"batch_size=={batch_size}!=1"
+            sample_lens = sample_lens[0]  # List[List[int]] -> List[int]
+            inputs_embeds = inputs_embeds.squeeze(0)  # [1, seq, hidden_size] -> [seq, hidden_size]
 
-        # 1. Pack: extract valid tokens per sample, drop padding
-        packed_sequence = torch.cat([
-            inputs_embeds[b, :sample_lens[b], :]
-            for b in range(inputs_embeds.shape[0])
-        ], dim=0)  # [total_tokens, hidden_size]
+            cos, sin = self.rotary_emb(inputs_embeds, position_ids)  # [seq, hidden_size] & [1, seq]
+            position_embeddings = (cos.squeeze(0), sin.squeeze(0))
+        else:  # batched sequence + SDPA path
+            # create position embeddings to be shared across the decoder layers
+            position_embeddings = self.rotary_emb(inputs_embeds, position_ids)        
 
-        packed_position_ids = torch.cat([
-            position_ids[b, :sample_lens[b]]
-            for b in range(position_ids.shape[0])
-        ], dim=0)  # [total_tokens]
-
-        # 2. Build packed attention mask (per-sample SDPA masks or flex BlockMask)
-        device = packed_sequence.device
-        attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
-        if attn_impl == 'flex_attention':
-            packed_attn_mask = build_packed_flex_block_mask(
-                sample_lens, split_lens, attn_modes, device
-            )
-        else:
-            packed_attn_mask = build_packed_sdpa_masks(
-                sample_lens, split_lens, attn_modes,
-                self.config.causal_attention, device
-            )
-
-        # 3. Compute RoPE once on packed positions
-        cos, sin = self.rotary_emb(packed_sequence, packed_position_ids.unsqueeze(0))
-        packed_position_embeddings = (cos.squeeze(0), sin.squeeze(0))
-
-        # 4. Layer loop with optional gradient checkpointing
+        # Layer loop with optional gradient checkpointing
         for layer in self.layers:
             if self.gradient_checkpointing and self.training:
-                packed_sequence = torch.utils.checkpoint.checkpoint(
-                    layer, packed_sequence, sample_lens,
-                    packed_attn_mask, packed_position_embeddings,
-                    use_reentrant=False,
+                hidden_states = torch.utils.checkpoint.checkpoint(
+                    layer, inputs_embeds, attention_mask, position_embeddings, 
+                    sample_lens, use_reentrant=False,
                 )
             else:
-                packed_sequence = layer(
-                    packed_sequence, sample_lens, packed_attn_mask, packed_position_embeddings
+                hidden_states = layer(
+                    inputs_embeds, attention_mask, position_embeddings, sample_lens
                 )
 
-        # 5. Norm + Unpack: restore [batch, seq, hidden_size] with zeros at pad positions
-        packed_sequence = self.norm(packed_sequence)
-        batch_size, seq_len = inputs_embeds.shape[:2]
-        unpacked = inputs_embeds.new_zeros(batch_size, seq_len, self.config.hidden_size)
-        offset = 0
-        for b, length in enumerate(sample_lens):
-            unpacked[b, :length, :] = packed_sequence[offset:offset + length]
-            offset += length
-
-        return BaseModelOutputWithPast(last_hidden_state=unpacked)
+        hidden_states = self.norm(hidden_states)
+        return BaseModelOutputWithPast(last_hidden_state=hidden_states)
 
 
 def get_delta_pos(pos):
@@ -667,13 +624,3 @@ def get_step_pos_emb(dim, mpe):
     idx_slice = [x for ele in idx_slice for x in ele]
     step_pos_emb_all = step_pos_emb_cat[:, idx_slice].clone()
     return step_pos_emb_all
-
-
-def reset_pos_ids(position_ids: torch.Tensor, config):
-    if (config.rope_range > 0) and (position_ids is not None):
-        position_ids = (
-            position_ids.float()
-            * config.rope_range
-            / (position_ids.max(dim=-1, keepdim=True).values + 1).float()
-        )
-    return position_ids

@@ -157,15 +157,16 @@ except (ImportError, AttributeError):
 # ===========================================================================
 # A. Attention mask utilities
 # ===========================================================================
-def _update_causal_mask(self, attention_mask, input_tensor,
-                        *, split_lens=None, attn_modes=None, **kwargs):
+def _update_causal_mask(self, attention_mask, input_tensor, num_heads,
+                        *, sample_lens=None, split_lens=None, attn_modes=None, **kwargs):
     # --- NEW: split_lens/attn_modes primary path ---
-    assert split_lens is not None
-    assert attn_modes is not None
     attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
     if attn_impl == 'flex_attention':
+        assert sample_lens is not None
+        assert split_lens is not None
+        assert attn_modes is not None
         return build_flex_block_mask(
-            split_lens, attn_modes, attention_mask, input_tensor
+            num_heads, sample_lens, split_lens, attn_modes, attention_mask, input_tensor
         )
     else:
         return build_4d_from_splits(

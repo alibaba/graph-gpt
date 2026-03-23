@@ -153,14 +153,9 @@ def _use_dropout(config):
 
 def init_backbone(self, config):
     """Select and instantiate the LlamaModel backbone (with or without dropout)."""
-    LlamaModel = (
-        utils_graphgpt.LlamaModel
-        if _use_dropout(self.config)
-        else modeling_llama.LlamaModel
-    )
     if not self.config.causal_attention:
         print("\nSet attention mask to non-causal attention!\n")
-    self.model = LlamaModel(config)
+    self.model = utils_graphgpt.LlamaModel(config)
 
 
 def init_embed_dropout(self, config):
@@ -178,7 +173,7 @@ def init_stacked_feat_agg(self, config, conditional=True):
     self.stacked_feat_agg = StackedFeatAggregation(config)
 
 
-def resolve_forward_defaults(self, output_attentions, output_hidden_states, return_dict, position_ids):
+def resolve_forward_defaults(self, output_attentions, output_hidden_states, return_dict):
     """Resolve None forward() arguments to config defaults and reset position_ids."""
     output_attentions = (
         output_attentions
@@ -193,5 +188,4 @@ def resolve_forward_defaults(self, output_attentions, output_hidden_states, retu
     return_dict = (
         return_dict if return_dict is not None else self.config.use_return_dict
     )
-    position_ids = utils_graphgpt.reset_pos_ids(position_ids, self.config)
-    return output_attentions, output_hidden_states, return_dict, position_ids
+    return output_attentions, output_hidden_states, return_dict

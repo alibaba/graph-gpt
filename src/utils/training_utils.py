@@ -28,6 +28,7 @@ def batch_training(
         sample_wgt = data["wgt"].to(device)
 
     # flex attention metadata (kept as Python lists, not tensors)
+    sample_lens = data.get("sample_lens", None)
     split_lens = data.get("split_lens", None)
     attn_modes = data.get("attn_modes", None)
 
@@ -40,6 +41,7 @@ def batch_training(
             inputs_raw_embeds=inputs_raw_embeds,
             position_ids=position_ids,
             sample_wgt=sample_wgt,
+            sample_lens=sample_lens,
             split_lens=split_lens,
             attn_modes=attn_modes,
         )  # Perform a single forward pass.
@@ -66,6 +68,7 @@ def batch_training(
                 inputs_raw_embeds=inputs_raw_embeds,
                 # position_ids=position_ids,
                 sample_wgt=sample_wgt,
+                sample_lens=sample_lens,
                 split_lens=split_lens,
                 attn_modes=attn_modes,
             )  # Perform a single forward pass.
@@ -145,6 +148,7 @@ def ft_batch_training(
         labels = data["noise"].to(device)
 
     # flex attention metadata (kept as Python lists, not tensors)
+    sample_lens = data.get("sample_lens", None)
     split_lens = data.get("split_lens", None)
     attn_modes = data.get("attn_modes", None)
 
@@ -158,6 +162,7 @@ def ft_batch_training(
             inputs_raw_embeds=inputs_raw_embeds,
             sample_wgt=sample_wgt,
             position_ids=position_ids,
+            sample_lens=sample_lens,
             split_lens=split_lens,
             attn_modes=attn_modes,
         )  # Perform a single forward pass.
@@ -190,6 +195,7 @@ def ft_batch_training(
                 inputs_raw_embeds=inputs_raw_embeds,
                 sample_wgt=sample_wgt,
                 position_ids=position_ids,
+                sample_lens=sample_lens,
                 split_lens=split_lens,
                 attn_modes=attn_modes,
             )  # Perform a single forward pass.
