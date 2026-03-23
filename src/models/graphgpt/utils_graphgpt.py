@@ -216,7 +216,12 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
             position_embeddings = (cos.squeeze(0), sin.squeeze(0))
         else:  # batched sequence + SDPA path
             # create position embeddings to be shared across the decoder layers
-            position_embeddings = self.rotary_emb(inputs_embeds, position_ids)        
+            if position_ids is None:
+                seq_len = inputs_embeds.size(1)
+                position_ids = torch.arange(
+                    seq_len, dtype=torch.long, device=inputs_embeds.device
+                ).unsqueeze(0)  # [1, seq]
+            position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 
         hidden_states = inputs_embeds
         # Layer loop with optional gradient checkpointing
