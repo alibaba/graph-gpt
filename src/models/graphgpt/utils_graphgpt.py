@@ -46,11 +46,9 @@ from transformers.modeling_rope_utils import dynamic_rope_update
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from src.utils.attn_mask_utils import is_torch_greater_or_equal_than_1_13
 from src.utils.attn_mask_utils import (
-    _prepare_4d_causal_bi_attention_mask,
     _prepare_4d_attention_mask,
 )
-from src.utils.flex_attn_utils import build_packed_flex_block_mask, build_packed_sdpa_masks
-from src.models.graphgpt.modeling_helpers import _compiled_flex_attention
+from src.models.graphgpt.modeling_helpers import _compiled_flex_attention, get_flex_dropout_mod
 
 apply_rotary_pos_emb = modeling_llama.apply_rotary_pos_emb
 repeat_kv = modeling_llama.repeat_kv
@@ -92,7 +90,8 @@ class PackedAttention(modeling_llama.LlamaAttention):
         v = pad_sequence(value_states.permute(1, 0, 2), pad_size)
         out = _compiled_flex_attention(
             q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0),
-            enable_gqa=True, block_mask=attention_mask,
+            enable_gqa=True, block_mask=attention_mask, 
+            score_mod=get_flex_dropout_mod(self.attention_dropout, self.training, hidden_states.device)
         )  # (1, num_heads, padded, head_dim)
         attn_output = out[0, :, :total_tokens, :]  # (num_heads, total_tokens, head_dim)
 
