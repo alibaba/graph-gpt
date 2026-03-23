@@ -111,11 +111,6 @@ class PretrainMode(TrainingMode):
         self.task_type = task_type = train_cfg.task_type
         self.batch_size = batch_size = train_cfg.batch_size
 
-        # Steps per saving
-        sched_cfg.steps_per_saving = sched_cfg.samples_per_saving // (
-            pipeline.world_size * batch_size
-        )
-
         # 1.1 build tokenizer config
         tokenizer_config = conf_utils.convert_to_legacy_tokenization_config(cfg)
         pprint(tokenizer_config)

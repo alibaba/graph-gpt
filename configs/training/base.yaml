@@ -19,7 +19,6 @@ training:
       umr_clip: [0.01, 0.99]  # un-mask ratio clip range, i.e., percentage of presented tokens
     dlm_wgt: true  # whether to turn on the weights in discrete diffusion LM's loss
     num_gen_samples: 128  # num of samples picked for generation
-  task_conversion: "regression2binary_classification---"
 
   schedule:
     epochs: null
@@ -29,9 +28,8 @@ training:
     total_num_steps: null
     warmup_num_steps: null
     logging_steps: 100
-    samples_per_saving: null
     steps_per_saving: null
-    samples_per_eval: null
+    steps_per_eval: null
   optimizer:
     lr: 0.001
     min_lr: 0.0

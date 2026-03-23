@@ -46,9 +46,8 @@ class ScheduleConfig:
     total_num_steps: int = MISSING
     warmup_num_steps: int = MISSING
     logging_steps: int = 100
-    samples_per_saving: Optional[int] = None
     steps_per_saving: Optional[int] = None
-    samples_per_eval: Optional[int] = None  # for finetuning
+    steps_per_eval: Optional[int] = None  # for finetuning
 
 
 def update_num_steps(cfg: ScheduleConfig, tokens_per_sample, batch_size, world_size):
@@ -136,7 +135,6 @@ class TrainingConfig:
     pretrain_mode: bool = False
     gpu_name: str = ""
     task_type: str = "pretrain"  # available vals:: TASK_TYPES
-    task_conversion: str = None
     output_dir: str = "../exp/models/graph_llama_test"
     tot_samples: int = 10000  # num of samples for estimating tokens-per-sample
     batch_size: int = 128

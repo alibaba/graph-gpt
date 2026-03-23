@@ -38,8 +38,7 @@ num_cpus=12
 # iii.b training::schedule
 total_tokens=1e9  # 1e11  1e9
 warmup_tokens=1e8  # 1e9  1e8
-steps_per_saving=1000  # From samples_per_saving=1000000 -> (1000000/(64*16) ≈ 976)
-samples_per_saving=$((steps_per_saving * batch_size * workerCount))
+steps_per_saving=1000
 logging_steps=100
 
 # iii.c training::eval/infer settings
@@ -281,7 +280,7 @@ raw_udf="
   --training.pretrain_mlm.dlm_wgt=${dlm_wgt}
   --training.schedule.total_tokens=${total_tokens}
   --training.schedule.warmup_tokens=${warmup_tokens}
-  --training.schedule.samples_per_saving=${samples_per_saving}
+  --training.schedule.steps_per_saving=${steps_per_saving}
   --training.schedule.logging_steps=${logging_steps}
   --training.valid_percent=${valid_percent}
   --training.do_generation=${do_generation}
