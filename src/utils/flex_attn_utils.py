@@ -11,6 +11,7 @@ from typing import List, Optional
 
 import torch
 from torch.nn.attention.flex_attention import and_masks, or_masks
+from transformers.utils.import_utils import is_torch_fx_available
 
 
 # ---------------------------------------------------------------------------
@@ -62,100 +63,43 @@ def create_sparse_mask(document_lens, split_lens, attn_modes, device):
     return and_masks(or_masks(causal_mask, full_and_noise_mask), remove_noise_mask, sample_mask)
 
 
-def prepare_attention_mask_per_sample(split_lens, attn_modes, device="cpu"):
-    """Create a 2D attention mask for a single sample (SDPA path).
-
-    Args:
-        split_lens: list[int] — length of each split within one sample
-        attn_modes: list[str] — attention mode per split ('causal', 'full', 'noise')
-        device: torch.device
-
-    Returns:
-        2D float tensor of shape (sample_len, sample_len) where
-        0 = attend, -inf = mask.
-    """
-    sample_len = sum(split_lens)
-    attention_mask = torch.zeros((sample_len, sample_len), dtype=torch.bool, device=device)
-
-    csum = 0
-    for s, attn_mode in zip(split_lens, attn_modes):
-        assert attn_mode in ['causal', 'full', 'noise']
-        if attn_mode == "causal":
-            attention_mask[csum:csum + s, csum:csum + s] = torch.ones(
-                (s, s), device=device
-            ).tril()
-            # Causal splits can attend to ALL previous positions (bi_causal prefix)
-            attention_mask[csum:csum + s, :csum] = 1
-        else:
-            # Full/noise splits only attend within themselves (block-diagonal)
-            attention_mask[csum:csum + s, csum:csum + s] = torch.ones(
-                (s, s), device=device
-            )
-        csum += s
-
-    csum = 0
-    for s, attn_mode in zip(split_lens, attn_modes):
-        if attn_mode == "noise":
-            attention_mask[:, csum:csum + s] = torch.zeros(
-                (sample_len, s), device=device
-            )
-            attention_mask[csum:csum + s, csum:csum + s] = torch.ones(
-                (s, s), device=device
-            )
-        csum += s
-
-    attention_mask = torch.zeros_like(attention_mask, dtype=torch.float).masked_fill_(
-        ~attention_mask, float("-inf")
-    )
-
-    return attention_mask
-
-
 # ---------------------------------------------------------------------------
 # Dispatcher helpers: build masks from split_lens/attn_modes
 # ---------------------------------------------------------------------------
-
-def build_4d_from_splits(
-    split_lens: List[List[int]],
-    attn_modes: List[List[str]],
-    attention_mask: torch.Tensor,
-    input_tensor: torch.Tensor,
-) -> torch.Tensor:
-    """Build a 4D attention mask from split_lens/attn_modes (SDPA path).
-
-    Args:
-        split_lens: list of list of int — per-sample split lengths [bsz][n_splits]
-        attn_modes: list of list of str — per-sample attention modes [bsz][n_splits]
-        attention_mask: [bsz, seq_len] 1D padding mask (1=valid, 0=pad)
-        input_tensor: [bsz, seq_len, dim] for dtype reference
-
-    Returns:
-        4D tensor [bsz, 1, seq_len, seq_len] with 0=attend, min_float=mask.
+# refer to: `transformers/modeling_attn_mask_utils.py::_prepare_4d_attention_mask`
+# @ transformers==4.36.2
+def _prepare_4d_attention_mask(
+    attention_mask: Optional[torch.Tensor],
+    input_shape: Union[torch.Size, Tuple, List],
+    inputs_embeds: torch.Tensor,
+    past_key_values_length: int,
+):
     """
-    dtype = input_tensor.dtype
-    device = input_tensor.device
-    bsz, seq_len = attention_mask.shape
+    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
+    """
+    dtype = inputs_embeds.dtype
+    bsz, tgt_len = input_shape
+    src_len = tgt_len
+    tgt_len = tgt_len if tgt_len is not None else src_len
 
-    masks = []
-    for b in range(bsz):
-        mask_2d = prepare_attention_mask_per_sample(
-            split_lens[b], attn_modes[b], device=device
-        )
-        # mask_2d is (sum(split_lens[b]), sum(split_lens[b]))
-        # May be smaller than seq_len if split_lens doesn't include padding
-        m_len = mask_2d.shape[0]
-        if m_len < seq_len:
-            # Extend with -inf for padding region
-            full_mask = torch.full(
-                (seq_len, seq_len), float("-inf"), dtype=torch.float, device=device
-            )
-            full_mask[:m_len, :m_len] = mask_2d
-            mask_2d = full_mask
-        masks.append(mask_2d)
+    expanded_mask = (
+        attention_mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+    )
 
-    # Stack: [bsz, seq, seq] -> [bsz, 1, seq, seq]
-    mask_4d = torch.stack(masks, dim=0).unsqueeze(1)
-    return mask_4d.to(dtype)
+    inverted_mask = 1.0 - expanded_mask
+
+    return inverted_mask.masked_fill(
+        inverted_mask.to(torch.bool), torch.finfo(dtype).min
+    )
+
+
+# This makes `_prepare_4d_causal_attention_mask` a leaf function in the FX graph.
+# It means that the function will not be traced through and simply appear as a node in the graph.
+if is_torch_fx_available():
+    if not is_torch_greater_or_equal_than_1_13:
+        import torch.fx
+
+    _prepare_4d_attention_mask = torch.fx.wrap(_prepare_4d_attention_mask)
 
 
 def build_flex_block_mask(
@@ -179,8 +123,8 @@ def build_flex_block_mask(
         BlockMask for flex_attention, or falls back to 4D tensor if not on CUDA.
     """
     device = input_tensor.device
-    if not torch.cuda.is_available() or device.type != 'cuda':
-        return build_4d_from_splits(split_lens, attn_modes, attention_mask, input_tensor)
+    if sample_lens is None:  # batched data + SDPA path
+        return _prepare_4d_attention_mask(attention_mask, input_tensor.shape[:2], input_tensor)
 
     from torch.nn.attention.flex_attention import create_block_mask
 

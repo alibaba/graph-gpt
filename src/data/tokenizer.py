@@ -255,18 +255,6 @@ class GSTTokenizer(object):
             )
             for key, val in batch_outputs.items()
         }
-        if "attention_mask_bi" in batch_outputs:
-            attention_mask = batch_outputs["attention_mask"]
-            attention_mask_bi = batch_outputs["attention_mask_bi"]
-            assert (
-                attention_mask | attention_mask_bi
-            ).sum().item() == attention_mask.sum().item()
-            if mask_boundary:
-                # The calculation is time-consuming, so it is moved here
-                mask_idx = attn_mask_utils.get_masked_boundary_idx(
-                    attention_mask, attention_mask_bi, pad_to
-                )
-                batch_outputs["boundary_mask_idx"] = mask_idx
         return batch_outputs
 
     def _pad_each_datapoint(self, feature, pad_to):

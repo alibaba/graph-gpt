@@ -44,10 +44,6 @@ from transformers.modeling_layers import GradientCheckpointingLayer
 from transformers.utils.import_utils import is_torch_fx_available
 from transformers.modeling_rope_utils import dynamic_rope_update
 from transformers.modeling_outputs import BaseModelOutputWithPast
-from src.utils.attn_mask_utils import is_torch_greater_or_equal_than_1_13
-from src.utils.attn_mask_utils import (
-    _prepare_4d_attention_mask,
-)
 from src.models.graphgpt.modeling_helpers import _compiled_flex_attention, get_flex_dropout_mod
 
 apply_rotary_pos_emb = modeling_llama.apply_rotary_pos_emb
@@ -100,13 +96,7 @@ class PackedAttention(modeling_llama.LlamaAttention):
         return self.o_proj(attn_output), None  # None for attn_weights, compatible with LlamaAttention
 
 
-# This makes `_prepare_4d_causal_attention_mask` a leaf function in the FX graph.
-# It means that the function will not be traced through and simply appear as a node in the graph.
-if is_torch_fx_available():
-    if not is_torch_greater_or_equal_than_1_13:
-        import torch.fx
 
-    _prepare_4d_attention_mask = torch.fx.wrap(_prepare_4d_attention_mask)
 
 logger = logging.get_logger(__name__)
 
@@ -231,16 +221,17 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
             # create position embeddings to be shared across the decoder layers
             position_embeddings = self.rotary_emb(inputs_embeds, position_ids)        
 
+        hidden_states = inputs_embeds
         # Layer loop with optional gradient checkpointing
         for layer in self.layers:
             if self.gradient_checkpointing and self.training:
                 hidden_states = torch.utils.checkpoint.checkpoint(
-                    layer, inputs_embeds, attention_mask, position_embeddings, 
+                    layer, hidden_states, attention_mask, position_embeddings, 
                     sample_lens, use_reentrant=False,
                 )
             else:
                 hidden_states = layer(
-                    inputs_embeds, attention_mask, position_embeddings, sample_lens
+                    hidden_states, attention_mask, position_embeddings, sample_lens
                 )
 
         hidden_states = self.norm(hidden_states)
