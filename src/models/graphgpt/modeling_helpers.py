@@ -30,7 +30,7 @@ from . import utils_graphgpt
 from src.utils.loss_utils import _dist_infonce
 from src.utils.mol_utils import discrete_pos
 from src.utils.flex_attn_utils import build_flex_block_mask
-from src.utils.attn_mask_utils import _prepare_4d_attention_mask
+from src.utils.attn_mask_utils import _prepare_4d_attention_mask, is_torch_greater_or_equal_than_1_13
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -121,7 +121,7 @@ def _update_causal_mask(self, attention_mask, input_tensor, num_heads,
                         *, sample_lens=None, split_lens=None, attn_modes=None, **kwargs):
     # --- NEW: split_lens/attn_modes primary path ---
     attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
-    if attn_impl == 'flex_attention':
+    if (attn_impl == 'flex_attention') and self.training:
         assert sample_lens is not None
         assert split_lens is not None
         assert attn_modes is not None

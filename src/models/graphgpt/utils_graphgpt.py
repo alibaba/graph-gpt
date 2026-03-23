@@ -125,7 +125,7 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         self, config: LlamaConfig, layer_idx: int, drop_prob: Optional[float] = None
     ):
         super().__init__()
-        if getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention':
+        if getattr(config, '_attn_implementation', 'sdpa') == 'flex_attention':
             self.self_attn = PackedAttention(config, layer_idx)
         else:
             self.self_attn = modeling_llama.LlamaAttention(config, layer_idx)

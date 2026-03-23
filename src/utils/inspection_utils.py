@@ -139,7 +139,6 @@ def inspect_tokenization_results(
         f"Inputs for model:\n{pformat({k: torch.tensor(v) if k in ('attention_mask', 'position_ids') else v for k,v in inputs.items()})}\n"
         f"Inputs for model -> shape:\n{pformat({'shape-'+k: torch.tensor(v).shape for k,v in inputs.items() if k in ('attention_mask', 'position_ids')})}"
     )
-    gtokenizer.set_eos_idx(inputs["input_ids"])
 
 
 def inspect_attr(attr, attr_name):
