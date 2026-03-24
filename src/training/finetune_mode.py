@@ -129,17 +129,21 @@ class FinetuneMode(TrainingMode):
             tokenizer_config["semantics"]["edge"].pop("embed", None)
             tokenizer_config["semantics"]["edge"].pop("embed_dim", None)
         from pprint import pprint
+
         pprint(tokenizer_config)
 
         # 1.2 get graph datasets (train, valid, test, raw)
-        self.train_dataset, self.valid_dataset, self.test_dataset, self.raw_dataset = (
-            read_dataset(
-                name=data_cfg.dataset,
-                data_cfg=data_cfg,
-                train_cfg=train_cfg,
-                with_prob=False,
-                true_valid=train_cfg.ft_eval.true_valid,
-            )
+        (
+            self.train_dataset,
+            self.valid_dataset,
+            self.test_dataset,
+            self.raw_dataset,
+        ) = read_dataset(
+            name=data_cfg.dataset,
+            data_cfg=data_cfg,
+            train_cfg=train_cfg,
+            with_prob=False,
+            true_valid=train_cfg.ft_eval.true_valid,
         )
         self._train_dataset_for_bounds = self.train_dataset
 
@@ -180,9 +184,10 @@ class FinetuneMode(TrainingMode):
 
         # update schedule
         samples_per_gpu = (
-            (len(self.ft_sampler.train.sampler) if self.ft_sampler.train.sampler else self.ft_sampler.train.cnt)
-            // pipeline.world_size
-        )
+            len(self.ft_sampler.train.sampler)
+            if self.ft_sampler.train.sampler
+            else self.ft_sampler.train.cnt
+        ) // pipeline.world_size
         base_configs.update_ft_num_steps(train_cfg, samples_per_gpu)
 
         # 2.1 set model config
@@ -190,7 +195,9 @@ class FinetuneMode(TrainingMode):
             cfg, gtokenizer
         )
         pipeline.config = convert_to_legacy_config(model_cfg)
-        print(f"\nFinal model config for supervised task:\n{pformat(pipeline.config)}\n")
+        print(
+            f"\nFinal model config for supervised task:\n{pformat(pipeline.config)}\n"
+        )
 
         # Store on pipeline
         pipeline.gtokenizer = gtokenizer
@@ -285,7 +292,9 @@ class FinetuneMode(TrainingMode):
             steps_per_epoch=self.steps_per_epoch,
             eval_only=train_cfg.ft_eval.eval_only,
         )
-        print(f"[{datetime.now()}] Training start with j_init {j_init} and ep_init {ep_init} ...")
+        print(
+            f"[{datetime.now()}] Training start with j_init {j_init} and ep_init {ep_init} ..."
+        )
 
         # 4.3 init collator
         self.collator_fn = collator.DataCollatorForGST(

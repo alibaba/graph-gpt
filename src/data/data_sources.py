@@ -271,6 +271,7 @@ register_specs(_GRAPH_SPECS, _dataset, _molecule)
 # PCQM4Mv2 reader (extracted to _readers/pcqm4mv2.py)
 # ---------------------------------------------------------------------------
 from ._readers.pcqm4mv2 import register_pcqm4mv2
+
 register_pcqm4mv2(_dataset, _molecule)
 
 
@@ -278,6 +279,7 @@ register_pcqm4mv2(_dataset, _molecule)
 # Node-level readers (extracted to _readers/node_level.py)
 # ---------------------------------------------------------------------------
 from ._readers.node_level import register_node_readers
+
 register_node_readers(_dataset)
 
 
@@ -285,6 +287,7 @@ register_node_readers(_dataset)
 # Edge-level readers (extracted to _readers/edge_level.py)
 # ---------------------------------------------------------------------------
 from ._readers.edge_level import register_edge_readers
+
 register_edge_readers(_dataset)
 
 

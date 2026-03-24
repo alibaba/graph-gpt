@@ -253,10 +253,8 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
         attn_modes=None,
         **kwargs,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
-        output_attentions, output_hidden_states, return_dict = (
-            resolve_forward_defaults(
-                self, output_attentions, output_hidden_states, return_dict
-            )
+        output_attentions, output_hidden_states, return_dict = resolve_forward_defaults(
+            self, output_attentions, output_hidden_states, return_dict
         )
 
         if len(input_ids.size()) == 3:
@@ -266,17 +264,22 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
         )
 
         if not self.config.causal_attention or (
-            split_lens is not None and
-            getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention'
+            split_lens is not None
+            and getattr(self.config, "_attn_implementation", "sdpa") == "flex_attention"
         ):
             attention_mask = _update_causal_mask(
-                self, attention_mask, inputs_embeds, self.config.num_attention_heads,
-                sample_lens=sample_lens, split_lens=split_lens, attn_modes=attn_modes
+                self,
+                attention_mask,
+                inputs_embeds,
+                self.config.num_attention_heads,
+                sample_lens=sample_lens,
+                split_lens=split_lens,
+                attn_modes=attn_modes,
             )
         # flex_attention is compiled via torch.compile; DynamicCache causes
         # symbolic batch-dimension mismatches inside the inductor lowering
         # (flex_decoding asserts Bq == Bkv).  Disable caching to avoid this.
-        if getattr(self.config, '_attn_implementation', 'sdpa') == 'flex_attention':
+        if getattr(self.config, "_attn_implementation", "sdpa") == "flex_attention":
             use_cache = False
         outputs = self.model(
             input_ids=input_ids,
@@ -715,10 +718,8 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         split_lens=None,
         attn_modes=None,
     ) -> Union[Tuple, DoubleHeadsModelOutput]:
-        output_attentions, output_hidden_states, return_dict = (
-            resolve_forward_defaults(
-                self, output_attentions, output_hidden_states, return_dict
-            )
+        output_attentions, output_hidden_states, return_dict = resolve_forward_defaults(
+            self, output_attentions, output_hidden_states, return_dict
         )
 
         # --- bi_causal on-the-fly fallback ---

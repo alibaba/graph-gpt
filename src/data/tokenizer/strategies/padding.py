@@ -71,8 +71,10 @@ class FlatPaddingStrategy(PaddingStrategy):
         _list_only_keys = {"sample_lens", "split_lens", "attn_modes"}
         batch_outputs = {
             key: (
-                val if key in _list_only_keys
-                else func(val) if not isinstance(val[0], str)
+                val
+                if key in _list_only_keys
+                else func(val)
+                if not isinstance(val[0], str)
                 else np.array(val)
             )
             for key, val in batch_outputs.items()
@@ -114,7 +116,9 @@ class FlatPaddingStrategy(PaddingStrategy):
             for name in {"embed", "noise"}:
                 if name in feature:
                     dim = len(feature[name][0])
-                    padded_vecs = np.zeros((padding_len, dim), dtype=np.float32).tolist()
+                    padded_vecs = np.zeros(
+                        (padding_len, dim), dtype=np.float32
+                    ).tolist()
                     feature[name] = _merge_two_ls(
                         feature[name], padded_vecs, self.padding_side
                     )
@@ -170,8 +174,10 @@ class StackedPaddingStrategy(PaddingStrategy):
         _list_only_keys = {"sample_lens", "split_lens", "attn_modes"}
         batch_outputs = {
             key: (
-                val if key in _list_only_keys
-                else func(val) if not isinstance(val[0], str)
+                val
+                if key in _list_only_keys
+                else func(val)
+                if not isinstance(val[0], str)
                 else np.array(val)
             )
             for key, val in batch_outputs.items()
@@ -214,7 +220,9 @@ class StackedPaddingStrategy(PaddingStrategy):
             for name in {"embed", "noise"}:
                 if name in feature:
                     dim = len(feature[name][0])
-                    padded_vecs = np.zeros((padding_len, dim), dtype=np.float32).tolist()
+                    padded_vecs = np.zeros(
+                        (padding_len, dim), dtype=np.float32
+                    ).tolist()
                     feature[name] = _merge_two_ls(
                         feature[name], padded_vecs, self.padding_side
                     )

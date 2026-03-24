@@ -37,7 +37,9 @@ class DatasetSpec:
     # --- pretrain mode ---
     pretrain_only: bool = False
     pretrain_permute_nodes: bool = False
-    pretrain_sample_idx: Union[str, Callable] = "all"  # "all" | "train_split" | callable
+    pretrain_sample_idx: Union[
+        str, Callable
+    ] = "all"  # "all" | "train_split" | callable
 
     # --- finetune mode ---
     ft_permute_nodes: bool = False
@@ -47,7 +49,9 @@ class DatasetSpec:
     post_load_hook: Optional[Callable] = None  # fn(dataset) -> None
 
 
-def read_graph_dataset(spec: DatasetSpec, data_cfg, *, with_prob: bool = False, **kwargs):
+def read_graph_dataset(
+    spec: DatasetSpec, data_cfg, *, with_prob: bool = False, **kwargs
+):
     """Generic reader for any dataset described by *spec*."""
     data_dir = data_cfg.data_dir
     return_valid_test = data_cfg.return_valid_test
@@ -67,19 +71,22 @@ def read_graph_dataset(spec: DatasetSpec, data_cfg, *, with_prob: bool = False, 
     if return_valid_test:
         train_idx, valid_idx, test_idx = _resolve_splits(dataset, spec)
         train_dataset = GraphsMapDataset(
-            dataset, None,
+            dataset,
+            None,
             sample_idx=train_idx,
             permute_nodes=spec.ft_permute_nodes,
             provide_sampler=True,
         )
         valid_dataset = GraphsMapDataset(
-            dataset, None,
+            dataset,
+            None,
             sample_idx=valid_idx,
             permute_nodes=spec.ft_permute_nodes,
             provide_sampler=True,
         )
         test_dataset = GraphsMapDataset(
-            dataset, None,
+            dataset,
+            None,
             sample_idx=test_idx,
             permute_nodes=spec.ft_permute_nodes,
             provide_sampler=True,
@@ -92,7 +99,8 @@ def read_graph_dataset(spec: DatasetSpec, data_cfg, *, with_prob: bool = False, 
     else:
         sample_idx = _resolve_pretrain_idx(dataset, spec)
         train_dataset = GraphsMapDataset(
-            dataset, None,
+            dataset,
+            None,
             sample_idx=sample_idx,
             permute_nodes=spec.pretrain_permute_nodes,
             provide_sampler=True,
@@ -150,10 +158,13 @@ def _resolve_pretrain_idx(dataset, spec: DatasetSpec):
 def register_specs(specs, dataset_registry, molecule_registry):
     """Register a list of DatasetSpec instances into the given registries."""
     for spec in specs:
+
         def _make_reader(s):
             def reader(data_cfg, **kwargs):
                 return read_graph_dataset(s, data_cfg, **kwargs)
+
             return reader
+
         dataset_registry(spec.name)(_make_reader(spec))
         if spec.also_molecule:
             molecule_registry(spec.name)(_make_reader(spec))

@@ -8,17 +8,17 @@ This repository is the official implementation of “[GraphGPT: Generative Pre-t
 
 ## Synergy with diffusion LLM (dLLM)
 
-- Recently Inception Labs' [Mercury Coder](https://chat.inceptionlabs.ai/) and Google's [Gemini Diffusion](https://deepmind.google/models/gemini-diffusion/) 
+- Recently Inception Labs' [Mercury Coder](https://chat.inceptionlabs.ai/) and Google's [Gemini Diffusion](https://deepmind.google/models/gemini-diffusion/)
   have shown some advantages of dLLM over AR LLM.
 - Open sourced dLLM models like LLaDA and Dream are catching eyes.
-- Various speeding up techniques like [dKV-Cache](https://arxiv.org/abs/2505.15781) and [Fast-dLLM](https://nvlabs.github.io/Fast-dLLM/) 
+- Various speeding up techniques like [dKV-Cache](https://arxiv.org/abs/2505.15781) and [Fast-dLLM](https://nvlabs.github.io/Fast-dLLM/)
   are being developed.
 - GraphGPT's pre-training objective SMTP is directly adopted from MaskGIT, which is deeply connected with dLLM's training objective.
   We show that SMTP pre-training is better than NTP (employed by AR LLM) in most graph datasets and tasks.
 - Given the dominance of diffusion in images, audios, videos and graphs, it could serve as a promising candidate
   for unifying majority modalities.
 - GraphGPT's results imply that dLLM can directly model the serialized graph data as in GraphGPT. This could help dLLM unify
-  the graph modality very easily, and also benefit the graph research community, since it naturally serves as the 
+  the graph modality very easily, and also benefit the graph research community, since it naturally serves as the
   graph foundation model.
 
 ## Hiring
@@ -79,7 +79,7 @@ Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.co
   1. v0.2.0 released.
   2. Implement `permute_nodes` for graph-level map-style dataset, in order to increase variations of Eulerian paths,
      and result in better and robust results.
-  3. Add `StackedGSTTokenizer` so that semantics (i.e., node/edge attrs) tokens can be stacked together with structural 
+  3. Add `StackedGSTTokenizer` so that semantics (i.e., node/edge attrs) tokens can be stacked together with structural
      tokens, and the length of sequence would be reduced a lot.
   4. refactor codes.
 
@@ -91,36 +91,36 @@ Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.co
 
 ## Future Directions
 
-### Scaling Law: What’s the Scaling Limit of GraphGPT Models?  
+### Scaling Law: What’s the Scaling Limit of GraphGPT Models?
 
-- GPT models trained on text data can scale to hundreds of billions of parameters while continually improving their capabilities.  
-- Text data provides trillions of tokens with high complexity, embedding rich social and natural knowledge.  
-- In contrast, graph data without node/edge attributes contains only structural information, which is far more limited than text. Much of the hidden information (e.g., degrees, substructure counts, etc.) in graphs can be calculated exactly using tools like NetworkX. Consequently, structural information alone may not support scaling models to billions of parameters.  
-    - Preliminary experiments on large-scale graph datasets show that GraphGPT scales to 200M+ parameters with performance gains but plateaus beyond this. While insufficient experimentation could be a factor, inherent limitations in graph data complexity may contribute.  
-- Large graph datasets (e.g., one massive graph or numerous small graphs) with node/edge attributes might provide sufficient information for training large GraphGPT models. However, diverse datasets may be necessary to train a universal model.  
-    - A key challenge is designing a universal tokenizer for heterogeneous node/edge attributes across datasets.  
+- GPT models trained on text data can scale to hundreds of billions of parameters while continually improving their capabilities.
+- Text data provides trillions of tokens with high complexity, embedding rich social and natural knowledge.
+- In contrast, graph data without node/edge attributes contains only structural information, which is far more limited than text. Much of the hidden information (e.g., degrees, substructure counts, etc.) in graphs can be calculated exactly using tools like NetworkX. Consequently, structural information alone may not support scaling models to billions of parameters.
+    - Preliminary experiments on large-scale graph datasets show that GraphGPT scales to 200M+ parameters with performance gains but plateaus beyond this. While insufficient experimentation could be a factor, inherent limitations in graph data complexity may contribute.
+- Large graph datasets (e.g., one massive graph or numerous small graphs) with node/edge attributes might provide sufficient information for training large GraphGPT models. However, diverse datasets may be necessary to train a universal model.
+    - A key challenge is designing a universal tokenizer for heterogeneous node/edge attributes across datasets.
 
-### High-Quality Graph Data: What Defines High-Quality Graph Data for Training General-Purpose GraphGPT?  
+### High-Quality Graph Data: What Defines High-Quality Graph Data for Training General-Purpose GraphGPT?
 
-- **Example: Training a model for molecule understanding/generation tasks**  
-    - Adding ZINC (4.6M) and CEPDB (2.3M) datasets during pretraining yielded no improvement on the PCQM4M-v2 HOMO-LUMO gap prediction task. Potential reasons:  
-        - **Structure**: Molecule graphs exhibit simple patterns (e.g., chains, 5/6-node rings).  
-            - Atoms average 2 bonds per node.  
-        - **Semantics**: Chemical rules are straightforward (e.g., carbon = 4 bonds, nitrogen = 3 bonds). Satisfying bond counts enables valid molecule generation.  
-        - These simple structural/semantic rules allow medium-sized models to learn effectively from modest datasets. Pretraining small/medium/base/large models on 3.7M molecules resulted in similar loss values, suggesting diminishing returns from scaling.  
+- **Example: Training a model for molecule understanding/generation tasks**
+    - Adding ZINC (4.6M) and CEPDB (2.3M) datasets during pretraining yielded no improvement on the PCQM4M-v2 HOMO-LUMO gap prediction task. Potential reasons:
+        - **Structure**: Molecule graphs exhibit simple patterns (e.g., chains, 5/6-node rings).
+            - Atoms average 2 bonds per node.
+        - **Semantics**: Chemical rules are straightforward (e.g., carbon = 4 bonds, nitrogen = 3 bonds). Satisfying bond counts enables valid molecule generation.
+        - These simple structural/semantic rules allow medium-sized models to learn effectively from modest datasets. Pretraining small/medium/base/large models on 3.7M molecules resulted in similar loss values, suggesting diminishing returns from scaling.
 
-- **Training a universal graph structure understanding model**  
-    - Should training data include real-world graphs (social/citation networks) or synthetic graphs (Erdős–Rényi)?  
-    - Pretraining on synthetic graphs improves structural understanding but shows instability. Performance likely depends on alignment between pretraining and fine-tuning graph distributions (e.g., node/edge counts).  
-    - **Key Question**: How can GraphGPT achieve universal understanding of arbitrary graph structures?  
-- This ties back to scaling laws: Identifying rich, diverse graph data is critical for scaling GraphGPT to handle varied tasks.  
+- **Training a universal graph structure understanding model**
+    - Should training data include real-world graphs (social/citation networks) or synthetic graphs (Erdős–Rényi)?
+    - Pretraining on synthetic graphs improves structural understanding but shows instability. Performance likely depends on alignment between pretraining and fine-tuning graph distributions (e.g., node/edge counts).
+    - **Key Question**: How can GraphGPT achieve universal understanding of arbitrary graph structures?
+- This ties back to scaling laws: Identifying rich, diverse graph data is critical for scaling GraphGPT to handle varied tasks.
 
-### Few-Shot Learning: Can GraphGPT Achieve Few-Shot Capability?  
+### Few-Shot Learning: Can GraphGPT Achieve Few-Shot Capability?
 
-- **Designing training data for few-shot learning**  
-- Preliminary tests on PCQM4M-v2 show no few-shot ability, but this could stem from:  
-    - **Model size**: The base model (~100M parameters) may be too small.  
-    - **Data volume**: 3.7M molecules may offer insufficient tokens for robust learning.  
+- **Designing training data for few-shot learning**
+- Preliminary tests on PCQM4M-v2 show no few-shot ability, but this could stem from:
+    - **Model size**: The base model (~100M parameters) may be too small.
+    - **Data volume**: 3.7M molecules may offer insufficient tokens for robust learning.
     - **Data format**: Current pretraining formats may not encourage few-shot generalization.
 
 
@@ -131,13 +131,13 @@ We introduce GraphGPT, a novel self-supervised generative pre-trained model for 
 First, we propose GET, which combines a standard transformer encoder or decoder architecture with an innovative graph-to-sequence transformation method.
 This method converts graphs or sampled subgraphs into sequences of tokens representing nodes, edges, and attributes in a reversible manner using Eulerian paths.
 We pre-train GET using either of the two self-supervised tasks: next-token prediction ([NTP](https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf))
-and scheduled maskedtoken prediction ([SMTP](https://arxiv.org/abs/2202.04200)). 
+and scheduled maskedtoken prediction ([SMTP](https://arxiv.org/abs/2202.04200)).
 The pre-trained model is then fine-tuned for downstream tasks such as graph-, edge-, and node-level prediction.
 Despite its simplicity, GraphGPT achieves performance comparable to or surpassing state-of-the-art methods on multiple large-scale Open Graph Benchmark (OGB) datasets.
-It demonstrates exceptional results on the molecular property prediction dataset PCQM4Mv2 and the protein-protein interaction dataset ogbl-ppa. 
+It demonstrates exceptional results on the molecular property prediction dataset PCQM4Mv2 and the protein-protein interaction dataset ogbl-ppa.
 Notably, generative pretraining enables scaling GraphGPT to 2 billion parameters while maintaining performance gains — a breakthrough that overcomes the scalability
 limitations of traditional Graph Neural Networks (GNNs) and prior graph transformers (GTs).
-To advance research in graph foundation models and facilitate scientific discovery in chemistry, materials science, and related fields, 
+To advance research in graph foundation models and facilitate scientific discovery in chemistry, materials science, and related fields,
 we will release the [source code](https://github.com/alibaba/graph-gpt) and pre-trained [checkpoints](https://www.modelscope.cn/organization/Alibaba-DT).
 
 ### Graph to Sequences
@@ -150,7 +150,7 @@ cyclically.
 
 <img src="pic/serializing.png" width="100%" height="100%" />
 
-Assume the graph has one node attributes and one edge attributes, and then the `short`, `long` and `prolong` method 
+Assume the graph has one node attributes and one edge attributes, and then the `short`, `long` and `prolong` method
 are shown above.
 
 [//]: # (attaches the attributes)

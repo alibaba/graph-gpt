@@ -18,8 +18,11 @@ class GraphLevelStrategy(TaskPreparationStrategy):
         len_extended_tokens = 0
         if "embed" in in_dict:
             import numpy as np
+
             dim = len(in_dict["embed"][0])
-            extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
+            extended_embed = np.zeros(
+                (len_extended_tokens, dim), dtype=np.float32
+            ).tolist()
             in_dict["embed"].extend(extended_embed)
             assert len(in_dict["embed"]) == len(in_dict["input_ids"])
 
@@ -48,7 +51,9 @@ class GraphLevelStrategy(TaskPreparationStrategy):
         edge_mask = get_mask_of_raw_seq(edge_seq, mask_type="random")
         edge_mask = edge_mask * (np.array(edge_seq) > 0).all(axis=-1)
         node_type = np.vstack([node_idx_clip, node_mask, node_idx, edge_mask]).T
-        in_dict["input_ids"] = np.hstack([np.array(in_dict["input_ids"]), node_type]).tolist()
+        in_dict["input_ids"] = np.hstack(
+            [np.array(in_dict["input_ids"]), node_type]
+        ).tolist()
         return in_dict
 
 
@@ -71,6 +76,7 @@ class EdgeLevelStrategy(TaskPreparationStrategy):
         ls_src_dst = [tgt_edge_src_token_id, tgt_edge_dst_token_id]
         if not tgt_edge_attr_token_id:
             import random
+
             random.shuffle(ls_src_dst)
 
         # Flatten if needed
@@ -91,12 +97,18 @@ class EdgeLevelStrategy(TaskPreparationStrategy):
                 assert len(ls_extend_tokens) == 2
                 default_edge_attr_id = gtokenizer.get_default_edge_attr_id()
                 assert len(default_edge_attr_id) == edge_dim
-                ls_extend_tokens[0] = ls_extend_tokens[0][:-edge_dim] + list(default_edge_attr_id)
+                ls_extend_tokens[0] = ls_extend_tokens[0][:-edge_dim] + list(
+                    default_edge_attr_id
+                )
                 if tgt_edge_attr_token_id:
                     assert len(tgt_edge_attr_token_id) == edge_dim
-                    ls_extend_tokens[1] = ls_extend_tokens[1][:-edge_dim] + list(tgt_edge_attr_token_id)
+                    ls_extend_tokens[1] = ls_extend_tokens[1][:-edge_dim] + list(
+                        tgt_edge_attr_token_id
+                    )
                 else:
-                    ls_extend_tokens[1] = ls_extend_tokens[1][:-edge_dim] + list(default_edge_attr_id)
+                    ls_extend_tokens[1] = ls_extend_tokens[1][:-edge_dim] + list(
+                        default_edge_attr_id
+                    )
 
             # Handle embeddings
             if "embed" in in_dict:
@@ -104,7 +116,9 @@ class EdgeLevelStrategy(TaskPreparationStrategy):
                 dict_emb_mapping = {
                     x[0]: y for x, y in zip(in_dict["input_ids"], in_dict["embed"])
                 }
-                ls_extend_emb = [list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens]
+                ls_extend_emb = [
+                    list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens
+                ]
 
         # Extend input dict
         in_dict = self._extend_input_dict(in_dict, ls_extend_tokens)
@@ -156,7 +170,9 @@ class NodeLevelStrategy(TaskPreparationStrategy):
                 assert len(ls_extend_tokens) == 1
                 default_edge_attr_id = gtokenizer.get_default_edge_attr_id()
                 assert len(default_edge_attr_id) == edge_dim
-                ls_extend_tokens[0] = ls_extend_tokens[0][:-edge_dim] + list(default_edge_attr_id)
+                ls_extend_tokens[0] = ls_extend_tokens[0][:-edge_dim] + list(
+                    default_edge_attr_id
+                )
 
             # Handle embeddings
             if "embed" in in_dict:
@@ -164,7 +180,9 @@ class NodeLevelStrategy(TaskPreparationStrategy):
                 dict_emb_mapping = {
                     x[0]: y for x, y in zip(in_dict["input_ids"], in_dict["embed"])
                 }
-                ls_extend_emb = [list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens]
+                ls_extend_emb = [
+                    list(dict_emb_mapping[x]) for x in raw_ls_extend_tokens
+                ]
 
         # Extend input dict
         in_dict = self._extend_input_dict(in_dict, ls_extend_tokens)
@@ -207,7 +225,9 @@ class NodeV2Strategy(TaskPreparationStrategy):
 
         assert len(tgt_node_token_id) == len(nodev2_labels)
         mapping = dict(zip(tgt_node_token_id, nodev2_labels))
-        mapping2raw_node_idx = dict(zip(tgt_node_token_id, list(range(len(nodev2_labels)))))
+        mapping2raw_node_idx = dict(
+            zip(tgt_node_token_id, list(range(len(nodev2_labels))))
+        )
 
         # Create nodev2 labels and raw node indices
         if isinstance(in_dict["input_ids"][0], int):
@@ -231,10 +251,13 @@ class NodeV2Strategy(TaskPreparationStrategy):
         permute_label = gtokenizer.kwargs.get("permute_label", True)
 
         if loss_type == "token_ce_intra":
-            reserved_semantics_tokens = gtokenizer.config["semantics"]["common"].get("reserved_token", [])
+            reserved_semantics_tokens = gtokenizer.config["semantics"]["common"].get(
+                "reserved_token", []
+            )
             assert len(reserved_semantics_tokens) >= num_labels
             if permute_label:
                 import random
+
                 random.shuffle(reserved_semantics_tokens)
             in_dict["cls_idx"] = [len(in_dict["input_ids"])]
             ls_extend_tokens = [

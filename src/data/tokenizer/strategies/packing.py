@@ -50,7 +50,9 @@ class SequencePacker:
         """
         ls_tokens = list(token_res.ls_tokens)
         ls_labels = list(token_res.ls_labels)
-        ls_embed = list(token_res.ls_embed) if token_res.ls_embed else token_res.ls_embed
+        ls_embed = (
+            list(token_res.ls_embed) if token_res.ls_embed else token_res.ls_embed
+        )
 
         token_components = self._get_token_components(ls_tokens)
         token_len = len(ls_tokens) + 1

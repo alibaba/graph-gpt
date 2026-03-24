@@ -6,7 +6,6 @@ parsed_torch_version_base = version.parse(version.parse(torch.__version__).base_
 is_torch_greater_or_equal_than_1_13 = parsed_torch_version_base >= version.parse("1.13")
 
 
-
 # refer to: `transformers/modeling_attn_mask_utils.py::_prepare_4d_attention_mask`
 # @ transformers==4.36.2
 def _prepare_4d_attention_mask(

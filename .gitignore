@@ -8,6 +8,7 @@
 .ipynb_checkpoints/
 .idea/
 .qoder/
+.vscode/
 outputs/
 /model.tar.gz
 src/__pycache__/

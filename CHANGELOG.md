@@ -71,7 +71,7 @@ Consolidated duplicated training logic between `train_pretrain.py` (458 lines) a
 
 ### Model
 - Refactor model architectures
-- Release 4 checkpoints for the PCQM4M-v2 dataset in [ModelScope](https://www.modelscope.cn/organization/Alibaba-DT) 
+- Release 4 checkpoints for the PCQM4M-v2 dataset in [ModelScope](https://www.modelscope.cn/organization/Alibaba-DT)
 
 ### Other
 - Code refactoring.

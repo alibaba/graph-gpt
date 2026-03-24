@@ -124,7 +124,7 @@ def inspect_tokenization_results(
         token_res.ls_labels = labels
         token_res.ls_embed = ls_embed
         token_res.ls_len = ls_len
-        
+
         # Use task_preparer directly if available
         if gtokenizer.task_preparer is not None:
             inputs = gtokenizer.task_preparer.prepare(

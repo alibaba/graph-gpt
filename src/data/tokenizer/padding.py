@@ -11,7 +11,9 @@ def _merge_two_ls(ls_main, ls_side, side="left"):
 def _get_batch_seq_len(ls_seq_len, pad_to_multiple_of, max_length):
     if pad_to_multiple_of is None:
         batch_seq_len = max_length
-    elif len(ls_seq_len) == 1:  # single sequence -> packed multiple samples => NO padding
+    elif (
+        len(ls_seq_len) == 1
+    ):  # single sequence -> packed multiple samples => NO padding
         batch_seq_len = max(ls_seq_len)
     else:
         max_seq_len = max(ls_seq_len)

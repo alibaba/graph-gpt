@@ -157,7 +157,7 @@ class TrainingPipeline:
             )
         self.model = self.mode.dict_models[self.model_cfg.model_type](self.config)
         # For PCQM4M-v2 dataset: propagate dict_bounds to model
-        train_ds = getattr(self.mode, '_train_dataset_for_bounds', None)
+        train_ds = getattr(self.mode, "_train_dataset_for_bounds", None)
         if train_ds is not None and hasattr(train_ds, "dict_bounds"):
             self.model.dict_bounds = train_ds.dict_bounds
         self.model.gradient_checkpointing_enable()

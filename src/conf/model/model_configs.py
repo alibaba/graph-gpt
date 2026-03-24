@@ -289,8 +289,12 @@ class GraphGPTModelConfig:
     graph_input: GraphInputConfig = field(default_factory=GraphInputConfig)
     geometric_input: GeometricInputConfig = field(default_factory=GeometricInputConfig)
     pt_head: PretrainingHeadConfig = field(default_factory=PretrainingHeadConfig)
-    pos_pt_head: PositionPretrainingConfig = field(default_factory=PositionPretrainingConfig)
-    denoise_head: DenoisingRegressionConfig = field(default_factory=DenoisingRegressionConfig)
+    pos_pt_head: PositionPretrainingConfig = field(
+        default_factory=PositionPretrainingConfig
+    )
+    denoise_head: DenoisingRegressionConfig = field(
+        default_factory=DenoisingRegressionConfig
+    )
     ft_head: FinetuningHeadConfig = field(default_factory=FinetuningHeadConfig)
 
     # -------------------------------------------------------------------

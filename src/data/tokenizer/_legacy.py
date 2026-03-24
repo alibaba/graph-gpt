@@ -38,4 +38,3 @@ from .padding import (  # noqa: F401
     _get_batch_seq_len,
     get_input_dict_from_seq_tokens_id,
 )
-

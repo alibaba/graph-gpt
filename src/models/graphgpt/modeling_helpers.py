@@ -30,7 +30,10 @@ from . import utils_graphgpt
 from src.utils.loss_utils import _dist_infonce
 from src.utils.mol_utils import discrete_pos
 from src.utils.flex_attn_utils import build_flex_block_mask
-from src.utils.attn_mask_utils import _prepare_4d_attention_mask, is_torch_greater_or_equal_than_1_13
+from src.utils.attn_mask_utils import (
+    _prepare_4d_attention_mask,
+    is_torch_greater_or_equal_than_1_13,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -44,6 +47,7 @@ if is_torch_fx_available():
         import torch.fx
 
     _prepare_4d_attention_mask = torch.fx.wrap(_prepare_4d_attention_mask)
+
 
 # --------------------------------------------------------
 # flex attention with dropout
@@ -77,13 +81,19 @@ def get_flex_dropout_mod(p: float, training: bool = True, device="cuda"):
         """
         # 1. 深度混合输入特征
         # 使用不同的质数因子，并增加位移，防止低位特征堆叠
-        h_val = (seed ^ (b * 0x27d4eb2d) ^ (h * 0x37518f67) ^ (q_idx * 0x61c88647) ^ (kv_idx * 0x9e3779b1))
+        h_val = (
+            seed
+            ^ (b * 0x27D4EB2D)
+            ^ (h * 0x37518F67)
+            ^ (q_idx * 0x61C88647)
+            ^ (kv_idx * 0x9E3779B1)
+        )
 
         # 2. MurmurHash3 终结器 (Finalizer) 逻辑
         # 第一波：混合
-        h_val = (h_val ^ (h_val >> 16)) * 0x85ebca6b
+        h_val = (h_val ^ (h_val >> 16)) * 0x85EBCA6B
         # 第二波：进一步打乱，消除第一波可能留下的规律性
-        h_val = (h_val ^ (h_val >> 13)) * 0xc2b2ae35
+        h_val = (h_val ^ (h_val >> 13)) * 0xC2B2AE35
         # 第三波：最终雪崩处理
         h_val = (h_val ^ (h_val >> 16)) & 0x7FFFFFFF
 
@@ -92,6 +102,7 @@ def get_flex_dropout_mod(p: float, training: bool = True, device="cuda"):
         return torch.where(h_val < threshold, score, NEG_INF)
 
     return dropout_score_mod
+
 
 # ---------------------------------------------------------------------------
 # Custom flex_attention forward: replaces transformers' flex_attention_forward
@@ -117,11 +128,20 @@ except (ImportError, AttributeError):
 # ===========================================================================
 # A. Attention mask utilities
 # ===========================================================================
-def _update_causal_mask(self, attention_mask, input_tensor, num_heads,
-                        *, sample_lens=None, split_lens=None, attn_modes=None, **kwargs):
+def _update_causal_mask(
+    self,
+    attention_mask,
+    input_tensor,
+    num_heads,
+    *,
+    sample_lens=None,
+    split_lens=None,
+    attn_modes=None,
+    **kwargs,
+):
     # --- NEW: split_lens/attn_modes primary path ---
-    attn_impl = getattr(self.config, '_attn_implementation', 'sdpa')
-    if (attn_impl == 'flex_attention') and self.training:
+    attn_impl = getattr(self.config, "_attn_implementation", "sdpa")
+    if (attn_impl == "flex_attention") and self.training:
         assert sample_lens is not None
         assert split_lens is not None
         assert attn_modes is not None
@@ -129,7 +149,9 @@ def _update_causal_mask(self, attention_mask, input_tensor, num_heads,
             num_heads, sample_lens, split_lens, attn_modes, attention_mask, input_tensor
         )
     else:
-        return _prepare_4d_attention_mask(attention_mask, input_tensor.shape[:2], input_tensor, None)
+        return _prepare_4d_attention_mask(
+            attention_mask, input_tensor.shape[:2], input_tensor, None
+        )
 
 
 # ===========================================================================

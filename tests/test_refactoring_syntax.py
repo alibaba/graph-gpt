@@ -80,7 +80,10 @@ class TestClassStructure:
                 for item in node.body:
                     if isinstance(item, ast.FunctionDef):
                         for decorator in item.decorator_list:
-                            if isinstance(decorator, ast.Name) and decorator.id == "abstractmethod":
+                            if (
+                                isinstance(decorator, ast.Name)
+                                and decorator.id == "abstractmethod"
+                            ):
                                 has_abstract_method = True
                                 break
                 assert has_abstract_method, "BaseTokenizer should have abstract methods"
@@ -96,7 +99,9 @@ class TestClassStructure:
             if isinstance(node, ast.ClassDef) and node.name == "GSTTokenizer":
                 found_gst = True
                 bases = [isinstance(b, ast.Name) and b.id for b in node.bases]
-                assert "BaseTokenizer" in bases, "GSTTokenizer should inherit from BaseTokenizer"
+                assert (
+                    "BaseTokenizer" in bases
+                ), "GSTTokenizer should inherit from BaseTokenizer"
 
         assert found_gst, "GSTTokenizer class not found"
 
@@ -109,7 +114,9 @@ class TestClassStructure:
             if isinstance(node, ast.ClassDef) and node.name == "StackedGSTTokenizer":
                 found_stacked = True
                 bases = [isinstance(b, ast.Name) and b.id for b in node.bases]
-                assert "BaseTokenizer" in bases, "StackedGSTTokenizer should inherit from BaseTokenizer"
+                assert (
+                    "BaseTokenizer" in bases
+                ), "StackedGSTTokenizer should inherit from BaseTokenizer"
 
         assert found_stacked, "StackedGSTTokenizer class not found"
 
@@ -135,7 +142,9 @@ class TestClassStructure:
             if isinstance(node, ast.ClassDef) and node.name == "FlatPaddingStrategy":
                 found = True
                 bases = [isinstance(b, ast.Name) and b.id for b in node.bases]
-                assert "PaddingStrategy" in bases, "FlatPaddingStrategy should inherit from PaddingStrategy"
+                assert (
+                    "PaddingStrategy" in bases
+                ), "FlatPaddingStrategy should inherit from PaddingStrategy"
 
         assert found, "FlatPaddingStrategy class not found"
 
@@ -148,7 +157,9 @@ class TestClassStructure:
             if isinstance(node, ast.ClassDef) and node.name == "StackedPaddingStrategy":
                 found = True
                 bases = [isinstance(b, ast.Name) and b.id for b in node.bases]
-                assert "PaddingStrategy" in bases, "StackedPaddingStrategy should inherit from PaddingStrategy"
+                assert (
+                    "PaddingStrategy" in bases
+                ), "StackedPaddingStrategy should inherit from PaddingStrategy"
 
         assert found, "StackedPaddingStrategy class not found"
 
@@ -158,7 +169,10 @@ class TestClassStructure:
 
         found = False
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == "TaskPreparationStrategy":
+            if (
+                isinstance(node, ast.ClassDef)
+                and node.name == "TaskPreparationStrategy"
+            ):
                 found = True
                 bases = [isinstance(b, ast.Name) and b.id for b in node.bases]
                 assert "ABC" in bases, "TaskPreparationStrategy should inherit from ABC"
@@ -173,7 +187,10 @@ class TestClassStructure:
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id == "TASK_STRATEGY_MAP":
+                    if (
+                        isinstance(target, ast.Name)
+                        and target.id == "TASK_STRATEGY_MAP"
+                    ):
                         found_map = True
 
         assert found_map, "TASK_STRATEGY_MAP not found"
@@ -186,19 +203,25 @@ class TestCompositionPattern:
         with open("src/data/tokenizer/base.py") as f:
             content = f.read()
 
-        assert "padding_strategy" in content, "BaseTokenizer should have padding_strategy attribute"
+        assert (
+            "padding_strategy" in content
+        ), "BaseTokenizer should have padding_strategy attribute"
 
     def test_base_tokenizer_has_task_preparer_attr(self):
         with open("src/data/tokenizer/base.py") as f:
             content = f.read()
 
-        assert "task_preparer" in content, "BaseTokenizer should have task_preparer attribute"
+        assert (
+            "task_preparer" in content
+        ), "BaseTokenizer should have task_preparer attribute"
 
     def test_base_tokenizer_has_sequence_packer_attr(self):
         with open("src/data/tokenizer/base.py") as f:
             content = f.read()
 
-        assert "sequence_packer" in content, "BaseTokenizer should have sequence_packer attribute"
+        assert (
+            "sequence_packer" in content
+        ), "BaseTokenizer should have sequence_packer attribute"
 
 
 class TestBackwardCompatibility:

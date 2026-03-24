@@ -171,9 +171,7 @@ class TestGetInputDictFromSeqTokensId:
         from src.data.tokenizer import get_input_dict_from_seq_tokens_id
 
         seq_tokens_id = [1, 2, 3, 4, 5]
-        result = get_input_dict_from_seq_tokens_id(
-            seq_tokens_id, None, set(), -100
-        )
+        result = get_input_dict_from_seq_tokens_id(seq_tokens_id, None, set(), -100)
         assert result["input_ids"] == [1, 2, 3, 4]
         assert result["labels"] == [2, 3, 4, 5]
 
@@ -195,7 +193,9 @@ class TestPrepareInputsRegistration:
         ]
         for task_type in known_types:
             func = get_inputs_preparation_func(task_type)
-            assert func is not None, f"No registered function for task type '{task_type}'"
+            assert (
+                func is not None
+            ), f"No registered function for task type '{task_type}'"
             assert callable(func)
 
     def test_unknown_task_type_returns_none(self):

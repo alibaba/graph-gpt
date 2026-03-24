@@ -9,7 +9,12 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
 
     def prepare(self, in_dict, token_res, graph, gtokenizer):
         """Prepare inputs for MLM pre-training."""
-        from ...masking import _get_mask_ratio, _mask_input_ids, _mask_stacked_input_ids_v2, _pad_stacked_targets
+        from ...masking import (
+            _get_mask_ratio,
+            _mask_input_ids,
+            _mask_stacked_input_ids_v2,
+            _pad_stacked_targets,
+        )
 
         ls_len = token_res.ls_len or [len(in_dict["input_ids"])]
 
@@ -23,8 +28,12 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
 
         # Handle ensemble datasets
         if len(gtokenizer.config.get("ensemble_datasets", [])) >= 2:
-            assert gtokenizer.sequence_packer is None, "NOT implemented for packed sequences"
-            reserved_semantics_token = gtokenizer.config["semantics"]["common"].get("reserved_token", [])[graph.idx_of_ds]
+            assert (
+                gtokenizer.sequence_packer is None
+            ), "NOT implemented for packed sequences"
+            reserved_semantics_token = gtokenizer.config["semantics"]["common"].get(
+                "reserved_token", []
+            )[graph.idx_of_ds]
             token_id = gtokenizer.vocab_map[reserved_semantics_token]
             ls_extend_tokens = [token_id]
             inputs_instance = input_ids[0]
@@ -93,7 +102,10 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
 
         # Add weights if configured
         if hasattr(gtokenizer, "train_cfg") and gtokenizer.train_cfg:
-            if hasattr(gtokenizer.train_cfg, "pretrain_mlm") and gtokenizer.train_cfg.pretrain_mlm.dlm_wgt:
+            if (
+                hasattr(gtokenizer.train_cfg, "pretrain_mlm")
+                and gtokenizer.train_cfg.pretrain_mlm.dlm_wgt
+            ):
                 in_dict["wgt"] = wgts
 
         # Handle "long" stack method
@@ -136,13 +148,17 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
         # Handle embeddings
         if "embed" in in_dict:
             dim = len(in_dict["embed"][0])
-            extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
+            extended_embed = np.zeros(
+                (len_extended_tokens, dim), dtype=np.float32
+            ).tolist()
             in_dict["embed"].extend(extended_embed)
             assert len(in_dict["embed"]) == len(in_dict["input_ids"])
 
         return in_dict
 
-    def _add_gsum_tokens_for_cl(self, input_ids, labels_mask, gtokenizer, len_extended_tokens):
+    def _add_gsum_tokens_for_cl(
+        self, input_ids, labels_mask, gtokenizer, len_extended_tokens
+    ):
         """Add gsum tokens for contrastive learning."""
         special_token_id = gtokenizer.get_gsum_token_id()
         ls_extend_tokens = [special_token_id]
@@ -187,7 +203,9 @@ class PretrainCoordStrategy(TaskPreparationStrategy):
         # Handle embeddings
         if "embed" in in_dict:
             dim = len(in_dict["embed"][0])
-            extended_embed = np.zeros((len_extended_tokens, dim), dtype=np.float32).tolist()
+            extended_embed = np.zeros(
+                (len_extended_tokens, dim), dtype=np.float32
+            ).tolist()
             in_dict["embed"].extend(extended_embed)
             assert len(in_dict["embed"]) == len(in_dict["input_ids"])
 
@@ -204,7 +222,9 @@ class PretrainCoordStrategy(TaskPreparationStrategy):
         in_dict["attn_modes"] = ["full"]
         return in_dict
 
-    def _attach_node_mask_to_inputs(self, ls_raw_node_idx, len_extended_tokens, input_ids):
+    def _attach_node_mask_to_inputs(
+        self, ls_raw_node_idx, len_extended_tokens, input_ids
+    ):
         """Attach node mask information to input IDs."""
         from ...masking import get_mask_of_raw_seq
         import numpy as np

@@ -43,9 +43,14 @@ from transformers.modeling_rope_utils import dynamic_rope_update
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.modeling_utils import AttentionInterface
 from transformers.integrations.sdpa_attention import sdpa_attention_forward
-from src.models.graphgpt.modeling_helpers import _compiled_flex_attention, get_flex_dropout_mod
+from src.models.graphgpt.modeling_helpers import (
+    _compiled_flex_attention,
+    get_flex_dropout_mod,
+)
 
-AttentionInterface.register("flex_attention", sdpa_attention_forward)  # overwrite so that training with flex and valid with sdpa
+AttentionInterface.register(
+    "flex_attention", sdpa_attention_forward
+)  # overwrite so that training with flex and valid with sdpa
 
 apply_rotary_pos_emb = modeling_llama.apply_rotary_pos_emb
 repeat_kv = modeling_llama.repeat_kv
@@ -62,20 +67,30 @@ class PackedAttention(modeling_llama.LlamaAttention):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,           # [total_tokens, hidden_size]
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],  # packed postion_embedings
-        attention_mask,                        # BlockMask (flex)
+        hidden_states: torch.Tensor,  # [total_tokens, hidden_size]
+        position_embeddings: Tuple[
+            torch.Tensor, torch.Tensor
+        ],  # packed postion_embedings
+        attention_mask,  # BlockMask (flex)
         sample_lens: Optional[List[int]] = None,
         **kwargs,
     ) -> torch.Tensor:
         if sample_lens is None:  # batched sequence + SDPA path
-            return super().forward(hidden_states, position_embeddings, attention_mask, **kwargs)
+            return super().forward(
+                hidden_states, position_embeddings, attention_mask, **kwargs
+            )
 
         total_tokens, hidden_size = hidden_states.shape
 
-        query_states = self.q_proj(hidden_states).view(total_tokens, self.config.num_attention_heads, self.head_dim)
-        key_states   = self.k_proj(hidden_states).view(total_tokens, self.config.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(hidden_states).view(total_tokens, self.config.num_key_value_heads, self.head_dim)
+        query_states = self.q_proj(hidden_states).view(
+            total_tokens, self.config.num_attention_heads, self.head_dim
+        )
+        key_states = self.k_proj(hidden_states).view(
+            total_tokens, self.config.num_key_value_heads, self.head_dim
+        )
+        value_states = self.v_proj(hidden_states).view(
+            total_tokens, self.config.num_key_value_heads, self.head_dim
+        )
 
         packed_cos, packed_sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(
@@ -85,19 +100,29 @@ class PackedAttention(modeling_llama.LlamaAttention):
         # flex_attention path: pad to block-aligned length, call, trim
         padded_total = sum(sample_lens)
         pad_size = padded_total - total_tokens
-        q = pad_sequence(query_states.permute(1, 0, 2), pad_size)  # (num_heads, padded, head_dim)
+        q = pad_sequence(
+            query_states.permute(1, 0, 2), pad_size
+        )  # (num_heads, padded, head_dim)
         k = pad_sequence(key_states.permute(1, 0, 2), pad_size)
         v = pad_sequence(value_states.permute(1, 0, 2), pad_size)
         out = _compiled_flex_attention(
-            q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0),
-            enable_gqa=True, block_mask=attention_mask, 
-            score_mod=get_flex_dropout_mod(self.attention_dropout, self.training, hidden_states.device)
+            q.unsqueeze(0),
+            k.unsqueeze(0),
+            v.unsqueeze(0),
+            enable_gqa=True,
+            block_mask=attention_mask,
+            score_mod=get_flex_dropout_mod(
+                self.attention_dropout, self.training, hidden_states.device
+            ),
         )  # (1, num_heads, padded, head_dim)
         attn_output = out[0, :, :total_tokens, :]  # (num_heads, total_tokens, head_dim)
 
         # (num_heads, total_tokens, head_dim) -> (total_tokens, hidden_size)
         attn_output = attn_output.transpose(0, 1).reshape(total_tokens, hidden_size)
-        return self.o_proj(attn_output), None  # None for attn_weights, compatible with LlamaAttention
+        return (
+            self.o_proj(attn_output),
+            None,
+        )  # None for attn_weights, compatible with LlamaAttention
 
 
 class DropPath(BeitDropPath):
@@ -124,13 +149,17 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         self, config: LlamaConfig, layer_idx: int, drop_prob: Optional[float] = None
     ):
         super().__init__()
-        if getattr(config, '_attn_implementation', 'sdpa') == 'flex_attention':
+        if getattr(config, "_attn_implementation", "sdpa") == "flex_attention":
             self.self_attn = PackedAttention(config, layer_idx)
         else:
             self.self_attn = modeling_llama.LlamaAttention(config, layer_idx)
         self.mlp = LlamaMLP(config)
-        self.input_layernorm = modeling_llama.LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = modeling_llama.LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = modeling_llama.LlamaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_attention_layernorm = modeling_llama.LlamaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
         if drop_prob is None:
             drop_prob = config.path_pdrop
@@ -149,9 +178,11 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,          # [bsz, seq, hidden_size] (SDPA) or [total_tokens, hidden_size] (flex)
-        attention_mask,                       # 4D tensor (SDPA) or BlockMask (flex)
-        position_embeddings: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],  # SDPA or Flex
+        hidden_states: torch.Tensor,  # [bsz, seq, hidden_size] (SDPA) or [total_tokens, hidden_size] (flex)
+        attention_mask,  # 4D tensor (SDPA) or BlockMask (flex)
+        position_embeddings: Union[
+            torch.Tensor, Tuple[torch.Tensor, torch.Tensor]
+        ],  # SDPA or Flex
         sample_lens: Optional[List[int]] = None,  # None for SDPA, List[int] for flex
         **kwargs,
     ) -> torch.Tensor:
@@ -181,14 +212,20 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
 
         dpr = np.linspace(0, config.path_pdrop, config.num_hidden_layers)
-        self.layers = nn.ModuleList([
-            LlamaDecoderLayer(config, layer_idx, dpr[layer_idx])
-            for layer_idx in range(config.num_hidden_layers)
-        ])
-        self.norm = modeling_llama.LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.layers = nn.ModuleList(
+            [
+                LlamaDecoderLayer(config, layer_idx, dpr[layer_idx])
+                for layer_idx in range(config.num_hidden_layers)
+            ]
+        )
+        self.norm = modeling_llama.LlamaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
         self.rotary_emb = modeling_llama.LlamaRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
         self.post_init()
@@ -196,10 +233,10 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
     def forward(
         self,
         input_ids=None,
-        attention_mask=None,        # [batch, seq] attention mask (1=valid, 0=pad); blk_mask if `flex_attention`
-        position_ids=None,          # [batch, seq]
-        inputs_embeds=None,         # [batch, seq, hidden_size]
-        sample_lens=None,           # List[List[int]] 1 sample per batch, or None
+        attention_mask=None,  # [batch, seq] attention mask (1=valid, 0=pad); blk_mask if `flex_attention`
+        position_ids=None,  # [batch, seq]
+        inputs_embeds=None,  # [batch, seq, hidden_size]
+        sample_lens=None,  # List[List[int]] 1 sample per batch, or None
         use_cache=None,
         output_attentions=None,
         output_hidden_states=None,
@@ -212,9 +249,13 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
             batch_size = inputs_embeds.size(0)
             assert batch_size == 1, f"batch_size=={batch_size}!=1"
             sample_lens = sample_lens[0]  # List[List[int]] -> List[int]
-            inputs_embeds = inputs_embeds.squeeze(0)  # [1, seq, hidden_size] -> [seq, hidden_size]
+            inputs_embeds = inputs_embeds.squeeze(
+                0
+            )  # [1, seq, hidden_size] -> [seq, hidden_size]
 
-            cos, sin = self.rotary_emb(inputs_embeds, position_ids)  # [seq, hidden_size] & [1, seq]
+            cos, sin = self.rotary_emb(
+                inputs_embeds, position_ids
+            )  # [seq, hidden_size] & [1, seq]
             position_embeddings = (cos.squeeze(0), sin.squeeze(0))
         else:  # batched sequence + SDPA path
             # create position embeddings to be shared across the decoder layers
@@ -222,7 +263,9 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
                 seq_len = inputs_embeds.size(1)
                 position_ids = torch.arange(
                     seq_len, dtype=torch.long, device=inputs_embeds.device
-                ).unsqueeze(0)  # [1, seq]
+                ).unsqueeze(
+                    0
+                )  # [1, seq]
             position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 
         hidden_states = inputs_embeds
@@ -230,8 +273,12 @@ class LlamaModel(modeling_llama.LlamaPreTrainedModel):
         for layer in self.layers:
             if self.gradient_checkpointing and self.training:
                 hidden_states = torch.utils.checkpoint.checkpoint(
-                    layer, hidden_states, attention_mask, position_embeddings, 
-                    sample_lens, use_reentrant=False,
+                    layer,
+                    hidden_states,
+                    attention_mask,
+                    position_embeddings,
+                    sample_lens,
+                    use_reentrant=False,
                 )
             else:
                 hidden_states = layer(

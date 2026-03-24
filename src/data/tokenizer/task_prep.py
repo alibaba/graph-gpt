@@ -52,7 +52,9 @@ def prepare_inputs_for_pretrain_mlm(
         input_ids = in_dict["input_ids"]
         len_extended_tokens = 0
     if len(gtokenizer.config.get("ensemble_datasets", [])) >= 2:
-        assert gtokenizer.sequence_packer is None, "NOT implemented for packed token sequence"
+        assert (
+            gtokenizer.sequence_packer is None
+        ), "NOT implemented for packed token sequence"
         reserved_semantics_token = gtokenizer.get_common_semantics()[graph.idx_of_ds]
         token_id = gtokenizer._map_tokens_to_ids(reserved_semantics_token)
         ls_extend_tokens = [token_id]
@@ -140,7 +142,9 @@ def prepare_inputs_for_pretrain_mlm(
     else:
         lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
         sequence_len = sum(lens)
-        pad_len = gtokenizer.sequence_packer.mpe - sequence_len  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
+        pad_len = (
+            gtokenizer.sequence_packer.mpe - sequence_len
+        )  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
         in_dict["split_lens"] = [int(l) for l in lens] + [pad_len]
         in_dict["sample_lens"] = [int(l) for l in lens] + [pad_len]
         in_dict["attn_modes"] = ["full"] * len(lens) + ["causal"]
@@ -496,9 +500,7 @@ def prepare_inputs_for_node_v2_token_lvl_task(
 # ---------------------------------------------------------------------------
 
 
-def _extend_input_dict(
-    in_dict, ls_extend_tokens, keys=tuple(), vals=tuple()
-):
+def _extend_input_dict(in_dict, ls_extend_tokens, keys=tuple(), vals=tuple()):
     len_extended_tokens = len(ls_extend_tokens)
     inputs_instance = in_dict["input_ids"][0]
     if isinstance(inputs_instance, List):

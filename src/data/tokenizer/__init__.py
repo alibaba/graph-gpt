@@ -109,6 +109,7 @@ def _load_legacy():
     global _legacy_module
     if _legacy_module is None:
         from . import _legacy
+
         _legacy_module = _legacy
     return _legacy_module
 

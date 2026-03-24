@@ -117,10 +117,15 @@ class GSTTokenizer(BaseTokenizer):
             self.config["structure"]["node"]["node_scope"],
             self.config["structure"]["node"].get("cyclic", False),
         )
-        edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(path, graph)
+        edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
+            path, graph
+        )
 
-        node_semantics_mapping, edge_semantics_mapping, graph_semantics_mapping = \
-            get_semantics_raw_node_edge2attr_mapping(path, graph, self.config)
+        (
+            node_semantics_mapping,
+            edge_semantics_mapping,
+            graph_semantics_mapping,
+        ) = get_semantics_raw_node_edge2attr_mapping(path, graph, self.config)
 
         # 3.1 Target node/edge tokens
         tgt_node_token = None
@@ -129,7 +134,9 @@ class GSTTokenizer(BaseTokenizer):
         if hasattr(graph, "root_n_id"):
             if isinstance(graph.root_n_id, int):
                 tgt_node_token = node_structure_mapping[graph.root_n_id]
-            elif isinstance(graph.root_n_id, torch.Tensor) and len(graph.root_n_id) == 2:
+            elif (
+                isinstance(graph.root_n_id, torch.Tensor) and len(graph.root_n_id) == 2
+            ):
                 src, dst = graph.root_n_id.tolist()
                 tgt_edge_src_token = node_structure_mapping[src]
                 tgt_edge_dst_token = node_structure_mapping[dst]
@@ -139,9 +146,13 @@ class GSTTokenizer(BaseTokenizer):
         mask = get_mask_of_raw_seq(raw_seq, self.mask_type)
 
         ls_tokens, _, _ = nx_utils.decorate_node_edge_graph_with_mask(
-            self, raw_seq, mask,
-            node_structure_mapping, edge_structure_mapping,
-            node_semantics_mapping, edge_semantics_mapping,
+            self,
+            raw_seq,
+            mask,
+            node_structure_mapping,
+            edge_structure_mapping,
+            node_semantics_mapping,
+            edge_semantics_mapping,
             graph_semantics_mapping,
             attr_shuffle=self.config["semantics"].get("attr_shuffle", False),
         )
@@ -162,9 +173,17 @@ class GSTTokenizer(BaseTokenizer):
         ls_tokens.extend(ls_struct_tokens)
         ls_labels.extend(ls_struct_labels)
 
-        ls_instruct_tokens, ls_instruct_labels = instruct_tuning_utils.follow_instructions(
-            graph, self.config, node_structure_mapping, edge_structure_mapping,
-            node_semantics_mapping, edge_semantics_mapping, self
+        (
+            ls_instruct_tokens,
+            ls_instruct_labels,
+        ) = instruct_tuning_utils.follow_instructions(
+            graph,
+            self.config,
+            node_structure_mapping,
+            edge_structure_mapping,
+            node_semantics_mapping,
+            edge_semantics_mapping,
+            self,
         )
         ls_tokens.extend(ls_instruct_tokens)
         ls_labels.extend(ls_instruct_labels)
@@ -265,6 +284,7 @@ class StackedGSTTokenizer(BaseTokenizer):
     def get_default_node_attr(self, graph=None):
         if self.default_node_attr is None:
             from .stacking import get_default_semantics_attr_mapping
+
             self.default_node_attr = get_default_semantics_attr_mapping(
                 graph, self.config, "node"
             )
@@ -273,6 +293,7 @@ class StackedGSTTokenizer(BaseTokenizer):
     def get_default_edge_attr(self, graph=None):
         if self.default_edge_attr is None:
             from .stacking import get_default_semantics_attr_mapping
+
             self.default_edge_attr = get_default_semantics_attr_mapping(
                 graph, self.config, "edge"
             )
@@ -287,6 +308,7 @@ class StackedGSTTokenizer(BaseTokenizer):
     def get_default_node_embed(self, graph=None):
         if self.default_node_embed is None:
             from .stacking import get_default_semantics_embed_mapping
+
             self.default_node_embed = get_default_semantics_embed_mapping(
                 graph, self.config, "node"
             )
@@ -295,6 +317,7 @@ class StackedGSTTokenizer(BaseTokenizer):
     def get_default_edge_embed(self, graph=None):
         if self.default_edge_embed is None:
             from .stacking import get_default_semantics_embed_mapping
+
             self.default_edge_embed = get_default_semantics_embed_mapping(
                 graph, self.config, "edge"
             )
@@ -343,6 +366,7 @@ class StackedGSTTokenizer(BaseTokenizer):
             graph.pos = self.DICT_pos_func[self.rotation](graph.pos)
         if hasattr(graph, "rdkit_pos"):
             from ...utils import mol_utils
+
             graph.rdkit_pos = mol_utils.rotate_3d_v3(graph.rdkit_pos)
             graph.pos = torch.hstack([graph.pos, graph.rdkit_pos])
 
@@ -356,10 +380,15 @@ class StackedGSTTokenizer(BaseTokenizer):
             self.config["structure"]["node"]["node_scope"],
             self.config["structure"]["node"].get("cyclic", False),
         )
-        edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(path, graph)
+        edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
+            path, graph
+        )
 
-        node_semantics_mapping, edge_semantics_mapping, graph_semantics_mapping = \
-            get_semantics_raw_node_edge2attr_mapping(path, graph, self.config)
+        (
+            node_semantics_mapping,
+            edge_semantics_mapping,
+            graph_semantics_mapping,
+        ) = get_semantics_raw_node_edge2attr_mapping(path, graph, self.config)
 
         # Add default values for compatibility
         node_structure_mapping[-1] = (self.get_new_node_token(),)
@@ -368,11 +397,15 @@ class StackedGSTTokenizer(BaseTokenizer):
         if node_semantics_mapping["discrete"]:
             node_semantics_mapping["discrete"][-1] = self.get_default_node_attr(graph)
         if edge_semantics_mapping["discrete"]:
-            edge_semantics_mapping["discrete"][(-1, -1)] = self.get_default_edge_attr(graph)
+            edge_semantics_mapping["discrete"][(-1, -1)] = self.get_default_edge_attr(
+                graph
+            )
         if node_semantics_mapping["embed"]:
             node_semantics_mapping["embed"][-1] = self.get_default_node_embed(graph)
         if edge_semantics_mapping["embed"]:
-            edge_semantics_mapping["embed"][(-1, -1)] = self.get_default_edge_embed(graph)
+            edge_semantics_mapping["embed"][(-1, -1)] = self.get_default_edge_embed(
+                graph
+            )
 
         # 3.1 Target tokens
         tgt_node_token = None
@@ -382,7 +415,9 @@ class StackedGSTTokenizer(BaseTokenizer):
         if hasattr(graph, "root_n_id"):
             if isinstance(graph.root_n_id, int):
                 tgt_node_token = node_structure_mapping[graph.root_n_id]
-            elif isinstance(graph.root_n_id, torch.Tensor) and len(graph.root_n_id) == 2:
+            elif (
+                isinstance(graph.root_n_id, torch.Tensor) and len(graph.root_n_id) == 2
+            ):
                 src, dst = graph.root_n_id.tolist()
                 tgt_edge_src_token = node_structure_mapping[src]
                 tgt_edge_dst_token = node_structure_mapping[dst]
@@ -409,8 +444,13 @@ class StackedGSTTokenizer(BaseTokenizer):
             else stack_attr_to_node_and_edge
         )
         ls_tokens, ls_embed, ls_raw_node_idx = stack_func(
-            self, path, node_structure_mapping, edge_structure_mapping,
-            node_semantics_mapping, edge_semantics_mapping, graph_semantics_mapping
+            self,
+            path,
+            node_structure_mapping,
+            edge_structure_mapping,
+            node_semantics_mapping,
+            edge_semantics_mapping,
+            graph_semantics_mapping,
         )
 
         # 6. Add EOS
@@ -425,16 +465,26 @@ class StackedGSTTokenizer(BaseTokenizer):
         ls_labels = ls_tokens[1:] + [[self.get_eos_token()] * token_components]
 
         # 6.2 Instruction tuning
-        ls_instruct_tokens, ls_instruct_labels = instruct_tuning_utils.follow_instructions(
-            graph, self.config, node_structure_mapping, edge_structure_mapping,
-            node_semantics_mapping, edge_semantics_mapping, self
+        (
+            ls_instruct_tokens,
+            ls_instruct_labels,
+        ) = instruct_tuning_utils.follow_instructions(
+            graph,
+            self.config,
+            node_structure_mapping,
+            edge_structure_mapping,
+            node_semantics_mapping,
+            edge_semantics_mapping,
+            self,
         )
         if ls_instruct_tokens:
             ls_tokens.extend(ls_instruct_tokens)
             ls_labels.extend(ls_instruct_labels)
 
         if ls_embed and ls_instruct_tokens:
-            assert False, "NOT implemented when embed inputs is presented with instructions"
+            assert (
+                False
+            ), "NOT implemented when embed inputs is presented with instructions"
 
         return TokenizationOutput(
             ls_tokens=ls_tokens,
@@ -474,7 +524,9 @@ class StackedGSTTokenizer(BaseTokenizer):
         world_identifier = self.config["attr_world_identifier"]
 
         if discrete_attr is not None:
-            share_vocab = self.config["semantics"][node_or_edge].get("share_vocab", False)
+            share_vocab = self.config["semantics"][node_or_edge].get(
+                "share_vocab", False
+            )
             ignored_val = self.config["semantics"][node_or_edge]["ignored_val"]
             tokens = _tokenize_discrete_attr(
                 v.astype(str),

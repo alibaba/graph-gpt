@@ -172,7 +172,9 @@ def init_stacked_feat_agg(self, config, conditional=True):
     self.stacked_feat_agg = StackedFeatAggregation(config)
 
 
-def resolve_forward_defaults(self, output_attentions, output_hidden_states, return_dict):
+def resolve_forward_defaults(
+    self, output_attentions, output_hidden_states, return_dict
+):
     """Resolve None forward() arguments to config defaults and reset position_ids."""
     output_attentions = (
         output_attentions

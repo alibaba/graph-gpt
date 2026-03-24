@@ -144,7 +144,11 @@ class PretrainMode(TrainingMode):
         # 1.3 get train/valid/test sampler
         train_dataset = dataset
         self.pt_sampler = loader_utils.get_pt_train_valid_test_sampler(
-            train_dataset, train_cfg, task_type, data_cfg, read_dataset,
+            train_dataset,
+            train_cfg,
+            task_type,
+            data_cfg,
+            read_dataset,
         )
 
         # 1.4 build vocab
@@ -414,7 +418,9 @@ class PretrainMode(TrainingMode):
                 tables=pipeline.data_cfg.odps.tables,
             ),
         )
-        loader_utils.init_odps_ds_stats(train_cfg, pipeline.train_stats, self.pt_sampler)
+        loader_utils.init_odps_ds_stats(
+            train_cfg, pipeline.train_stats, self.pt_sampler
+        )
 
     # ------------------------------------------------------------------ #
     #  run_training
@@ -467,24 +473,30 @@ class PretrainMode(TrainingMode):
                     train_stats.i = i
                     # ========== 添加打印代码 ===========
                     if i == 0 and epoch == 0:  # 只在第一个 epoch 的第一个 batch 打印
-                        print("\n" + "="*80)
+                        print("\n" + "=" * 80)
                         print("DATALOADER OUTPUT INSPECTION")
-                        print("="*80)
+                        print("=" * 80)
                         for key, value in data.items():
                             if isinstance(value, torch.Tensor) and value.numel() > 0:
                                 print(f"{key}:")
                                 print(f"  shape: {value.shape}")
                                 print(f"  dtype: {value.dtype}")
-                                print(f"  min: {value.min():.4f}, max: {value.max():.4f}")
-                                print(f"  mean: {value.float().mean():.4f}, std: {value.float().std():.4f}")
+                                print(
+                                    f"  min: {value.min():.4f}, max: {value.max():.4f}"
+                                )
+                                print(
+                                    f"  mean: {value.float().mean():.4f}, std: {value.float().std():.4f}"
+                                )
                                 print(f"  value: {value}")
                                 if key == "input_ids":
                                     print(f"  unique values: {value.unique().shape[0]}")
                             elif isinstance(value, (list, tuple)):
-                                print(f"{key}: {type(value).__name__} with {len(value)} items\n{value}")
+                                print(
+                                    f"{key}: {type(value).__name__} with {len(value)} items\n{value}"
+                                )
                             else:
                                 print(f"{key}: {type(value).__name__} = {value}")
-                        print("="*80 + "\n")
+                        print("=" * 80 + "\n")
                     # ===================================
                     training_utils.batch_training(
                         data, model, train_cfg, train_stats, opt_stats
