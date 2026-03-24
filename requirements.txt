@@ -1,6 +1,7 @@
 # refer to: https://stackoverflow.com/questions/61741997/how-to-format-requirements-txt-when-package-source-is-from-specific-websites
 # [warning] When `deepspeed` release new version, different workers might install different versions, and it will cause
 # problems like this:: some worker got stuck at the deepspeed initialization stage, while others are not
+pre-commit
 tensorboardX
 hydra-core>=1.3.2
 omegaconf>=2.3.0

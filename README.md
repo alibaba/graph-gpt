@@ -219,6 +219,7 @@ cd graph-gpt
 pip install -r ./requirements.txt
 pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-2.5.1+cpu.html
 sudo apt-get update && apt-get install -y bc
+pre-commit install
 ```
 
 
