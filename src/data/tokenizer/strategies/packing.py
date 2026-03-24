@@ -48,13 +48,23 @@ class SequencePacker:
         Returns:
             Tuple of (ls_tokens, ls_labels, ls_embed, ls_len)
         """
+        # Pre-allocate lists for better performance
         ls_tokens = list(token_res.ls_tokens)
         ls_labels = list(token_res.ls_labels)
         ls_embed = (
             list(token_res.ls_embed) if token_res.ls_embed else token_res.ls_embed
         )
 
+        # Cache token components to avoid repeated checks
         token_components = self._get_token_components(ls_tokens)
+
+        # Pre-compute separators once (they're constant for all iterations)
+        seps, label_seps, embed_seps = self._create_separators(
+            token_components, ls_embed
+        )
+        seps_len = len(seps)
+
+        # Track current length efficiently
         token_len = len(ls_tokens) + 1
         ls_len = [token_len]
 
@@ -65,13 +75,12 @@ class SequencePacker:
             new_ls_labels = new_token_res.ls_labels
             new_ls_embed = new_token_res.ls_embed
 
-            seps, label_seps, embed_seps = self._create_separators(
-                token_components, ls_embed
-            )
-
-            if token_len + len(seps) + len(new_ls_tokens) >= self.mpe:
+            # Check if we have enough space before extending
+            new_tokens_len = len(new_ls_tokens)
+            if token_len + seps_len + new_tokens_len >= self.mpe:
                 break
 
+            # Batch extend operations for better performance
             ls_tokens.extend(seps)
             ls_tokens.extend(new_ls_tokens)
             ls_labels.extend(label_seps)
@@ -104,9 +113,16 @@ class SequencePacker:
 
     def _get_token_components(self, ls_tokens: List) -> int:
         """Determine if tokens are 1D or 2D (stacked)."""
+        # Cache result to avoid repeated checks
+        if hasattr(self, "_token_components_cache"):
+            return self._token_components_cache
+
         if ls_tokens and isinstance(ls_tokens[0], List):
-            return len(ls_tokens[0])
-        return 0
+            self._token_components_cache = len(ls_tokens[0])
+        else:
+            self._token_components_cache = 0
+
+        return self._token_components_cache
 
     def _create_separators(
         self, token_components: int, ls_embed: Optional[List]
