@@ -91,7 +91,7 @@ class SequencePacker:
                 ls_embed.extend(new_ls_embed)
 
             previous_idx = idx
-            token_len = len(ls_tokens) + 1
+            token_len += seps_len + new_tokens_len
             ls_len.append(token_len)
 
         return ls_tokens, ls_labels, ls_embed, ls_len
