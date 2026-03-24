@@ -168,7 +168,7 @@ def load_from_ckp(
     strict=False,
 ):
     if (len(pretrain_cpt) > 0) and (pretrain_cpt != output_dir):
-        ckp, prev_epoch = misc_utils.get_latest_ckp(pretrain_cpt)
+        ckp, _ = misc_utils.get_latest_ckp(pretrain_cpt)
         model = load_from_ckp_with_try(model, ckp, config, skip_keys, strict)
     return model
 
@@ -250,7 +250,7 @@ def set_train_valid_test_sampler(
             else list(range(len(valid_dataset)))
         )
         random.shuffle(valid_sampler)
-        valid_shuffle, valid_sampler, valid_cnt = set_up_shuffle_and_sampler(
+        _, valid_sampler, valid_cnt = set_up_shuffle_and_sampler(
             valid_dataset, valid_sampler
         )
         valid_sampler = distribute_sampler(valid_sampler, world_size, rank)
@@ -264,7 +264,7 @@ def set_train_valid_test_sampler(
             else list(range(len(test_dataset)))
         )
         random.shuffle(test_sampler)
-        test_shuffle, test_sampler, test_cnt = set_up_shuffle_and_sampler(
+        _, test_sampler, test_cnt = set_up_shuffle_and_sampler(
             test_dataset, test_sampler
         )
         test_sampler = distribute_sampler(test_sampler, world_size, rank)
