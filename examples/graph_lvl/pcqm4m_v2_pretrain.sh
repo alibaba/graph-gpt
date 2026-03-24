@@ -26,7 +26,7 @@ layer_scale_init_val=0
 # iii. training config
 trial=1
 batch_size=256
-pack_tokens=0
+pack_tokens=1
 token_per_sample=20
 max_length=${max_position_embeddings}
 

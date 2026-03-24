@@ -12,12 +12,6 @@ from src.data.tokenizer.types import (  # noqa: F401
     MOL_ENERGY_SCALE,
 )
 
-# Re-export task preparation
-from src.data.tokenizer.task_prep import (  # noqa: F401
-    prepare_inputs_for_task,
-    get_inputs_preparation_func,
-)
-
 # Re-export masking utilities
 from src.data.tokenizer.masking import (  # noqa: F401
     _mask_ids,

@@ -43,10 +43,10 @@ class TestImports:
 
         assert DataCollatorForGST is not None
 
-    def test_import_prepare_inputs_from_utils(self):
-        from src.utils import prepare_inputs_for_task
+    def test_import_get_task_strategy(self):
+        from src.data.tokenizer.strategies.task_prep import get_task_strategy
 
-        assert callable(prepare_inputs_for_task)
+        assert callable(get_task_strategy)
 
     def test_import_constants_from_tokenizer_utils(self):
         from src.utils.tokenizer_utils import MOL_ENERGY_BIN_LEN, MOL_ENERGY_SCALE
@@ -64,11 +64,6 @@ class TestImports:
 
         assert callable(load_vocab)
         assert callable(build_vocab)
-
-    def test_import_get_inputs_preparation_func(self):
-        from src.utils.tokenizer_utils import get_inputs_preparation_func
-
-        assert callable(get_inputs_preparation_func)
 
     def test_import_mask_of_raw_seq(self):
         from src.utils.tokenizer_utils import get_mask_of_raw_seq
@@ -177,10 +172,10 @@ class TestGetInputDictFromSeqTokensId:
 
 
 class TestPrepareInputsRegistration:
-    """Verify that task-type registration works for key task types."""
+    """Verify that task-type strategy registration works for key task types."""
 
     def test_known_task_types(self):
-        from src.utils.tokenizer_utils import get_inputs_preparation_func
+        from src.data.tokenizer.strategies.task_prep import get_task_strategy
 
         known_types = [
             "pretrain",
@@ -192,17 +187,21 @@ class TestPrepareInputsRegistration:
             "nodev2",
         ]
         for task_type in known_types:
-            func = get_inputs_preparation_func(task_type)
+            strategy = get_task_strategy(task_type)
             assert (
-                func is not None
-            ), f"No registered function for task type '{task_type}'"
-            assert callable(func)
+                strategy is not None
+            ), f"No registered strategy for task type '{task_type}'"
+            assert hasattr(strategy, "prepare")
+            assert callable(strategy.prepare)
 
-    def test_unknown_task_type_returns_none(self):
-        from src.utils.tokenizer_utils import get_inputs_preparation_func
+    def test_unknown_task_type_raises_error(self):
+        from src.data.tokenizer.strategies.task_prep import get_task_strategy
 
-        func = get_inputs_preparation_func("nonexistent_task_type_xyz")
-        assert func is None
+        try:
+            get_task_strategy("nonexistent_task_type_xyz")
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "Unknown task type" in str(e)
 
 
 # ---------------------------------------------------------------------------

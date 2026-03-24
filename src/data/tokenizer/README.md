@@ -291,8 +291,7 @@ src/data/tokenizer/
 ├── stacking.py              # Attribute stacking utilities
 ├── graph_encoding.py        # Graph encoding utilities
 ├── masking.py               # Masking utilities
-├── task_prep.py             # Legacy task preparation (kept for compatibility)
-└── strategies/              # New strategy classes
+└── strategies/              # Strategy pattern implementations
     ├── __init__.py
     ├── padding.py
     ├── packing.py

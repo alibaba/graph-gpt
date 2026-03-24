@@ -1,7 +1,118 @@
 """Pre-training task preparation strategies."""
 
 import numpy as np
+from typing import Dict, Iterable, List, Tuple, Union, Optional
 from .base import TaskPreparationStrategy
+from ...masking import (
+    _get_mask_ratio,
+    _get_mask_ratio_batch,
+    _mask_input_ids,
+    _mask_input_ids_unified,
+    _mask_stacked_input_ids_v2,
+    _pad_stacked_targets,
+)
+
+
+def _mask_sequences_fully_vec(
+    input_ids: List,
+    ls_len: List[int],
+    mask_token_id: int,
+    all_vocab_ids: List[int],
+    conf: dict,
+    gtokenizer,
+    mask_token_precent: Tuple[float, float, float],
+    pad_token_id: int,
+    add_eos: bool,
+) -> Tuple[List, List, Optional[List[float]]]:
+    """
+    Fully vectorized masking - no Python loops at all.
+    """
+    # Convert to numpy
+    arr = np.array(input_ids)
+    original_shape = arr.shape
+    total_len = original_shape[0]
+    num_sequences = len(ls_len)
+
+    # Vectorized per-sequence mask ratios
+    seq_mask_ratios, wgts = _get_mask_ratio_batch(conf, gtokenizer, num_sequences)
+
+    # Create per-token mask ratio array using numpy indexing
+    # Build an array mapping each position to its sequence index
+    seq_indices = np.zeros(total_len, dtype=int)
+    prev_end = 0
+    for i, end in enumerate(ls_len):
+        seq_indices[prev_end:end] = i
+        prev_end = end
+
+    # Broadcast sequence-level ratios to token-level: (total_len,)
+    mask_ratio_arr = seq_mask_ratios[seq_indices]
+    if len(original_shape) > 1:  # (total_len,) -> (total_len, 1)
+        mask_ratio_arr = mask_ratio_arr.reshape((total_len, 1))
+
+    # Single vectorized masking call
+    masked_ids, labels_mask = _mask_input_ids_unified(
+        input_ids,
+        mask_token_id,
+        all_vocab_ids,
+        mask_ratio=mask_ratio_arr,
+        mask_token_precent=mask_token_precent,
+        pad_token_id=pad_token_id,
+    )
+
+    return masked_ids, labels_mask, wgts.tolist() if wgts is not None else None
+
+
+def _mask_sequences_looped(
+    input_ids: List,
+    ls_len: List[int],
+    mask_token_id: int,
+    all_vocab_ids: List[int],
+    conf: dict,
+    gtokenizer,
+    mask_token_precent: Tuple[float, float, float],
+    pad_token_id: int,
+    add_eos: bool,
+) -> Tuple[List, List, Optional[List[float]]]:  # slow version
+    new_input_ids, new_labels_mask, wgts = [], [], []
+    idx_left = 0
+    for idx_right in ls_len:
+        _input_ids = input_ids[idx_left:idx_right]
+        idx_left = idx_right
+        curr_mask_ratio, wgt = _get_mask_ratio(conf, gtokenizer)
+        wgts.append(wgt)
+        if isinstance(input_ids[0], Iterable):
+            if add_eos:
+                last_token_id = _input_ids[-1][0]
+                assert (
+                    last_token_id == gtokenizer.get_eos_token_id()
+                ), f"{last_token_id}!={gtokenizer.get_eos_token_id()}\nls_len:{ls_len}\nidx_right:{idx_right},\ninput_ids:{input_ids}\n_input_ids:{_input_ids}"
+            _input_ids, _labels_mask = _mask_stacked_input_ids_v2(
+                _input_ids,
+                mask_token_id,
+                all_vocab_ids,
+                curr_mask_ratio,
+                mask_token_precent=mask_token_precent,
+                pad_token_id=pad_token_id,
+                has_eos=add_eos,
+                stack_method=gtokenizer.stack_method,
+            )
+        else:
+            assert isinstance(input_ids[0], int)
+            last_token_id = _input_ids[-1]
+            assert (
+                last_token_id == gtokenizer.get_eos_token_id()
+            ), f"{last_token_id}!={gtokenizer.get_eos_token_id()}\nls_len:{ls_len}\nidx_right:{idx_right},\ninput_ids:{input_ids}\n_input_ids:{_input_ids}"
+            _input_ids, _labels_mask = _mask_input_ids(
+                _input_ids,
+                mask_token_id,
+                all_vocab_ids,
+                curr_mask_ratio,
+                mask_token_precent,
+                pad_token_id,
+            )
+        new_input_ids.extend(_input_ids)
+        new_labels_mask.extend(_labels_mask)
+    return new_input_ids, new_labels_mask, wgts
 
 
 class PretrainMLMStrategy(TaskPreparationStrategy):
@@ -9,13 +120,6 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
 
     def prepare(self, in_dict, token_res, graph, gtokenizer):
         """Prepare inputs for MLM pre-training."""
-        from ...masking import (
-            _get_mask_ratio,
-            _mask_input_ids,
-            _mask_stacked_input_ids_v2,
-            _pad_stacked_targets,
-        )
-
         ls_len = token_res.ls_len or [len(in_dict["input_ids"])]
 
         add_eos = True
@@ -59,46 +163,18 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
         all_vocab_ids = gtokenizer.get_all_vocab_ids()
 
         # Mask input_ids and generate corresponding labels for training
-        new_input_ids, new_labels_mask, wgts = [], [], []
-        idx_left = 0
-
-        for idx_right in ls_len:
-            _input_ids = input_ids[idx_left:idx_right]
-            idx_left = idx_right
-            curr_mask_ratio, wgt = _get_mask_ratio(conf, gtokenizer)
-            wgts.append(wgt)
-
-            if isinstance(input_ids[0], list):
-                if add_eos:
-                    last_token_id = _input_ids[-1][0]
-                    assert last_token_id == gtokenizer.get_eos_token_id()
-                stack_method = getattr(gtokenizer, "stack_method", "short")
-                _input_ids, _labels_mask = _mask_stacked_input_ids_v2(
-                    _input_ids,
-                    mask_token_id,
-                    all_vocab_ids,
-                    curr_mask_ratio,
-                    mask_token_percent=mask_token_percent,
-                    pad_token_id=pad_token_id,
-                    has_eos=add_eos,
-                    stack_method=stack_method,
-                )
-            else:
-                assert isinstance(input_ids[0], int)
-                last_token_id = _input_ids[-1]
-                assert last_token_id == gtokenizer.get_eos_token_id()
-                _input_ids, _labels_mask = _mask_input_ids(
-                    _input_ids,
-                    mask_token_id,
-                    all_vocab_ids,
-                    curr_mask_ratio,
-                    mask_token_percent,
-                    pad_token_id,
-                )
-            new_input_ids.extend(_input_ids)
-            new_labels_mask.extend(_labels_mask)
-
-        input_ids, labels_mask = new_input_ids, new_labels_mask
+        mask_seq_func = _mask_sequences_fully_vec  # _mask_sequences_looped
+        input_ids, labels_mask, wgts = mask_seq_func(
+            input_ids,
+            ls_len,
+            mask_token_id,
+            all_vocab_ids,
+            conf,
+            gtokenizer,
+            mask_token_percent,
+            pad_token_id,
+            add_eos,
+        )
 
         # Add weights if configured
         if hasattr(gtokenizer, "train_cfg") and gtokenizer.train_cfg:
@@ -130,8 +206,6 @@ class PretrainMLMStrategy(TaskPreparationStrategy):
         # Update attention mask and packed sequence info
         if gtokenizer.sequence_packer is None:
             in_dict["attention_mask"].extend([1] * len_extended_tokens)
-            in_dict["split_lens"] = [len(in_dict["input_ids"])]
-            in_dict["attn_modes"] = ["full"]
         else:
             lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
             sequence_len = sum(lens)
