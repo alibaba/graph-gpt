@@ -27,7 +27,7 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        for i, each_module in enumerate(self.mlp_modules):
+        for each_module in self.mlp_modules:
             x = self.act_fn(x)
             x = self.dropout(x)
             x = each_module(x)

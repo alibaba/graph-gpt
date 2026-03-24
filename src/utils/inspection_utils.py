@@ -36,7 +36,7 @@ def inspect_nodes(dataset):
     ls_nodes_cnt = []
     for paths, _ in dataset:
         path = paths[0]
-        cnt_nodes = max([tgt for src, tgt, scope in path])
+        cnt_nodes = max([tgt for src, tgt, scope in path])  # type: ignore
         ls_nodes_cnt.append(cnt_nodes)
     cnt_max = max(ls_nodes_cnt)
     cnt_95 = np.percentile(ls_nodes_cnt, 95)

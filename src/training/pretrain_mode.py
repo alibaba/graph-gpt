@@ -82,7 +82,6 @@ class PretrainMode(TrainingMode):
     def update_config(self, pipeline):
         train_cfg = pipeline.train_cfg
         optim_cfg = pipeline.optim_cfg
-        sched_cfg = pipeline.sched_cfg
 
         train_cfg.pretrain_mode = True
         train_cfg.do_valid = train_cfg.valid_percent > 0
@@ -371,7 +370,7 @@ class PretrainMode(TrainingMode):
             pipeline.tokenizer_config,
             collator.DataCollatorForGST,
         )
-        acc, triplet = evaluate(model, self.test_loader, "test", train_cfg.do_test)
+        acc, triplet = evaluate(model, self.test_loader, "test", train_cfg.do_test)  # type: ignore
         pipeline.ema_stats.ema_best_res = {"loss": acc} if acc else None
 
         # 4.42 dump ds config and init TB
