@@ -164,14 +164,16 @@ class PretrainMode(TrainingMode):
 
         # 1.51 token packing
         if train_cfg.pack_tokens > 0:
-            gtokenizer.mpe = train_cfg.max_length
-            gtokenizer.dataset = train_dataset
-            gtokenizer.sampler = (
-                tuple(self.pt_sampler.train_sampler)
-                if self.pt_sampler.train_sampler is not None
-                else None
+            gtokenizer.setup_sequence_packing(
+                mpe=train_cfg.max_length,
+                dataset=train_dataset,
+                sampler=(
+                    tuple(self.pt_sampler.train_sampler)
+                    if self.pt_sampler.train_sampler is not None
+                    else None
+                ),
+                random_ratio=train_cfg.pack_tokens,
             )
-            gtokenizer.random_ratio = train_cfg.pack_tokens
             tokens_per_sample = train_cfg.max_length
         else:
             tokens_per_sample = misc_utils.estimate_tokens_per_sample(
@@ -195,13 +197,18 @@ class PretrainMode(TrainingMode):
         # 1.52 inspect tokenization results
         # Temporarily cap mpe for inspection to avoid packing hundreds of
         # thousands of graphs during a diagnostic call (O(n^2) slow).
-        _saved_mpe = gtokenizer.mpe
-        if gtokenizer.mpe is not None:
+        _saved_packer = gtokenizer.sequence_packer
+        if gtokenizer.sequence_packer is not None:
             # Use the *original* (un-packed) max_position_embeddings so we
             # still see a small packing example in the log.
-            gtokenizer.mpe = min(gtokenizer.mpe, 1024)
+            gtokenizer.setup_sequence_packing(
+                mpe=min(gtokenizer.sequence_packer.mpe, 1024),
+                dataset=gtokenizer.dataset,
+                sampler=gtokenizer.sampler,
+                random_ratio=gtokenizer.random_ratio,
+            )
         inspect_tokenization_results(dataset, gtokenizer)
-        gtokenizer.mpe = _saved_mpe
+        gtokenizer.sequence_packer = _saved_packer
         # 1.53 re-init to avoid pickle error
         gtokenizer.dataset = train_dataset if train_cfg.pack_tokens > 0 else None
 

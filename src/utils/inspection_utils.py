@@ -96,8 +96,8 @@ def inspect_tokenization_results(
             f"embed==0:{torch.tensor(token_res.ls_embed)==0 if token_res.ls_embed is not None else None}\n"
         )
         tokens, labels, ls_embed, ls_len = (
-            gtokenizer.pack_token_seq(token_res, idx)
-            if gtokenizer.mpe is not None
+            gtokenizer.sequence_packer.pack(token_res, idx, gtokenizer.tokenize)
+            if gtokenizer.sequence_packer is not None
             else (
                 token_res.ls_tokens,
                 token_res.ls_labels,
@@ -111,7 +111,7 @@ def inspect_tokenization_results(
             f"{torch.tensor(ls_embed) if ls_embed is not None else None}\n"
             f"embed==0:{torch.tensor(ls_embed)==0 if ls_embed is not None else None}\n"
             f"Packed len:\n{pformat(ls_len)}"
-        ) if gtokenizer.mpe is not None else None
+        ) if gtokenizer.sequence_packer is not None else None
         in_dict = gtokenizer.convert_tokens_to_ids(tokens, labels)
         if ls_embed:  # for pretty print purpose ONLY
             in_dict["embed"] = torch.tensor(ls_embed)
@@ -124,11 +124,14 @@ def inspect_tokenization_results(
         token_res.ls_labels = labels
         token_res.ls_embed = ls_embed
         token_res.ls_len = ls_len
-        inputs = gtokenizer.prepare_inputs_for_task(
-            in_dict,
-            graph,
-            token_res=token_res,
-        )
+        
+        # Use task_preparer directly if available
+        if gtokenizer.task_preparer is not None:
+            inputs = gtokenizer.task_preparer.prepare(
+                in_dict, token_res, graph, gtokenizer
+            )
+        else:
+            inputs = in_dict
     elif isinstance(data, Dict):
         inputs = data
     else:

@@ -7,7 +7,10 @@ continues to work without changes.
 """
 
 # Core classes
-from .core import GSTTokenizer, StackedGSTTokenizer, DICT_pos_func  # noqa: F401
+from .core import GSTTokenizer, StackedGSTTokenizer  # noqa: F401
+
+# DICT_pos_func is now a class attribute of StackedGSTTokenizer
+DICT_pos_func = StackedGSTTokenizer.DICT_pos_func
 
 # Submodule re-exports (used by __init__.__getattr__)
 from .graph_encoding import (  # noqa: F401

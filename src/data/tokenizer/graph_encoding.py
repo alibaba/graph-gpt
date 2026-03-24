@@ -3,7 +3,6 @@
 import random
 from typing import Callable, Dict, List
 
-import numpy as np
 from torch_geometric.data import Data
 
 from ...utils import nx_utils

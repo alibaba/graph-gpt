@@ -1,7 +1,7 @@
 """Padding and batch construction utilities."""
 
 import math
-from typing import Dict, List, Set, Union
+from typing import List, Set, Union
 
 
 def _merge_two_ls(ls_main, ls_side, side="left"):

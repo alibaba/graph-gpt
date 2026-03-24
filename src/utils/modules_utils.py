@@ -68,13 +68,20 @@ def set_model_config(cfg: Config, gtokenizer):
             model_config.num_attention_heads,
             model_config.head_dim,
         ) = set_up_model_architect(hidden_size=model_config.hidden_size)
-    # 2. set attention type: causal or bi-directional
+
+    # 2. Auto-configure attn_implementation based on pack_tokens
+    if cfg.training.pack_tokens > 0:
+        model_config.attn_implementation = "flex_attention"
+    else:
+        model_config.attn_implementation = "sdpa"
+
+    # 3. set attention type: causal or bi-directional
     model_config.causal_attention = bool(
         0 if task_type == "pretrain-mlm" else model_config.causal_attention
     )
-    # 3. set some graph input details
+    # 4. set some graph input details
     model_config.pt_head.next_n_token = model_config.graph_input.stacked_feat
-    # 4. tokenization related params
+    # 5. tokenization related params
     model_config.vocab_size = gtokenizer.vocab_size
     model_config.bos_token_id = gtokenizer.get_bos_token_id()
     model_config.eos_token_id = gtokenizer.get_eos_token_id()

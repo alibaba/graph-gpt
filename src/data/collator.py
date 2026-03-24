@@ -62,7 +62,6 @@ class DataCollatorForGST:
     pad_to_multiple_of: Optional[int] = None
     label_pad_token_id: int = -100
     return_tensors: str = "pt"
-    mask_boundary: bool = False
     global_steps: Optional[int] = None
     total_num_steps: Optional[int] = None
     num_workers: Optional[int] = None
@@ -104,7 +103,6 @@ class DataCollatorForGST:
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=return_tensors,
-            mask_boundary=self.mask_boundary,
         )
         # print(f"[worker_id {worker_id}] attr_mask_ratio: {self.tokenizer.attr_mask_ratio}, global_steps: {self.global_steps+worker_id}, features ele shape: {features['input_ids'].shape}")
         # TODO: implement decoding input_ids

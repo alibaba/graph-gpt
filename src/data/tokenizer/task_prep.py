@@ -52,7 +52,7 @@ def prepare_inputs_for_pretrain_mlm(
         input_ids = in_dict["input_ids"]
         len_extended_tokens = 0
     if len(gtokenizer.config.get("ensemble_datasets", [])) >= 2:
-        assert gtokenizer.mpe is None, "NOT implemented for packed token sequence"
+        assert gtokenizer.sequence_packer is None, "NOT implemented for packed token sequence"
         reserved_semantics_token = gtokenizer.get_common_semantics()[graph.idx_of_ds]
         token_id = gtokenizer._map_tokens_to_ids(reserved_semantics_token)
         ls_extend_tokens = [token_id]
@@ -64,9 +64,9 @@ def prepare_inputs_for_pretrain_mlm(
         input_ids.extend(ls_extend_tokens)
         len_extended_tokens += len(ls_extend_tokens)
 
-    # Only update ls_len[-1] if NOT using packed sequences (mpe is None)
-    # For packed sequences, ls_len already accounts for the EOS token from pack_token_seq
-    if gtokenizer.mpe is None:
+    # Only update ls_len[-1] if NOT using packed sequences (sequence_packer is None)
+    # For packed sequences, ls_len already accounts for the EOS token from packing
+    if gtokenizer.sequence_packer is None:
         ls_len[-1] = ls_len[-1] + len_extended_tokens
 
     # 1. set-up parameters for SMTP: scheduled masked token prediction
@@ -135,12 +135,12 @@ def prepare_inputs_for_pretrain_mlm(
         )
     in_dict["input_ids"] = input_ids
     in_dict["labels"] = labels_mask
-    if gtokenizer.mpe is None:
+    if gtokenizer.sequence_packer is None:
         in_dict["attention_mask"].extend([1] * len_extended_tokens)
     else:
         lens = (np.array(ls_len) - np.array([0] + ls_len[:-1])).tolist()
         sequence_len = sum(lens)
-        pad_len = gtokenizer.mpe - sequence_len  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
+        pad_len = gtokenizer.sequence_packer.mpe - sequence_len  # TODO: currently `split_lens` and `sample_lens` are almost the same, shall be changed in the future
         in_dict["split_lens"] = [int(l) for l in lens] + [pad_len]
         in_dict["sample_lens"] = [int(l) for l in lens] + [pad_len]
         in_dict["attn_modes"] = ["full"] * len(lens) + ["causal"]
@@ -191,7 +191,7 @@ def prepare_inputs_for_pretrain_coord(
     input_ids = in_dict["input_ids"] + in_dict["labels"][-1:]  # add eos
     len_extended_tokens = 1
     assert len(gtokenizer.config.get("ensemble_datasets", [])) == 0
-    assert gtokenizer.mpe is None
+    assert gtokenizer.sequence_packer is None
     in_dict["input_ids"] = input_ids
     in_dict["attention_mask"].extend([1] * len_extended_tokens)
     if "embed" in in_dict:

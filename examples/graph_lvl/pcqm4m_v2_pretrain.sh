@@ -15,7 +15,6 @@ model_name="base"  # tiny mini small medium base base24 base48 base64 large xlar
 stack_method="short"
 stacked_feat_agg_method="sum"  # gated|sum
 max_position_embeddings=1024
-attn_implementation="flex_attention"  # sdpa | flex_attention
 
 # ii.a model::dropout & lsi
 attention_dropout=0.1
@@ -27,7 +26,7 @@ layer_scale_init_val=0
 # iii. training config
 trial=1
 batch_size=256
-pack_tokens=1
+pack_tokens=0
 token_per_sample=20
 max_length=${max_position_embeddings}
 
@@ -290,7 +289,6 @@ raw_udf="
   --training.focal_gamma=${focal_gamma}
   --model.model_type='${model_type}'
   --model.max_position_embeddings=${max_position_embeddings}
-  --model.attn_implementation='${attn_implementation}'
   --model.num_hidden_layers=${num_hidden_layers}
   --model.hidden_size=${hidden_size}
   --model.intermediate_size=${intermediate_size}
