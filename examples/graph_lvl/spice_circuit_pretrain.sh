@@ -1,5 +1,7 @@
 #!/bin/bash
 
+env="cpu"  # cpu | gpu
+
 # i. data config
 data_dir="Custom"
 dataset_source="spice-circuit"
@@ -23,8 +25,10 @@ layer_scale_init_val=0
 
 # iii. training config
 trial=1
-pack_tokens=0
 batch_size=128
+pack_tokens=1
+token_per_sample=50  # NOT sure
+max_length=${max_position_embeddings}
 
 # iii.a training::training machines
 workerCount=1
@@ -33,7 +37,7 @@ num_cpus=12
 # iii.b training::schedule
 total_tokens=1e9  # 1e11  1e9
 warmup_tokens=1e8  # 1e9  1e8
-samples_per_saving=1000000
+steps_per_saving=1000
 logging_steps=100
 
 # iii.c training::eval/infer settings
@@ -43,7 +47,7 @@ do_infer=false
 
 # iii.d training::directories
 ds_prefix="spice_circuit"
-mid_dir="202511/"
+mid_dir="202603/"
 pretrain_cpt=""
 
 # iii.e training::optimization config
@@ -56,29 +60,46 @@ use_ema=0
 ## deep-speed config; set it to empty to enable native DDP training
 deepspeed_config="./examples/ds_config2_pt.json"
 
-# iii.f optimization objective
-task_type="pretrain-mlm"  # pretrain  pretrain-mlm
+# iii.f training::optimization objective
+task_type="pretrain-mlm"  # pretrain-cl
 dlm_wgt=false
 focal_gamma=0
 
 # iii.g others
 tot_samples=10000  # tot_samples sampled for evaluating average eulerian path length
 
-## iv. generation config
+# iv. generation config
 do_generation=false
 gen_alg="maskgit_plus"  # origin maskgit_plus topk_margin entropy
 parallel_gen=false  # whether to parallel batch generation: slow when tested in spice-circuit dataset
 #===================================== ABOVE section is task-specific ==================================
 
 #=================== BELOW FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
-#model_name="tiny"
-#batch_size=128
-#workerCount=1
-#num_cpus=4
-#total_tokens=1e9
-#warmup_tokens=1e8
-#pretrain_cpt=""
-#tot_samples=100
+model_name="tiny"
+batch_size=128
+workerCount=1
+num_cpus=4
+total_tokens=1e9
+warmup_tokens=1e8
+pretrain_cpt=""
+tot_samples=100
+
+if [ ${env} = "cpu" ]
+then
+  max_position_embeddings=128
+  pretrain_cpt=""
+  workerCount=1
+  model_name="tiny"
+  batch_size=4
+  num_cpus=2
+  deepspeed_config=""
+  use_ema=0
+  total_tokens=1e6  # 1e11  1e9
+  warmup_tokens=1e5  # 1e9  1e8
+#  valid_percent=0.001
+  pt_eval_only=false
+  tot_samples=100  # num of samples for estimating tokens-per-sample
+fi
 #=================== ABOVE FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
 
 
@@ -87,6 +108,14 @@ parallel_gen=false  # whether to parallel batch generation: slow when tested in 
 #=======================================================================================================================
 #=======================================================================================================================
 #===================================== PT:: BELOW TILL THE END ARE THE SAME FOR ALL DATASETS ===========================
+# Force batch_size=1 when pack_tokens is enabled (required for variable-length packed sequences)
+if (( pack_tokens != 0 ))
+then
+  max_length=$((batch_size * token_per_sample))
+  batch_size=1
+  echo "pack_tokens=${pack_tokens}: forcing batch_size=1"
+fi
+
 if [ "${dlm_wgt}" == "true" ]
 then
   loss_obj="dlm"
@@ -240,6 +269,7 @@ raw_udf="
   --training.task_type='${task_type}'
   --training.batch_size=${batch_size}
   --training.pack_tokens=${pack_tokens}
+  --training.max_length=${max_length}
   --training.num_workers=${num_cpus}
   --training.optimizer.lr=${lr}
   --training.optimizer.weight_decay=${weight_decay}
@@ -249,7 +279,7 @@ raw_udf="
   --training.pretrain_mlm.dlm_wgt=${dlm_wgt}
   --training.schedule.total_tokens=${total_tokens}
   --training.schedule.warmup_tokens=${warmup_tokens}
-  --training.schedule.samples_per_saving=${samples_per_saving}
+  --training.schedule.steps_per_saving=${steps_per_saving}
   --training.schedule.logging_steps=${logging_steps}
   --training.valid_percent=${valid_percent}
   --training.do_generation=${do_generation}
@@ -279,7 +309,12 @@ udf=${udf//--/}
 
 echo ${udf}
 
-deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+if [ ${env} = "cpu" ]
+then
+  python ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+else
+  deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+fi
 
 echo $raw_udf
 echo "Train and evaluation finished"

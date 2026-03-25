@@ -33,11 +33,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated to reflect Enhanced performance considerations with detailed explanations of the new optimization techniques in SequencePacker
-- Added comprehensive documentation of memory allocation reduction through batch extend() operations
-- Enhanced computational efficiency improvements for large datasets
-- Updated performance considerations section with specific optimization techniques
-- Added detailed analysis of SequencePacker's memory-efficient design patterns
+- Updated to document bug fixes in StackedPaddingStrategy padding calculations for improved sequence processing accuracy
+- Enhanced tokenizer's handling of input IDs and labels with improved alignment and validation logic
+- Added comprehensive documentation of sequence processing improvements for better accuracy
+- Updated strategy pattern implementation with enhanced padding calculations
+- Improved error handling and validation in tokenizer utilities
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -54,12 +54,12 @@
 12. [Appendices](#appendices)
 
 ## Introduction
-This document explains the Graph-GPT tokenization support utilities with a focus on the new composition-based architecture featuring the BaseTokenizer abstract foundation and strategy pattern implementation. The system has evolved from a monolithic GSTTokenizer implementation to a modular design that separates concerns through pluggable strategies for padding, sequence packing, and task preparation. It covers tokenizer configuration, special token handling, and sequence encoding/decoding operations with comprehensive strategy composition support.
+This document explains the Graph-GPT tokenization support utilities with a focus on the new composition-based architecture featuring the BaseTokenizer abstract foundation and strategy pattern implementation. The system has evolved from a monolithic GSTTokenizer implementation to a modular design that separates concerns through pluggable strategies for padding, sequence packing, and task preparation. Recent improvements include bug fixes in StackedPaddingStrategy padding calculations and enhanced tokenizer handling of input IDs and labels for better sequence processing accuracy.
 
-**Updated** The tokenization system now uses a composition-based architecture with BaseTokenizer as the abstract foundation and specialized strategy components for different aspects of tokenization, with enhanced performance optimizations in SequencePacker for memory efficiency and computational speed.
+**Updated** The tokenization system now uses a composition-based architecture with BaseTokenizer as the abstract foundation and specialized strategy components for different aspects of tokenization, with enhanced performance optimizations in SequencePacker for memory efficiency and computational speed, plus improved sequence processing accuracy through bug fixes in padding calculations.
 
 ## Project Structure
-The tokenization system is organized around a composition-based architecture with clear separation of concerns through strategy pattern implementation. The system maintains backward compatibility while providing a modern, extensible design with performance optimizations.
+The tokenization system is organized around a composition-based architecture with clear separation of concerns through strategy pattern implementation. The system maintains backward compatibility while providing a modern, extensible design with performance optimizations and improved sequence processing accuracy.
 
 ```mermaid
 graph TB
@@ -128,9 +128,9 @@ COL --> CORE
 - [__init__.py:1-124](file://src/data/tokenizer/__init__.py#L1-L124)
 - [_legacy.py:1-42](file://src/data/tokenizer/_legacy.py#L1-L42)
 - [base.py:1-187](file://src/data/tokenizer/base.py#L1-L187)
-- [core.py:1-545](file://src/data/tokenizer/core.py#L1-L545)
+- [core.py:1-563](file://src/data/tokenizer/core.py#L1-L563)
 - [strategies/__init__.py:1-30](file://src/data/tokenizer/strategies/__init__.py#L1-L30)
-- [strategies/padding.py:1-239](file://src/data/tokenizer/strategies/padding.py#L1-L239)
+- [strategies/padding.py:1-248](file://src/data/tokenizer/strategies/padding.py#L1-L248)
 - [strategies/packing.py:1-144](file://src/data/tokenizer/strategies/packing.py#L1-L144)
 - [strategies/task_prep/base.py:1-83](file://src/data/tokenizer/strategies/task_prep/base.py#L1-L83)
 - [strategies/task_prep/pretrain.py:1-223](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L1-L223)
@@ -140,7 +140,7 @@ COL --> CORE
 - [__init__.py:1-124](file://src/data/tokenizer/__init__.py#L1-L124)
 - [_legacy.py:1-42](file://src/data/tokenizer/_legacy.py#L1-L42)
 - [base.py:1-187](file://src/data/tokenizer/base.py#L1-L187)
-- [core.py:1-545](file://src/data/tokenizer/core.py#L1-L545)
+- [core.py:1-563](file://src/data/tokenizer/core.py#L1-L563)
 - [strategies/__init__.py:1-30](file://src/data/tokenizer/strategies/__init__.py#L1-L30)
 
 ## Core Components
@@ -159,12 +159,12 @@ Key responsibilities:
 - Comprehensive vocabulary management and special token handling
 - Integration with model input preparation and attention mask utilities
 
-**Updated** The system now uses a composition-based architecture with BaseTokenizer as the abstract foundation and strategy pattern for modularity, with enhanced performance optimizations in SequencePacker.
+**Updated** The system now uses a composition-based architecture with BaseTokenizer as the abstract foundation and strategy pattern for modularity, with enhanced performance optimizations in SequencePacker and improved sequence processing accuracy through bug fixes in padding calculations.
 
 **Section sources**
 - [base.py:13-187](file://src/data/tokenizer/base.py#L13-L187)
-- [core.py:13-545](file://src/data/tokenizer/core.py#L13-L545)
-- [strategies/padding.py:9-239](file://src/data/tokenizer/strategies/padding.py#L9-L239)
+- [core.py:13-563](file://src/data/tokenizer/core.py#L13-L563)
+- [strategies/padding.py:9-248](file://src/data/tokenizer/strategies/padding.py#L9-L248)
 - [strategies/packing.py:12-144](file://src/data/tokenizer/strategies/packing.py#L12-L144)
 - [strategies/task_prep/base.py:11-83](file://src/data/tokenizer/strategies/task_prep/base.py#L11-L83)
 
@@ -187,7 +187,7 @@ BT->>BT : __call__(graph)
 BT->>GST : tokenize() (if 1D)
 BT->>SGT : tokenize() (if 2D)
 GST->>PAD : pad_batch() for 1D
-SGT->>PAD : pad_batch() for 2D
+SGT->>PAD : pad_batch() for 2D (with improved calculations)
 GST->>TP : prepare() for task type
 SGT->>TP : prepare() for task type
 TP->>TP : Task-specific preparation
@@ -270,7 +270,7 @@ BaseTokenizer <|-- StackedGSTTokenizer
 
 **Section sources**
 - [base.py:13-187](file://src/data/tokenizer/base.py#L13-L187)
-- [core.py:13-545](file://src/data/tokenizer/core.py#L13-L545)
+- [core.py:13-563](file://src/data/tokenizer/core.py#L13-L563)
 
 ### GSTTokenizer: 1D Tokenization Implementation
 GSTTokenizer implements the BaseTokenizer abstract interface for 1D token sequences:
@@ -305,6 +305,8 @@ Key methods and responsibilities:
 - Sequence packing: setup_sequence_packing() for stacked sequences
 - Integration: works with StackedPaddingStrategy and specialized task preparation strategies
 
+**Updated** The StackedGSTTokenizer now includes improved padding calculations through enhanced StackedPaddingStrategy that properly handles input components and label components for better sequence processing accuracy.
+
 **Section sources**
 - [core.py:198-328](file://src/data/tokenizer/core.py#L198-L328)
 - [core.py:330-448](file://src/data/tokenizer/core.py#L330-L448)
@@ -312,11 +314,16 @@ Key methods and responsibilities:
 ## Strategy Pattern Implementation
 
 ### Padding Strategy Components
-The padding strategy provides flexible sequence padding for different tokenization scenarios:
+The padding strategy provides flexible sequence padding for different tokenization scenarios with enhanced accuracy:
 
 - **FlatPaddingStrategy**: Handles 1D token sequences with standard padding
-- **StackedPaddingStrategy**: Handles 2D stacked token sequences with component-wise padding
+- **StackedPaddingStrategy**: Handles 2D stacked token sequences with component-wise padding and improved calculation accuracy
 - **Flexible Configuration**: Configurable padding side, token IDs, and tensor formats
+
+**Enhanced Accuracy Features**:
+- **Component-wise Padding**: Proper calculation of input_components and label_components ensures accurate padding for 2D sequences
+- **Improved Alignment**: Better handling of input IDs and labels alignment for sequence processing accuracy
+- **Robust Validation**: Enhanced error checking and validation for sequence length consistency
 
 ```mermaid
 classDiagram
@@ -334,7 +341,7 @@ class FlatPaddingStrategy {
 }
 class StackedPaddingStrategy {
 +pad_batch(features, **kwargs)
-+pad_single(feature, pad_to)
++pad_single(feature, pad_to) // Enhanced with improved calculations
 }
 PaddingStrategy <|-- FlatPaddingStrategy
 PaddingStrategy <|-- StackedPaddingStrategy
@@ -346,7 +353,7 @@ PaddingStrategy <|-- StackedPaddingStrategy
 - [strategies/padding.py:141-238](file://src/data/tokenizer/strategies/padding.py#L141-L238)
 
 **Section sources**
-- [strategies/padding.py:1-239](file://src/data/tokenizer/strategies/padding.py#L1-L239)
+- [strategies/padding.py:1-248](file://src/data/tokenizer/strategies/padding.py#L1-L248)
 
 ### Sequence Packing Strategy
 SequencePacker enables efficient training through sequence packing with enhanced performance optimizations:
@@ -479,18 +486,18 @@ COL --> SGT
 - [__init__.py:1-124](file://src/data/tokenizer/__init__.py#L1-L124)
 - [_legacy.py:1-42](file://src/data/tokenizer/_legacy.py#L1-L42)
 - [base.py:1-187](file://src/data/tokenizer/base.py#L1-L187)
-- [core.py:1-545](file://src/data/tokenizer/core.py#L1-L545)
+- [core.py:1-563](file://src/data/tokenizer/core.py#L1-L563)
 - [strategies/__init__.py:1-30](file://src/data/tokenizer/strategies/__init__.py#L1-L30)
 
 **Section sources**
 - [__init__.py:1-124](file://src/data/tokenizer/__init__.py#L1-L124)
 - [_legacy.py:1-42](file://src/data/tokenizer/_legacy.py#L1-L42)
 - [base.py:1-187](file://src/data/tokenizer/base.py#L1-L187)
-- [core.py:1-545](file://src/data/tokenizer/core.py#L1-L545)
+- [core.py:1-563](file://src/data/tokenizer/core.py#L1-L563)
 - [strategies/__init__.py:1-30](file://src/data/tokenizer/strategies/__init__.py#L1-L30)
 
 ## Performance Considerations
-The composition-based architecture provides several performance benefits with enhanced optimizations in SequencePacker:
+The composition-based architecture provides several performance benefits with enhanced optimizations in SequencePacker and improved sequence processing accuracy:
 
 ### Memory Allocation Reduction
 **SequencePacker Optimizations**:
@@ -517,6 +524,8 @@ The composition-based architecture provides several performance benefits with en
 - **Improved Cache Performance**: Pre-computed values and cached results improve CPU cache utilization
 - **Optimized Data Structures**: Efficient list operations and minimal copying during sequence packing
 - **Scalable Memory Usage**: Memory usage scales linearly with sequence length rather than exponentially
+
+**Updated** The system now includes enhanced sequence processing accuracy through improved padding calculations in StackedPaddingStrategy and better handling of input IDs and labels alignment.
 
 **Section sources**
 - [strategies/packing.py:82-97](file://src/data/tokenizer/strategies/packing.py#L82-L97)
@@ -561,7 +570,7 @@ tokenizer = BaseTokenizer(
 )
 ```
 
-**Updated** The migration maintains backward compatibility while providing more flexible strategy composition options with enhanced performance optimizations.
+**Updated** The migration maintains backward compatibility while providing more flexible strategy composition options with enhanced performance optimizations and improved sequence processing accuracy.
 
 **Section sources**
 - [__init__.py:108-122](file://src/data/tokenizer/__init__.py#L108-L122)
@@ -578,8 +587,9 @@ Common issues and resolutions for the new composition-based architecture:
 - **Strategy Configuration**: Configure strategies through BaseTokenizer constructor or setup methods
 - **Custom Strategy Development**: Implement abstract strategy classes from the base strategy modules
 - **Performance Issues**: SequencePacker optimizations provide significant memory and computational improvements for large datasets
+- **Sequence Processing Errors**: Enhanced padding calculations in StackedPaddingStrategy resolve input IDs and labels alignment issues
 
-**Updated** The system now uses a cleaner import structure with proper package organization and comprehensive strategy pattern support, with enhanced performance optimizations in SequencePacker.
+**Updated** The system now uses a cleaner import structure with proper package organization and comprehensive strategy pattern support, with enhanced performance optimizations in SequencePacker and improved sequence processing accuracy through bug fixes in padding calculations.
 
 **Section sources**
 - [__init__.py:116-122](file://src/data/tokenizer/__init__.py#L116-L122)
@@ -591,7 +601,7 @@ The Graph-GPT tokenization system provides a modern, composition-based framework
 
 **Enhanced Performance Features**: The new composition-based architecture with BaseTokenizer foundation provides better separation of concerns, strategy reusability, and extensibility while preserving all functionality from the previous implementation. The SequencePacker component includes significant performance optimizations including batch extend operations, pre-computed separators, and memory-efficient packing algorithms that reduce memory allocation overhead and improve computational efficiency for large datasets.
 
-**Updated** The new composition-based architecture with BaseTokenizer foundation provides better separation of concerns, strategy reusability, and extensibility while preserving all functionality from the previous implementation, with enhanced performance optimizations in SequencePacker for memory efficiency and computational speed.
+**Updated** The new composition-based architecture with BaseTokenizer foundation provides better separation of concerns, strategy reusability, and extensibility while preserving all functionality from the previous implementation, with enhanced performance optimizations in SequencePacker for memory efficiency and computational speed, plus improved sequence processing accuracy through bug fixes in StackedPaddingStrategy padding calculations and enhanced tokenizer handling of input IDs and labels.
 
 ## Appendices
 
@@ -630,6 +640,8 @@ The composition-based architecture with strategy pattern provides:
 - **Testability**: Independent testing of strategy components
 - **Reusability**: Shared strategies across different tokenizer implementations
 - **Performance Optimization**: Strategy-specific optimizations without affecting other components
+
+**Updated** The strategy pattern now includes enhanced sequence processing accuracy through improved padding calculations and better input IDs and labels handling, ensuring more reliable sequence processing for both 1D and 2D tokenization scenarios.
 
 **Section sources**
 - [base.py:13-50](file://src/data/tokenizer/base.py#L13-L50)

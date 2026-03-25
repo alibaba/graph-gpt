@@ -1,5 +1,7 @@
 #!/bin/bash
 
+env="cpu"  # cpu | gpu
+
 # i. data config
 data_dir="Custom"
 dataset_name="spice-circuit"
@@ -49,7 +51,7 @@ save_hidden_states=false  # whether to infer hidden layer stats for downstream t
 
 # iii.d training::directories
 ds_prefix="spice_circuit"
-mid_dir="202511/"
+mid_dir="202603/"
 pretrain_cpt=""
 suffix_pt="_t${trial}"
 
@@ -78,12 +80,27 @@ loss_type=""
 
 
 #=================== BELOW FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
-#model_name="tiny"
-#batch_size=128
-#workerCount=1
-#num_cpus=10
-#pretrain_cpt=""
-#suffix_pt="_no_pt"
+model_name="tiny"
+batch_size=128
+workerCount=1
+num_cpus=10
+pretrain_cpt=""
+suffix_pt="_no_pt"
+
+if [ ${env} = "cpu" ]
+then
+  max_position_embeddings=128
+  pretrain_cpt=""
+  workerCount=1
+  model_name="tiny"
+  batch_size=4
+  num_cpus=2
+  deepspeed_config=""
+  use_ema=false
+  epochs=2
+  epochs_warmup=0.6
+  eval_only=false
+fi
 #=================== ABOVE FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
 
 
@@ -293,7 +310,12 @@ udf=${udf//--/}
 echo ${udf}
 echo ${pretrain_cpt}
 
-deepspeed ./examples/train_supervised.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+if [ ${env} = "cpu" ]
+then
+  python ./examples/train_supervised.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+else
+  deepspeed ./examples/train_supervised.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+fi
 
 echo $raw_udf
 echo "Train and evaluation finished"

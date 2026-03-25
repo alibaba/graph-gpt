@@ -19,7 +19,8 @@
 - [configs/model/base.yaml](file://configs/model/base.yaml)
 - [configs/training/base.yaml](file://configs/training/base.yaml)
 - [src/training/pipeline.py](file://src/training/pipeline.py)
-- [src/utils/flex_attn_utils.py](file://src/utils/flex_attn_utils.py)
+- [src/utils/misc_utils.py](file://src/utils/misc_utils.py)
+- [src/utils/opt_utils.py](file://src/utils/opt_utils.py)
 - [src/models/graphgpt/modeling_helpers.py](file://src/models/graphgpt/modeling_helpers.py)
 - [src/utils/misc_utils.py](file://src/utils/misc_utils.py)
 - [src/training/pretrain_mode.py](file://src/training/pretrain_mode.py)
@@ -31,11 +32,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated PCQM4M-v2 pretraining script documentation to reflect enhanced vectorized masking capabilities with fully vectorized sequence processing
-- Added detailed explanation of the new `_mask_sequences_fully_vec` function and its numpy-based implementation
-- Documented the integration of sequence packing with vectorized masking for improved memory efficiency
-- Enhanced documentation of packed token sequence processing with automatic batch size adjustment
-- Added comprehensive coverage of the new vectorized masking algorithms and their performance benefits
+- Added documentation for the new environment detection system in supervised training scripts
+- Documented automatic parameter adjustment for CPU/GPU environments using the env='cpu'|'gpu' parameter
+- Explained improved training flexibility across different hardware configurations
+- Updated PCQM4M-v2 supervised script documentation to reflect environment-aware execution
+- Added guidance for adapting examples to different hardware setups
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -43,21 +44,22 @@
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+6. [Environment Detection System](#environment-detection-system)
+7. [Dependency Analysis](#dependency-analysis)
+8. [Performance Considerations](#performance-considerations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Conclusion](#conclusion)
+11. [Appendices](#appendices)
 
 ## Introduction
 This document explains the example scripts for Graph-GPT across pre-training and fine-tuning modes, covering graph-level, edge-level, and node-level tasks. It provides a quick-start walkthrough using the Reddit toy example, details for PCQM4M-v2 molecular property prediction, and guidance for PPA protein-protein interaction and other benchmarks. It also documents parameter meanings, configuration modifications, execution workflows, adaptation to custom datasets, and best practices for large-scale runs and monitoring.
 
-**Updated** Recent enhancements include vectorized masking capabilities for improved performance and packed token sequence processing for memory efficiency in large-scale molecular property prediction tasks.
+**Updated** Recent enhancements include an environment detection system that automatically adapts training parameters based on available hardware (CPU vs GPU), providing seamless execution across different computing environments with minimal configuration changes.
 
 ## Project Structure
 The example scripts are organized by task level and dataset:
 - Toy examples: Reddit threads for quick start (graph-level)
-- Graph-level examples: PCQM4M-v2 molecular property prediction with enhanced vectorized masking
+- Graph-level examples: PCQM4M-v2 molecular property prediction with enhanced vectorized masking and environment detection
 - Edge-level examples: PPA protein-protein interaction
 - Node-level examples: OGBN Products
 - Core training entry points: unified Python scripts that accept Hydra-style configuration overrides
@@ -83,6 +85,7 @@ PRE["examples/train_pretrain.py"]
 SV["examples/train_supervised.py"]
 end
 subgraph "Enhanced Features"
+ENV["Environment Detection<br/>Auto Hardware Adaptation"]
 VEC["_mask_sequences_fully_vec<br/>Vectorized Masking"]
 PACK["Sequence Packing<br/>Memory Efficiency"]
 FLEX["Flex Attention<br/>Advanced Masking"]
@@ -99,6 +102,8 @@ CFG --> TOK
 CFG --> MOD
 CFG --> TRN
 TOK -.-> TOK_G
+ENV --> SV
+ENV --> PRE
 VEC --> GL
 PACK --> GL
 FLEX --> GL
@@ -108,7 +113,7 @@ FLEX --> GL
 - [examples/toy_examples/reddit_pretrain.sh:1-257](file://examples/toy_examples/reddit_pretrain.sh#L1-L257)
 - [examples/toy_examples/reddit_supervised.sh:1-300](file://examples/toy_examples/reddit_supervised.sh#L1-L300)
 - [examples/graph_lvl/pcqm4m_v2_pretrain.sh:1-321](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L1-L321)
-- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-300](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L300)
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-322](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L322)
 - [examples/edge_lvl/ppa_pretrain.sh:1-287](file://examples/edge_lvl/ppa_pretrain.sh#L1-L287)
 - [examples/node_lvl/products_pretrain.sh:1-201](file://examples/node_lvl/products_pretrain.sh#L1-L201)
 - [examples/train_pretrain.py:1-19](file://examples/train_pretrain.py#L1-L19)
@@ -148,6 +153,7 @@ Key runtime parameters exposed by example scripts:
 - Model: architecture family and sizing, stacking method, activation, positional embeddings, dropout, layer scale initialization, attention implementation
 - Training: scheduling (tokens/epochs), optimizer hyperparameters, gradient clipping, EMA, logging/save frequency
 - Fine-tuning specifics: task type, problem type, number of labels, loss/metric types, evaluation settings
+- **Environment detection**: automatic hardware adaptation via env='cpu'|'gpu' parameter
 
 **Section sources**
 - [src/training/pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
@@ -166,6 +172,7 @@ The example scripts are thin wrappers around the unified training pipeline. They
 sequenceDiagram
 participant User as "User"
 participant Sh as "Shell Script"
+participant Env as "Env Detector"
 participant Py as "Python Launcher"
 participant Pipe as "TrainingPipeline"
 participant Mode as "PretrainMode/FinetuneMode"
@@ -173,6 +180,8 @@ participant DS as "DeepSpeed/Native"
 participant Vec as "Vectorized Masking"
 participant Pack as "Sequence Packing"
 User->>Sh : "Run example script"
+Sh->>Env : "Check env='cpu'|'gpu'"
+Env-->>Sh : "Configure hardware-specific parameters"
 Sh->>Py : "Invoke train_pretrain.py or train_supervised.py<br/>with tokenization and overrides"
 Py->>Pipe : "@hydra.main(config)"
 Pipe->>Pipe : "_extract_config(), _setup_distributed()"
@@ -246,31 +255,39 @@ Adapting to custom datasets:
 - [configs/tokenization/graph_lvl/reddit.yaml:1-121](file://configs/tokenization/graph_lvl/reddit.yaml#L1-L121)
 
 ### PCQM4M-v2 Molecular Property Prediction
-Purpose: Graph-level pre-training and supervised fine-tuning for molecular property regression with enhanced vectorized masking capabilities.
+Purpose: Graph-level pre-training and supervised fine-tuning for molecular property regression with enhanced vectorized masking capabilities and environment detection system.
 
-**Updated** Recent changes include switching attention implementation from SDPA to flex_attention, adjusting validation settings by setting valid_percent to 0, adding proper arithmetic expansion syntax for bash calculations, and enhancing sequence length configuration with improved parameter naming. The most significant enhancement is the introduction of fully vectorized masking capabilities for improved performance.
+**Updated** Recent changes include the addition of environment detection via the env='cpu'|'gpu' parameter, automatic parameter adjustment for different hardware configurations, and enhanced vectorized masking capabilities for improved performance.
 
 - Pre-training:
   - Script: [examples/graph_lvl/pcqm4m_v2_pretrain.sh:1-321](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L1-L321)
   - Tokenization config: [configs/tokenization/graph_lvl/pcqm4m-v2_2d.yaml:1-114](file://configs/tokenization/graph_lvl/pcqm4m-v2_2d.yaml#L1-L114)
-  - Execution: DeepSpeed or CPU fallback
+  - Execution: DeepSpeed or CPU fallback based on environment detection
   - Key parameters:
     - Data: dataset source, tokenizer class, tokenization config path
     - Model: base-sized architecture, stacking method, positional embeddings, attention implementation
     - Training: total tokens, warmup tokens, saving/logging intervals, dropout, optimizer settings, EMA
     - Generation: optional inference settings
 - Supervised fine-tuning:
-  - Script: [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-300](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L300)
+  - Script: [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-322](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L322)
   - Tokenization config: [configs/tokenization/graph_lvl/pcqm4m-v2.yaml:1-114](file://configs/tokenization/graph_lvl/pcqm4m-v2.yaml#L1-L114)
-  - Execution: DeepSpeed
+  - Execution: Environment-aware execution with automatic hardware adaptation
   - Key parameters:
     - Data: dataset name, tokenizer class
     - Model: base-sized architecture, stacking method, activation, causal attention toggle, positional embeddings
     - Training: epochs, warmup epochs, batch sizes, optimizer settings, EMA, evaluation settings
     - Task head: regression problem type, single label, L1 loss
+    - **Environment detection**: env='cpu'|'gpu' parameter for automatic hardware adaptation
+
+**Enhanced Environment Detection System:**
+The PCQM4M-v2 supervised script now includes an intelligent environment detection system that automatically adapts training parameters based on available hardware:
+
+- **CPU mode (env="cpu")**: Automatically configures reduced model sizes, smaller batch sizes, CPU-only execution, and simplified training parameters
+- **GPU mode (env="gpu")**: Enables full GPU acceleration with DeepSpeed, normal model sizes, and standard training parameters
+- **Automatic parameter adjustment**: Batch size, model size, DeepSpeed configuration, and training schedules are automatically optimized for the detected environment
 
 **Enhanced Vectorized Masking Capabilities:**
-The PCQM4M-v2 pretraining script now features fully vectorized masking with the `_mask_sequences_fully_vec` function, which eliminates Python loops entirely and processes multiple sequences simultaneously using NumPy operations.
+The PCQM4M-v2 pretraining script features fully vectorized masking with the `_mask_sequences_fully_vec` function, which eliminates Python loops entirely and processes multiple sequences simultaneously using NumPy operations.
 
 Key vectorized masking features:
 - **Fully vectorized processing**: No Python loops - all operations performed using NumPy arrays
@@ -280,7 +297,7 @@ Key vectorized masking features:
 - **Performance improvement**: Significant speedup over traditional loop-based masking approaches
 
 **Enhanced Sequence Length Configuration:**
-The PCQM4M-v2 pretraining script now demonstrates the practical implications of the `max_length` parameter, showing how it's calculated as the product of `batch_size` and `token_per_sample`. This replaces the previous `max_position_embeddings` calculation and provides clearer guidance on sequence length configuration for packed token training.
+The PCQM4M-v2 pretraining script demonstrates the practical implications of the `max_length` parameter, showing how it's calculated as the product of `batch_size` and `token_per_sample`. This replaces the previous `max_position_embeddings` calculation and provides clearer guidance on sequence length configuration for packed token training.
 
 Key sequence length configuration details:
 - **max_length calculation**: `max_length=$((batch_size * token_per_sample))` when `pack_tokens` is enabled
@@ -336,7 +353,7 @@ Adapting to custom datasets:
 
 **Section sources**
 - [examples/graph_lvl/pcqm4m_v2_pretrain.sh:1-321](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L1-L321)
-- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-300](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L300)
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-322](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L322)
 - [configs/tokenization/graph_lvl/pcqm4m-v2.yaml:1-114](file://configs/tokenization/graph_lvl/pcqm4m-v2.yaml#L1-L114)
 - [configs/tokenization/graph_lvl/pcqm4m-v2_2d.yaml:1-114](file://configs/tokenization/graph_lvl/pcqm4m-v2_2d.yaml#L1-L114)
 - [src/utils/flex_attn_utils.py:1-289](file://src/utils/flex_attn_utils.py#L1-L289)
@@ -443,6 +460,9 @@ Adapting to custom datasets:
   - num_labels: number of classes or 1 for regression
   - loss_type: loss function choice
   - ft_eval: save_pred, save_hidden_states, epoch_per_eval, k_samplers, true_valid
+- **Environment detection**:
+  - env: 'cpu'|'gpu' parameter for automatic hardware adaptation
+  - Automatic parameter adjustment based on detected environment
 
 **Enhanced Parameter Naming and Sequence Length Configuration:**
 The PCQM4M-v2 pretraining script demonstrates improved parameter naming conventions:
@@ -457,6 +477,13 @@ The new vectorized masking system introduces several configuration parameters:
 - `max_length`: calculated as `batch_size × token_per_sample` for packed sequences
 - Vectorized masking functions: `_mask_sequences_fully_vec`, `_get_mask_ratio_batch`, `_mask_input_ids_unified`
 
+**Environment Detection Configuration:**
+The new environment detection system introduces automatic parameter adjustment:
+- `env`: 'cpu'|'gpu' parameter for environment specification
+- Automatic CPU mode: reduced model sizes, smaller batch sizes, CPU-only execution
+- Automatic GPU mode: full GPU acceleration with DeepSpeed
+- Environment-aware parameter optimization for different hardware configurations
+
 Configuration modification tips:
 - Use model_name aliases to quickly switch sizes; the scripts compute hidden_size and num_hidden_layers accordingly
 - For supervised tasks, align task_level with tokenization task_type and dataset semantics
@@ -464,12 +491,13 @@ Configuration modification tips:
 - Attention implementation can be switched between SDPA and flex_attention based on requirements
 - For packed token training, configure `pack_tokens` > 0 and let the script automatically calculate `max_length`
 - Vectorized masking is automatically enabled when using the enhanced PCQM4M-v2 configuration
+- **Environment detection**: Set env='cpu' for CPU-only execution or env='gpu' for GPU acceleration
 
 **Section sources**
 - [examples/toy_examples/reddit_pretrain.sh:1-257](file://examples/toy_examples/reddit_pretrain.sh#L1-L257)
 - [examples/toy_examples/reddit_supervised.sh:1-300](file://examples/toy_examples/reddit_supervised.sh#L1-L300)
 - [examples/graph_lvl/pcqm4m_v2_pretrain.sh:1-321](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L1-L321)
-- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-300](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L300)
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-322](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L322)
 - [examples/edge_lvl/ppa_pretrain.sh:1-287](file://examples/edge_lvl/ppa_pretrain.sh#L1-L287)
 - [examples/node_lvl/products_pretrain.sh:1-201](file://examples/node_lvl/products_pretrain.sh#L1-L201)
 - [configs/tokenization/graph_lvl/reddit.yaml:1-121](file://configs/tokenization/graph_lvl/reddit.yaml#L1-L121)
@@ -505,6 +533,14 @@ The enhanced vectorized masking system follows this workflow:
 4. Process multiple sequences simultaneously without Python loops
 5. Return masked inputs and labels for training
 
+**Environment Detection Workflow:**
+The new environment detection system provides seamless hardware adaptation:
+1. Set `env='cpu'` or `env='gpu'` in the script configuration
+2. Script automatically detects available hardware and adjusts parameters
+3. CPU mode: reduced model sizes, smaller batch sizes, CPU-only execution
+4. GPU mode: full GPU acceleration with DeepSpeed, normal model sizes
+5. Automatic parameter optimization based on detected environment
+
 Best practices:
 - Start with smaller model sizes (tiny/mini) for exploration
 - Use DeepSpeed for multi-GPU runs; native DDP for single-GPU testing
@@ -513,12 +549,101 @@ Best practices:
 - Pay attention to attention implementation choice based on computational requirements
 - Use packed token training for memory efficiency when dealing with variable-length sequences
 - Leverage vectorized masking for improved performance on large datasets
+- **Environment detection**: Use env='cpu' for CPU-only environments, env='gpu' for GPU-accelerated training
 
 **Section sources**
 - [examples/train_pretrain.py:12-18](file://examples/train_pretrain.py#L12-L18)
 - [examples/train_supervised.py:12-18](file://examples/train_supervised.py#L12-L18)
 - [src/training/pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
 - [src/data/tokenizer/strategies/task_prep/pretrain.py:16-62](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L16-L62)
+
+## Environment Detection System
+
+**New Feature**: The supervised training scripts now include an intelligent environment detection system that automatically adapts training parameters based on available hardware.
+
+### System Architecture
+The environment detection system operates at the script level and provides automatic parameter adjustment:
+
+```mermaid
+flowchart TD
+A[Script Start] --> B{Check env parameter}
+B --> |env="cpu"| C[CPU Mode Configuration]
+B --> |env="gpu"| D[GPU Mode Configuration]
+C --> E[Reduced Model Size]
+C --> F[Small Batch Size]
+C --> G[CPU-Only Execution]
+C --> H[Simple Parameters]
+D --> I[Full Model Size]
+D --> J[Normal Batch Size]
+D --> K[DeepSpeed Enabled]
+D --> L[Complex Parameters]
+E --> M[Execute Training]
+F --> M
+G --> M
+H --> M
+I --> M
+J --> M
+K --> M
+L --> M
+```
+
+**Diagram sources**
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:90-103](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L90-L103)
+- [examples/graph_lvl/pcqm4m_v2_pretrain.sh:87-102](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L87-L102)
+
+### CPU Mode Configuration
+When `env="cpu"` is specified, the system automatically applies the following optimizations:
+
+- **Reduced model size**: Automatically sets model_name="tiny" for CPU-friendly configurations
+- **Small batch size**: Sets batch_size=4 for memory-constrained CPU environments
+- **CPU-only execution**: Disables DeepSpeed by setting deepspeed_config=""
+- **Simplified parameters**: Reduces training complexity with fewer workers and shorter schedules
+- **Shorter training**: Sets epochs=2 and epochs_warmup=0.6 for quick CPU testing
+- **Disabled EMA**: Sets use_ema=false for CPU efficiency
+
+### GPU Mode Configuration
+When `env="gpu"` is specified, the system enables full GPU acceleration:
+
+- **Full model size**: Uses configured model_name for optimal GPU utilization
+- **Normal batch size**: Uses configured batch_size for efficient GPU training
+- **DeepSpeed enabled**: Uses configured deepspeed_config for multi-GPU training
+- **Complex parameters**: Enables full training complexity with proper optimization
+- **Standard training**: Uses full epochs and warmup periods for proper convergence
+
+### Automatic Parameter Adjustment Mechanisms
+The environment detection system provides several automatic adjustments:
+
+1. **Hardware detection**: Uses `torch.cuda.is_available()` to detect GPU availability
+2. **Model size scaling**: Automatically scales model parameters based on detected hardware
+3. **Memory optimization**: Adjusts batch sizes and model dimensions to fit available memory
+4. **Execution mode switching**: Chooses between CPU-only and GPU-accelerated execution
+5. **Training schedule optimization**: Adapts training duration and intensity based on hardware capabilities
+
+### Usage Examples
+
+**CPU-only execution**:
+```bash
+env="cpu"  # CPU mode
+./examples/graph_lvl/pcqm4m_v2_supervised.sh
+```
+
+**GPU-accelerated execution**:
+```bash
+env="gpu"  # GPU mode
+./examples/graph_lvl/pcqm4m_v2_supervised.sh
+```
+
+### Best Practices for Environment Detection
+- Use `env="cpu"` for development, testing, and environments without GPU access
+- Use `env="gpu"` for production training with available GPU resources
+- The system automatically handles parameter optimization - manual intervention usually unnecessary
+- Test CPU mode first to validate configurations before running GPU mode
+- Monitor training progress and adjust model sizes if memory constraints persist
+
+**Section sources**
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:1-322](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L1-L322)
+- [examples/graph_lvl/pcqm4m_v2_pretrain.sh:1-321](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L1-L321)
+- [src/utils/misc_utils.py:507-540](file://src/utils/misc_utils.py#L507-L540)
 
 ## Dependency Analysis
 The example scripts depend on the unified training pipeline and configuration system. The pipeline orchestrates distributed setup, model creation, and training loops, while the configuration system merges defaults and dataset-specific settings.
@@ -535,8 +660,10 @@ Cfg --> TrnBase["configs/training/base.yaml"]
 TokBase --> TokReddit["configs/tokenization/graph_lvl/reddit.yaml"]
 TokBase --> TokPCQM4M["configs/tokenization/graph_lvl/pcqm4m-v2.yaml"]
 TokBase --> TokPCQM4M2D["configs/tokenization/graph_lvl/pcqm4m-v2_2d.yaml"]
+Pipe --> EnvDet["Environment Detection<br/>Hardware Adaptation"]
 Pipe --> VecMask["Vectorized Masking"]
 Pipe --> SeqPack["Sequence Packing"]
+EnvDet --> ShSV
 VecMask --> MaskingCore["src/data/tokenizer/masking.py"]
 SeqPack --> PackingCore["src/data/tokenizer/strategies/packing.py"]
 ```
@@ -570,6 +697,8 @@ SeqPack --> PackingCore["src/data/tokenizer/strategies/packing.py"]
 - **Enhanced Sequence Length Management**: For packed token training, use `max_length = batch_size × token_per_sample` to optimize memory utilization and prevent sequence truncation
 - **Vectorized Masking Performance**: Leverage fully vectorized masking for significant performance improvements on large datasets
 - **Memory Efficiency**: Sequence packing reduces padding overhead and improves GPU utilization for variable-length sequences
+- **Environment Detection Benefits**: Automatic hardware adaptation ensures optimal performance across different computing environments
+- **CPU/GPU Flexibility**: Seamlessly switch between CPU-only and GPU-accelerated execution without manual parameter changes
 
 **Updated** Attention implementation considerations:
 - flex_attention provides better support for packed sequences and complex masking patterns
@@ -590,6 +719,13 @@ SeqPack --> PackingCore["src/data/tokenizer/strategies/packing.py"]
 - **Speed improvement**: Significant performance gains over traditional loop-based approaches
 - **Scalability**: Better performance scaling with larger batch sizes
 
+**Environment Detection Performance Benefits:**
+- **Automatic optimization**: Hardware-specific parameter tuning without manual intervention
+- **Resource efficiency**: Optimal resource utilization based on available hardware
+- **Development workflow**: Quick CPU testing followed by GPU production training
+- **Error prevention**: Automatic parameter adjustment prevents common configuration mistakes
+- **Seamless migration**: Easy transition between CPU and GPU environments
+
 [No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
@@ -603,6 +739,8 @@ Common issues and resolutions:
 - **Sequence Length Issues**: For packed training, ensure `max_length = batch_size × token_per_sample` is correctly calculated; verify `pack_tokens` > 0 triggers automatic batch size adjustment
 - **Vectorized Masking Issues**: Ensure NumPy is properly installed and compatible with the system; check for memory allocation errors during vectorized operations
 - **Sequence Packing Problems**: Verify that `pack_tokens` > 0 and `token_per_sample` are properly configured; monitor memory usage during packed training
+- **Environment Detection Issues**: Ensure torch.cuda.is_available() works properly; verify GPU drivers are correctly installed; check that environment variable detection functions as expected
+- **CPU Mode Problems**: Verify that CPU-only execution parameters are correctly applied; ensure model sizes are appropriate for CPU memory constraints
 
 Monitoring training progress:
 - Inspect log.csv in the output directory for metrics and losses
@@ -610,19 +748,23 @@ Monitoring training progress:
 - Track samples processed against total_tokens/epochs to estimate completion
 - **Packed Training Monitoring**: Monitor memory usage and adjust `token_per_sample` if experiencing OOM errors
 - **Vectorized Masking Monitoring**: Watch for performance improvements and memory usage patterns during training
+- **Environment Detection Monitoring**: Verify that hardware-specific parameters are being applied correctly; check for proper execution mode switching
 
 **Section sources**
 - [src/training/pipeline.py:129-136](file://src/training/pipeline.py#L129-L136)
 - [examples/toy_examples/reddit_supervised.sh:96-99](file://examples/toy_examples/reddit_supervised.sh#L96-L99)
 - [examples/graph_lvl/pcqm4m_v2_pretrain.sh:114-119](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L114-L119)
 - [examples/graph_lvl/pcqm4m_v2_pretrain.sh:302-307](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L302-L307)
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:90-103](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L90-L103)
 
 ## Conclusion
 The example scripts provide a structured way to run Graph-GPT across pre-training and fine-tuning for graph-level, edge-level, and node-level tasks. By leveraging the unified training pipeline and configuration system, users can quickly adapt experiments to new datasets, tune model sizes and schedules, and scale to multi-GPU environments. Start with the Reddit toy example, then move to PCQM4M-v2 or other benchmarks, adjusting parameters and configurations as needed for your hardware and data characteristics.
 
 Recent improvements to the PCQM4M-v2 pre-training script enhance attention implementation flexibility and validation settings, making it more suitable for large-scale molecular property prediction tasks. The enhanced sequence length configuration with improved parameter naming provides clearer guidance on configuring maximum sequence lengths for both packed and non-packed training scenarios.
 
-**Updated** The most significant enhancement is the introduction of fully vectorized masking capabilities, which eliminate Python loops entirely and process multiple sequences simultaneously using NumPy operations. This provides substantial performance improvements for large-scale molecular property prediction tasks while maintaining memory efficiency through sequence packing.
+**Updated** The most significant enhancement is the introduction of the environment detection system, which provides automatic hardware adaptation for CPU and GPU environments. This system eliminates the need for manual parameter adjustment when switching between different hardware configurations, enabling seamless execution across diverse computing environments. The environment detection system automatically optimizes model sizes, batch sizes, execution modes, and training parameters based on detected hardware capabilities.
+
+The enhanced vectorized masking capabilities represent another major improvement, providing substantial performance gains for large-scale molecular property prediction tasks while maintaining memory efficiency through sequence packing.
 
 [No sources needed since this section summarizes without analyzing specific files]
 
@@ -637,6 +779,8 @@ Recent improvements to the PCQM4M-v2 pre-training script enhance attention imple
   - total_tokens, warmup_tokens, epochs, warmup_epochs, batch_size, batch_size_eval, optimizer settings, schedule, valid_percent, do_generation, do_infer, pack_tokens, max_length
 - Fine-tuning
   - task_level, problem_type, num_labels, loss_type, ft_eval settings
+- **Environment detection**
+  - env: 'cpu'|'gpu' parameter for automatic hardware adaptation
 
 ### Attention Implementation Comparison
 - SDPA (Scaled Dot-Product Attention):
@@ -670,6 +814,27 @@ Recent improvements to the PCQM4M-v2 pre-training script enhance attention imple
 - **_mask_input_ids_unified**: Unified vectorized masking for 1D and 2D inputs
 - **NumPy Integration**: All operations performed using NumPy arrays for optimal performance
 
+### Environment Detection System Overview
+- **Automatic Hardware Detection**: Detects GPU availability using `torch.cuda.is_available()`
+- **CPU Mode Optimization**: Reduces model sizes, batch sizes, and execution complexity for CPU environments
+- **GPU Mode Optimization**: Enables full GPU acceleration with DeepSpeed and normal training parameters
+- **Parameter Adjustment**: Automatically optimizes training parameters based on detected hardware
+- **Seamless Migration**: Allows easy switching between CPU and GPU environments without manual configuration changes
+
+### Environment Detection Configuration Options
+- **CPU Mode (env="cpu")**:
+  - Model size: tiny
+  - Batch size: 4
+  - Execution: CPU-only
+  - Training: Short schedules for quick testing
+  - EMA: Disabled for efficiency
+- **GPU Mode (env="gpu")**:
+  - Model size: As configured
+  - Batch size: As configured
+  - Execution: DeepSpeed-enabled
+  - Training: Full schedules for proper convergence
+  - EMA: As configured
+
 **Section sources**
 - [src/utils/flex_attn_utils.py:1-289](file://src/utils/flex_attn_utils.py#L1-L289)
 - [src/models/graphgpt/modeling_helpers.py:59-173](file://src/models/graphgpt/modeling_helpers.py#L59-L173)
@@ -678,3 +843,5 @@ Recent improvements to the PCQM4M-v2 pre-training script enhance attention imple
 - [src/training/pretrain_mode.py:170-198](file://src/training/pretrain_mode.py#L170-L198)
 - [src/data/tokenizer/masking.py:51-149](file://src/data/tokenizer/masking.py#L51-L149)
 - [src/data/tokenizer/strategies/task_prep/pretrain.py:16-62](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L16-L62)
+- [examples/graph_lvl/pcqm4m_v2_supervised.sh:90-103](file://examples/graph_lvl/pcqm4m_v2_supervised.sh#L90-L103)
+- [examples/graph_lvl/pcqm4m_v2_pretrain.sh:87-102](file://examples/graph_lvl/pcqm4m_v2_pretrain.sh#L87-L102)
