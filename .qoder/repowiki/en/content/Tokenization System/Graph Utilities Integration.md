@@ -18,11 +18,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated Performance Considerations section to highlight recent efficiency improvements in edge attribute mapping and edge type determination
-- Enhanced NetworkX Utilities section with details about optimized type checking and label generation using precomputed data structures
-- Added new subsections documenting the specific optimizations in `decorate_node_edge_graph_with_mask`, `get_labels_from_input_tokens`, and edge attribute mapping functions
-- Updated practical examples to reflect the improved token processing efficiency with O(1) lookups
-- Added new section on Performance Optimizations detailing the precomputed data structures and their impact
+- Updated NetworkX Utilities section to reflect recent bug fixes in node degree and triangle calculation functions
+- Enhanced troubleshooting guide with specific guidance for list wrapping consistency in node structure mappings
+- Added new section on Runtime Error Prevention covering consistent list wrapping practices
+- Updated practical examples to demonstrate proper list wrapping for node structure mappings
+- Improved error handling documentation for graph preprocessing operations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -33,9 +33,10 @@
 6. [Dependency Analysis](#dependency-analysis)
 7. [Performance Optimizations](#performance-optimizations)
 8. [Performance Considerations](#performance-considerations)
-9. [Troubleshooting Guide](#troubleshooting-guide)
-10. [Conclusion](#conclusion)
-11. [Appendices](#appendices)
+9. [Runtime Error Prevention](#runtime-error-prevention)
+10. [Troubleshooting Guide](#troubleshooting-guide)
+11. [Conclusion](#conclusion)
+12. [Appendices](#appendices)
 
 ## Introduction
 This document explains the graph utilities integration system that supports graph manipulation and formatting during tokenization. It covers:
@@ -47,6 +48,8 @@ This document explains the graph utilities integration system that supports grap
 - Practical examples and troubleshooting guidance
 
 The system has been recently optimized for improved token processing efficiency, featuring streamlined type checking operations, optimized label generation, and precomputed data structures that demonstrate significantly better performance for graph tokenization tasks, especially for large graphs with thousands of edges.
+
+**Recent Bug Fixes**: The system now includes critical bug fixes in graph utilities for node degree and triangle calculations, ensuring consistent list wrapping for node structure mappings and preventing runtime errors during graph preprocessing.
 
 The goal is to make the system understandable for beginners while providing sufficient technical depth for implementing custom graph utility functions.
 
@@ -128,6 +131,7 @@ T --> C4
   - Structural analysis via configurable functions
   - Eulerian path extraction and path-decoration for tokenization
   - Graph connectivity enhancement and edge-type inference
+  - **Recent bug fixes**: Consistent list wrapping for node structure mappings in degree and triangle calculations prevent runtime errors during graph preprocessing
   - **Recent optimizations**: Streamlined type checking operations, optimized label generation, and precomputed data structures for improved token processing efficiency
 - Tokenization integration
   - Tokenizer orchestrates graph-to-path conversion, mapping construction, and semantic decoration
@@ -286,7 +290,7 @@ Div --> Cat
 - Connectivity enhancement
   - Adds jump edges to connect components (sequential or central strategies)
 
-**Updated** Recent optimizations include streamlined type checking operations, optimized label generation, and precomputed data structures for improved token processing efficiency.
+**Recent Bug Fixes**: The node degree and triangle calculation functions now include consistent list wrapping for node structure mappings, preventing runtime errors during graph preprocessing. Both functions properly wrap `node_structure_mapping[idx]` in a list to ensure compatibility with the `_flatten_list` utility function.
 
 ```mermaid
 flowchart TD
@@ -349,9 +353,6 @@ class NxUtils {
 +graph2path(...)
 +decorate_node_edge_graph_with_mask(...)
 +get_labels_from_input_tokens(...)
-}
-class GraphEncoding {
-+_get_edge2attr_mapping(...)
 }
 GSTTokenizer --> NxUtils : "calls"
 GSTTokenizer --> GraphEncoding : "calls"
@@ -486,6 +487,37 @@ for src, tgt in path:
 - [nx_utils.py:540-545](file://src/utils/nx_utils.py#L540-L545)
 - [graph_encoding.py:202-216](file://src/data/tokenizer/graph_encoding.py#L202-L216)
 
+## Runtime Error Prevention
+
+**New Section** The system includes critical runtime error prevention mechanisms for graph utilities:
+
+### List Wrapping Consistency
+The node degree and triangle calculation functions ensure consistent list wrapping for node structure mappings:
+
+- **Node Degree Function**: `tgt_node_tokens = [node_structure_mapping[idx]]` - Wraps the node structure mapping in a list
+- **Triangle Function**: `tgt_node_tokens = [node_structure_mapping[idx]]` - Wraps the node structure mapping in a list
+
+This consistent list wrapping prevents runtime errors during graph preprocessing because:
+1. The `_flatten_list` utility function expects either strings or iterable objects
+2. When node structure mappings return single values, they need to be wrapped in lists
+3. The `_flatten_list` function handles both cases seamlessly
+
+### Error Handling Patterns
+- **Consistent Return Types**: All graph utility functions return consistent data structures
+- **Safe Flattening**: The `_flatten_list` function safely handles mixed data types
+- **Fallback Mechanisms**: Functions include fallbacks for edge cases like single-node graphs
+
+### Best Practices for Custom Implementations
+When implementing custom graph utility functions:
+1. Always wrap node structure mappings in lists: `[node_structure_mapping[node]]`
+2. Use the `_flatten_list` utility for consistent flattening
+3. Handle edge cases like empty graphs or single-node graphs
+4. Ensure consistent return types across different scenarios
+
+**Section sources**
+- [nx_utils.py:53-78](file://src/utils/nx_utils.py#L53-L78)
+- [nx_utils.py:212-221](file://src/utils/nx_utils.py#L212-L221)
+
 ## Troubleshooting Guide
 Common issues and resolutions:
 - Graph validity checks
@@ -502,6 +534,10 @@ Common issues and resolutions:
 - Tokenization errors
   - Check that node_scope constraints are met before tokenization
   - Validate structure mappings and edge-type tokens to avoid missing tokens
+- **Bug fix verification**
+  - **List wrapping consistency**: Verify that node structure mappings are consistently wrapped in lists
+  - **Function compatibility**: Ensure custom functions use the same list wrapping patterns as built-in functions
+  - **Error prevention**: Test with edge cases like single-node graphs and empty graphs
 - **New optimization-related issues**
   - **Memory usage spikes**: Monitor memory consumption when processing large graphs due to precomputed structures
   - **Edge mapping mismatches**: Ensure edge_index_map construction matches the actual edge ordering in the graph
@@ -515,7 +551,9 @@ Common issues and resolutions:
 ## Conclusion
 The graph utilities integration system provides a robust framework for transforming graphs into token sequences suitable for downstream modeling. By combining preprocessing helpers, edge formatting utilities, node encoding strategies, and NetworkX-based structural analysis, it enables flexible and efficient tokenization across diverse graph tasks.
 
-**Recent optimizations** have dramatically enhanced the system's performance through precomputed data structures (edge_index_map and edge_set) that provide O(1) edge lookups, streamlined type checking operations, and optimized label generation. These improvements demonstrate significant efficiency gains for graph tokenization tasks, particularly beneficial for large graphs with thousands of edges. The configuration-driven behavior continues to allow easy adaptation to different datasets and modeling objectives while maintaining the benefits of the recent performance improvements.
+**Recent bug fixes** have dramatically enhanced the system's reliability by ensuring consistent list wrapping for node structure mappings in node degree and triangle calculation functions. These improvements prevent runtime errors during graph preprocessing and maintain compatibility with the existing tokenization pipeline.
+
+**Recent optimizations** have also dramatically enhanced the system's performance through precomputed data structures (edge_index_map and edge_set) that provide O(1) edge lookups, streamlined type checking operations, and optimized label generation. These improvements demonstrate significant efficiency gains for graph tokenization tasks, particularly beneficial for large graphs with thousands of edges. The configuration-driven behavior continues to allow easy adaptation to different datasets and modeling objectives while maintaining the benefits of the recent performance improvements and bug fixes.
 
 ## Appendices
 
@@ -558,6 +596,11 @@ The graph utilities integration system provides a robust framework for transform
 - Understanding graph structure via NetworkX
   - See structural function registration and execution
   - Reference: [nx_utils.py:17-50](file://src/utils/nx_utils.py#L17-L50), [control_flow.py:9-33](file://src/utils/control_flow.py#L9-L33)
+- **Bug-fixed node degree and triangle calculations**
+  - Consistent list wrapping in degree calculation: [nx_utils.py:62](file://src/utils/nx_utils.py#L62)
+  - Consistent list wrapping in triangle calculation: [nx_utils.py:76](file://src/utils/nx_utils.py#L76)
+  - Safe flattening with _flatten_list utility: [nx_utils.py:212-221](file://src/utils/nx_utils.py#L212-L221)
+  - Runtime error prevention patterns: [nx_utils.py:53-78](file://src/utils/nx_utils.py#L53-L78)
 - **Optimized token processing**
   - Streamlined type checking in `decorate_node_edge_graph_with_mask`
   - Optimized label generation in `get_labels_from_input_tokens`

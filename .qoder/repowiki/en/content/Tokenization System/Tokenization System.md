@@ -40,11 +40,11 @@
 
 ## Update Summary
 **Changes Made**
-- Removed scope_base parameter throughout the codebase, simplifying hierarchical indexing to flat indexing approach
-- Updated node re-indexing system to use flat tuple-based indexing (str(idx),) instead of hierarchical base-based indexing
-- Simplified node and edge indexing logic to use direct string-based flat indices
-- Updated configuration examples and implementation details to reflect the new simplified tokenization approach
-- Maintained backward compatibility through preserved scope_base parameter with no functional impact
+- Enhanced error handling and type safety for node feature extraction across tokenizer stacking, instruct tuning utilities, and graph utilities
+- Improved node structure mapping type handling with robust assertion checks and default value fallbacks
+- Strengthened type validation for discrete and embedding attribute mappings in default semantics functions
+- Enhanced node feature extraction functions with comprehensive type safety and error handling
+- Improved instruction tuning utilities with better type validation for node structure mappings
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -87,6 +87,8 @@ Key features include Eulerian path-based serialization, attribute stacking strat
 
 **Enhanced Performance Optimizations**: The system now includes comprehensive performance improvements in graph encoding and utility modules, featuring optimized edge attribute mapping and edge type determination operations that provide substantial speed improvements for large-scale graph processing tasks. Key optimizations include TokenCache and DigitTokenCache implementations for reduced string formatting overhead, set-based edge existence checks for O(1) performance, and pre-built edge index maps for efficient attribute mapping.
 
+**Enhanced Type Safety**: Recent improvements focus on robust type handling for node feature extraction across tokenizer stacking, instruct tuning utilities, and graph utilities, ensuring reliable operation with diverse graph data types and configurations.
+
 ## Project Structure
 The tokenization system is organized as a package with specialized modules following the strategy pattern, each handling specific aspects of the tokenization process through composition rather than inheritance:
 
@@ -108,6 +110,11 @@ DT["DigitTokenCache<br/>Cached digit token generation"]
 EA["Edge Attribute Mapping<br/>Optimized with pre-built index maps"]
 ET["Edge Type Determination<br/>Set-based O(1) lookups"]
 FI["Flat Indexing System<br/>Simplified _rebase_idx to flat tuple-based indexing"]
+end
+subgraph "Enhanced Node Feature Extraction"
+NFE["Node Feature Extraction<br/>Robust type handling and default fallbacks"]
+ITF["Instruction Tuning Functions<br/>Enhanced type validation"]
+GU["Graph Utilities<br/>Improved type safety"]
 end
 subgraph "Concrete Implementations"
 GST["GSTTokenizer<br/>1D token sequences"]
@@ -154,6 +161,8 @@ DT --> EA
 EA --> ET
 FI --> TE
 FI --> DT
+NFE --> ITF
+NFE --> GU
 ```
 
 **Diagram sources**
@@ -170,6 +179,10 @@ FI --> DT
 - [graph_encoding.py:11-96](file://src/data/tokenizer/graph_encoding.py#L11-L96)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
 - [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
+- [stacking.py:20-90](file://src/data/tokenizer/stacking.py#L20-L90)
+- [stacking.py:93-183](file://src/data/tokenizer/stacking.py#L93-L183)
+- [instruct_tuning_utils.py:160-195](file://src/utils/instruct_tuning_utils.py#L160-L195)
+- [graph_utils.py:1-87](file://src/data/_helpers/graph_utils.py#L1-L87)
 
 **Section sources**
 - [base.py:13-187](file://src/data/tokenizer/base.py#L13-L187)
@@ -464,6 +477,51 @@ Decor-->>Path : Combined tokens with defaults
 - [core.py:397-408](file://src/data/tokenizer/core.py#L397-L408)
 - [nx_utils.py:560-573](file://src/utils/nx_utils.py#L560-L573)
 - [core.py:141-147](file://src/data/tokenizer/core.py#L141-L147)
+
+### Enhanced Node Feature Extraction with Type Safety
+Recent improvements focus on robust type handling for node feature extraction across all components:
+
+**Node Feature Extraction Functions**: Enhanced with comprehensive type validation and default value fallbacks
+**Default Semantics Functions**: Strengthened assertion checks for discrete and embedding attribute mappings
+**Instruction Tuning Utilities**: Improved type validation for node structure mappings
+**Graph Utilities**: Enhanced type safety for graph transformation operations
+
+**Updated** The node feature extraction system now includes:
+
+- **Robust Type Validation**: Comprehensive assertion checks for attribute dimensionality and data types
+- **Default Value Fallbacks**: Automatic fallback to default attributes for missing or edge cases
+- **Enhanced Error Handling**: Meaningful error messages for type mismatches and missing configurations
+- **Improved Instruction Integration**: Better type validation for instruction-based tokenization
+
+```mermaid
+flowchart TD
+Start["Node Feature Extraction"] --> Validate["Validate Attribute Types"]
+Validate --> CheckDiscrete{"Discrete Attr?"}
+Validate --> CheckEmbed{"Embed Attr?"}
+CheckDiscrete --> |Yes| AssertDisc["Assert 2D Shape & Type"]
+CheckEmbed --> |Yes| AssertEmb["Assert 2D Shape & Type"]
+AssertDisc --> DefaultDisc["Generate Default Discrete"]
+AssertEmb --> DefaultEmb["Generate Default Embedding"]
+DefaultDisc --> Combine["Combine Features"]
+DefaultEmb --> Combine
+CheckDiscrete --> |No| SkipDisc["Skip Discrete"]
+CheckEmbed --> |No| SkipEmb["Skip Embedding"]
+SkipDisc --> Combine
+SkipEmb --> Combine
+Combine --> Output["Return Node Features"]
+```
+
+**Diagram sources**
+- [stacking.py:20-90](file://src/data/tokenizer/stacking.py#L20-L90)
+- [stacking.py:194-228](file://src/data/tokenizer/stacking.py#L194-L228)
+- [instruct_tuning_utils.py:160-195](file://src/utils/instruct_tuning_utils.py#L160-L195)
+- [graph_utils.py:1-87](file://src/data/_helpers/graph_utils.py#L1-L87)
+
+**Section sources**
+- [stacking.py:20-90](file://src/data/tokenizer/stacking.py#L20-L90)
+- [stacking.py:194-228](file://src/data/tokenizer/stacking.py#L194-L228)
+- [instruct_tuning_utils.py:160-195](file://src/utils/instruct_tuning_utils.py#L160-L195)
+- [graph_utils.py:1-87](file://src/data/_helpers/graph_utils.py#L1-L87)
 
 ### Vocabulary Building and Management
 The modular vocabulary system provides comprehensive token-to-id mapping capabilities:
@@ -988,6 +1046,10 @@ The strategy pattern architecture provides several performance benefits:
 - **Batch Processing Optimizations**: Vectorized map() function usage in stacking operations improves processing efficiency
 - **Edge Type Determination Optimization**: Set-based edge existence checks provide O(1) performance for edge type mapping
 - **Flat Indexing Performance**: Simplified flat indexing system eliminates complex base calculations and improves computational efficiency
+- **Enhanced Type Safety**: Robust type handling for node feature extraction across all components improves reliability
+- **Node Feature Extraction Performance**: Comprehensive type validation and default value fallbacks improve processing efficiency
+- **Instruction Tuning Performance**: Enhanced type validation for node structure mappings improves instruction processing reliability
+- **Graph Utilities Performance**: Improved type safety for graph transformation operations enhances computational efficiency
 
 Key considerations:
 - **Strategy Initialization**: Strategies are initialized only when needed, reducing memory footprint
@@ -1003,6 +1065,10 @@ Key considerations:
 - **Configuration Caching**: Cached configuration values reduce repeated dictionary access overhead
 - **Batch Processing**: Vectorized operations in stacking provide significant performance improvements over iterative processing
 - **Flat Indexing Benefits**: Simplified indexing system provides performance improvements through reduced computational overhead and better memory access patterns
+- **Enhanced Type Safety Benefits**: Robust type handling prevents runtime errors and improves system reliability
+- **Node Feature Extraction Benefits**: Comprehensive type validation and default fallbacks improve processing efficiency and reliability
+- **Instruction Tuning Benefits**: Enhanced type validation improves instruction processing accuracy and reliability
+- **Graph Utilities Benefits**: Improved type safety enhances graph transformation performance and reliability
 
 ## Troubleshooting Guide
 Common issues and resolutions in the strategy pattern architecture:
@@ -1119,6 +1185,36 @@ Common issues and resolutions in the strategy pattern architecture:
 - **Memory Efficiency**: Check that batch operations are not causing memory allocation issues
 - **Processing Overhead**: Ensure that batch optimizations are providing net performance benefits
 
+**Enhanced Type Safety Issues**:
+- **Node Feature Extraction Errors**: Verify that type validation is properly handling node structure mappings
+- **Default Attribute Type Errors**: Check that default semantics functions handle type mismatches gracefully
+- **Instruction Tuning Type Errors**: Ensure that instruction utilities validate node structure mappings correctly
+- **Graph Utility Type Errors**: Verify that graph transformation utilities handle type conversions properly
+- **Attribute Dimensionality Errors**: Check that assertion checks for attribute shapes are functioning correctly
+- **Missing Configuration Errors**: Ensure that default value fallbacks are triggered when configurations are missing
+
+**Node Feature Extraction Issues**:
+- **Type Validation Failures**: Verify that assertion checks for attribute dimensions are passing
+- **Default Value Generation**: Check that default attributes are being generated correctly for missing data
+- **Embedding Attribute Errors**: Ensure that embedding attributes maintain proper dimensional consistency
+- **Discrete Attribute Errors**: Verify that discrete attributes are properly formatted as strings
+- **Jump Edge Handling**: Check that jump edges are properly handled with default attribute fallbacks
+- **Node Structure Mapping Errors**: Ensure that node structure mappings are properly validated and typed
+
+**Instruction Tuning Issues**:
+- **Node Structure Mapping Validation**: Verify that instruction utilities properly validate node structure mappings
+- **Attribute Type Consistency**: Check that instruction-based tokenization maintains consistent attribute types
+- **Default Attribute Integration**: Ensure that instruction utilities integrate properly with default attribute systems
+- **Embedding Attribute Conflicts**: Verify that instruction utilities handle embedding attributes correctly
+- **Type Safety Violations**: Check that instruction utilities maintain type safety throughout processing
+
+**Graph Utilities Issues**:
+- **Tensor Type Conversions**: Verify that graph transformation utilities handle tensor type conversions correctly
+- **Memory Allocation Issues**: Check that graph utilities optimize memory usage during transformations
+- **Edge Attribute Handling**: Ensure that edge attributes are properly managed during graph conversions
+- **Unique Element Detection**: Verify that unique element detection maintains type consistency
+- **Self-Cycle Removal**: Check that self-cycle removal preserves data types and shapes
+
 **Section sources**
 - [__init__.py:78-123](file://src/data/tokenizer/__init__.py#L78-L123)
 - [_legacy.py:1-42](file://src/data/tokenizer/_legacy.py#L1-L42)
@@ -1135,6 +1231,10 @@ Common issues and resolutions in the strategy pattern architecture:
 - [graph_encoding.py:202-215](file://src/data/tokenizer/graph_encoding.py#L202-L215)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
 - [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
+- [stacking.py:20-90](file://src/data/tokenizer/stacking.py#L20-L90)
+- [stacking.py:194-228](file://src/data/tokenizer/stacking.py#L194-L228)
+- [instruct_tuning_utils.py:160-195](file://src/utils/instruct_tuning_utils.py#L160-L195)
+- [graph_utils.py:1-87](file://src/data/_helpers/graph_utils.py#L1-L87)
 
 ## Conclusion
 The Graph-GPT tokenization system has successfully transitioned from a monolithic to a modern strategy pattern-based architecture, providing improved maintainability, performance, flexibility, and extensibility. The system continues to support advanced graph-to-sequence conversion through Eulerian path serialization, flexible attribute stacking strategies, comprehensive vocabulary management, and task-specific input preparation.
@@ -1143,19 +1243,25 @@ The Graph-GPT tokenization system has successfully transitioned from a monolithi
 
 **Enhanced Performance Optimizations**: The system now includes comprehensive performance improvements in graph encoding and utility modules, featuring optimized edge attribute mapping and edge type determination operations that provide substantial speed improvements for large-scale graph processing tasks. Key optimizations include TokenCache and DigitTokenCache implementations for reduced string formatting overhead, set-based edge existence checks for O(1) edge type determination, and pre-built edge index maps for efficient attribute mapping. **The flat indexing system provides additional performance benefits through simplified index calculations and improved memory access patterns.**
 
+**Enhanced Type Safety**: Recent improvements focus on robust type handling for node feature extraction across tokenizer stacking, instruct tuning utilities, and graph utilities, ensuring reliable operation with diverse graph data types and configurations. The enhanced type safety system includes comprehensive assertion checks, default value fallbacks, and improved error handling throughout the system.
+
 The strategy pattern architecture positions the system for future enhancements while ensuring existing implementations remain functional. The sophisticated integration with model architecture ensures seamless packed sequence processing, attention mode coordination, memory-efficient attention mask construction, and robust mask ratio computation for improved training stability. The backward compatibility system provides a smooth migration path for existing codebases while enabling gradual adoption of the new modular design.
 
 The enhanced vectorized masking system provides significant performance improvements through NumPy-based operations that eliminate Python loops and maximize computational efficiency. The fully vectorized pretraining strategy demonstrates the power of vectorized operations in sequence processing. The comprehensive default attribute support in StackedGSTTokenizer provides comprehensive fallback mechanisms for missing or edge cases, improving robustness and reliability. The lazy initialization and caching mechanisms ensure optimal performance while maintaining memory efficiency. The comprehensive error handling throughout the system provides clear error messages and appropriate exception types for effective debugging and maintenance. The comprehensive performance optimizations in SequencePacker provide substantial improvements in memory management and computational efficiency for packed sequence processing. The enhanced graph encoding performance optimizations deliver significant speed improvements for large-scale graph processing tasks through strategic caching and efficient data structures.
 
-The recent performance enhancements further strengthen the system's capabilities:
+The recent performance enhancements and type safety improvements further strengthen the system's capabilities:
 - **TokenCache and DigitTokenCache**: Provide global caching for token strings and digit tokens, significantly reducing string formatting overhead
 - **Configuration Value Caching**: Frequently accessed configuration values are cached in tokenizers to improve runtime performance
 - **Batch Processing Optimizations**: Vectorized map() function usage in stacking operations improves processing efficiency
 - **Edge Type Determination Optimization**: Set-based edge existence checks provide O(1) performance for edge type mapping
 - **Comprehensive Caching Strategy**: Strategic caching throughout the pipeline reduces memory allocations and improves computational efficiency
 - **Flat Indexing Performance**: Simplified flat indexing system eliminates complex base calculations and provides improved computational efficiency
+- **Enhanced Type Safety**: Robust type handling for node feature extraction prevents runtime errors and improves system reliability
+- **Node Feature Extraction Performance**: Comprehensive type validation and default fallbacks improve processing efficiency and reliability
+- **Instruction Tuning Performance**: Enhanced type validation improves instruction processing accuracy and reliability
+- **Graph Utilities Performance**: Improved type safety enhances graph transformation performance and reliability
 
-These optimizations collectively provide substantial performance improvements while maintaining full backward compatibility and not changing any public APIs or breaking existing functionality.
+These optimizations and improvements collectively provide substantial performance enhancements and reliability improvements while maintaining full backward compatibility and not changing any public APIs or breaking existing functionality.
 
 ## Appendices
 
@@ -1200,6 +1306,12 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - **Edge Attribute Mapping**: Pre-built edge index maps for efficient attribute extraction
 - **Caching Strategy**: Strategic caching throughout the tokenization pipeline
 - **Flat Indexing Settings**: Simplified flat indexing system with node_scope control
+
+**Enhanced Node Feature Extraction Configuration**:
+- **Type Validation**: Comprehensive assertion checks for attribute dimensionality
+- **Default Value Fallbacks**: Automatic fallback to default attributes for missing data
+- **Instruction Integration**: Enhanced type validation for instruction-based tokenization
+- **Graph Utility Integration**: Improved type safety for graph transformation operations
 
 **Example Configurations**:
 - PCQM4Mv2: Demonstrates pretraining with masked language modeling and attention mode coordination
@@ -1267,6 +1379,35 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - **Caching Strategy**: Configure comprehensive caching throughout the pipeline
 - **Flat Indexing Configuration**: Configure flat indexing system with node_scope parameter
 
+**Enhanced Type Safety Configuration**:
+- **Node Feature Extraction**: Configure comprehensive type validation for node structure mappings
+- **Default Semantics Functions**: Set assertion parameters for discrete and embedding attribute validation
+- **Instruction Tuning**: Configure type validation for instruction-based tokenization
+- **Graph Utilities**: Set type safety parameters for graph transformation operations
+- **Error Handling**: Configure default value fallbacks for missing configurations
+
+**Node Feature Extraction Configuration**:
+- **Type Validation**: Configure assertion parameters for attribute dimensionality checks
+- **Default Value Generation**: Set parameters for default attribute creation
+- **Embedding Attribute Handling**: Configure embedding attribute dimensional consistency
+- **Discrete Attribute Formatting**: Set parameters for discrete attribute string formatting
+- **Jump Edge Handling**: Configure default attribute fallbacks for jump edges
+- **Node Structure Mapping**: Set validation parameters for node structure mappings
+
+**Instruction Tuning Configuration**:
+- **Node Structure Mapping Validation**: Configure type validation for instruction utilities
+- **Attribute Type Consistency**: Set parameters for maintaining attribute type consistency
+- **Default Attribute Integration**: Configure integration with default attribute systems
+- **Embedding Attribute Handling**: Set parameters for embedding attribute processing
+- **Type Safety Maintenance**: Configure type safety throughout instruction processing
+
+**Graph Utilities Configuration**:
+- **Tensor Type Conversions**: Configure tensor type conversion parameters
+- **Memory Allocation Optimization**: Set memory optimization parameters for graph utilities
+- **Edge Attribute Management**: Configure edge attribute handling parameters
+- **Unique Element Detection**: Set unique element detection parameters
+- **Self-Cycle Removal**: Configure self-cycle removal parameters
+
 **Flat Indexing Configuration**:
 - **Node Scope Control**: Configure node_scope parameter for indexing scope
 - **Base Parameter Ignoring**: Configure scope_base parameter to be ignored (backward compatibility)
@@ -1310,3 +1451,7 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
 - [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 - [instruct_tuning_utils.py:181-192](file://src/utils/instruct_tuning_utils.py#L181-L192)
+- [stacking.py:20-90](file://src/data/tokenizer/stacking.py#L20-L90)
+- [stacking.py:194-228](file://src/data/tokenizer/stacking.py#L194-L228)
+- [instruct_tuning_utils.py:160-195](file://src/utils/instruct_tuning_utils.py#L160-L195)
+- [graph_utils.py:1-87](file://src/data/_helpers/graph_utils.py#L1-L87)
