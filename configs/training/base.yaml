@@ -73,3 +73,19 @@ training:
     epoch_per_eval: 1
     k_samplers: 262144  # 2^14=16384  2^16=65536  2^18=262144
     true_valid: -1
+  # --- PyTorch Profiler Settings for GPU Performance Analysis ---
+  # Enable to analyze GPU duty cycle, SM utilization, and bottlenecks
+  profiler:
+    enabled: false  # Set to true to enable profiling
+    wait_steps: 5  # Steps to wait before profiling (let model warm up)
+    warmup_steps: 5  # Steps where profiler is on but data is discarded
+    active_steps: 10  # Steps to actively collect profiling data
+    repeat: 1  # Number of profiling cycles (0 = profile once and stop)
+    record_shapes: true  # Record tensor shapes for each operation
+    profile_memory: true  # Track CUDA memory allocations
+    with_stack: true  # Record Python call stacks (useful for identifying bottlenecks)
+    with_flops: true  # Estimate FLOPs for each operator
+    with_modules: true  # Record PyTorch module hierarchy
+    export_chrome_trace: true  # Export chrome://tracing compatible traces
+    export_stacks: false  # Export stack traces to file
+    tensorboard: true  # Export TensorBoard logs for visualization

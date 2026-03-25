@@ -34,6 +34,8 @@ from ..utils import (
     worker_init_fn_seed,
     opt_utils,
     training_utils,
+    create_profiler_from_config,
+    profile_region,
 )
 from ..utils.log_eval_dump_utils import evaluate, evaluate_generation, eval_pt_gen_only
 from ..conf import (
@@ -60,6 +62,7 @@ class PretrainMode(TrainingMode):
         self.task_type = None
         self.batch_size = None
         self.prof = None  # FlopsProfiler (DDP only)
+        self.torch_profiler = None  # PyTorch Profiler for detailed GPU analysis
         self.collator_fn = None
         self.train_loader = None
         self.valid_loader = None
@@ -444,6 +447,13 @@ class PretrainMode(TrainingMode):
             self.prof.start_profile()
         OmegaConf.save(config=cfg, f=os.path.join(output_dir, "config.yaml"))
 
+        # Initialize PyTorch Profiler for detailed GPU analysis
+        self.torch_profiler = create_profiler_from_config(
+            train_cfg.profiler, output_dir, rank=pipeline.rank
+        )
+        if self.torch_profiler.enabled:
+            self.torch_profiler.start()
+
         for epoch in range(train_stats.epoch_start, sched_cfg.epochs):
             train_stats.epoch = epoch
             train_loader = (
@@ -497,10 +507,18 @@ class PretrainMode(TrainingMode):
                                 print(f"{key}: {type(value).__name__} = {value}")
                         print("=" * 80 + "\n")
                     # ===================================
-                    training_utils.batch_training(
-                        data, model, train_cfg, train_stats, opt_stats
-                    )
-                    ema_stats.update_ema(model, step=train_stats.j)
+
+                    # Wrap training step with PyTorch Profiler
+                    with self.torch_profiler.step(train_stats.j):
+                        with profile_region("data_to_device"):
+                            pass  # data movement happens inside batch_training
+                        with profile_region("batch_training"):
+                            training_utils.batch_training(
+                                data, model, train_cfg, train_stats, opt_stats
+                            )
+                        with profile_region("ema_update"):
+                            ema_stats.update_ema(model, step=train_stats.j)
+
                     if train_stats.j % sched_cfg.logging_steps == 0:
                         log_eval_dump_utils.log_pt_training_stats(
                             train_cfg,
@@ -541,3 +559,8 @@ class PretrainMode(TrainingMode):
 
         if not pipeline.use_deepspeed:
             self.prof.end_profile()
+
+        # Export PyTorch Profiler summary
+        if self.torch_profiler.enabled:
+            self.torch_profiler.stop()
+            self.torch_profiler.export_summary()

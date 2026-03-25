@@ -1,4 +1,10 @@
-from .base_configs import Config, TrainingConfig, ScheduleConfig, TASK_TYPES
+from .base_configs import (
+    Config,
+    TrainingConfig,
+    ScheduleConfig,
+    ProfilerConfig,
+    TASK_TYPES,
+)
 from .tokenization import TokenizationConfig, DataConfig
 from .model import FinetuningHeadConfig
 from .generation import GenerationConfig

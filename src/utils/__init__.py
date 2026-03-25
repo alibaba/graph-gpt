@@ -17,6 +17,15 @@ from .metrics_utils import get_metrics
 from .ogb_utils import evaluate_ogb, format_ogb_output_for_csv
 from .loader_utils import set_up_shuffle_and_sampler, worker_init_fn_seed
 from .dataset_utils import EdgeBalancedClusterData
+from .profiler_utils import (
+    ProfilerConfig,
+    TrainingProfiler,
+    create_profiler_from_config,
+    profile_region,
+    get_cuda_memory_stats,
+    print_cuda_memory_stats,
+    reset_peak_memory_stats,
+)
 
 __all__ = [
     "connect_graph",
@@ -36,4 +45,11 @@ __all__ = [
     "set_up_shuffle_and_sampler",
     "worker_init_fn_seed",
     "EdgeBalancedClusterData",
+    "ProfilerConfig",
+    "TrainingProfiler",
+    "create_profiler_from_config",
+    "profile_region",
+    "get_cuda_memory_stats",
+    "print_cuda_memory_stats",
+    "reset_peak_memory_stats",
 ]

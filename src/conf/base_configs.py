@@ -128,6 +128,40 @@ class FinetuneEvalConfig:
 
 
 @dataclass
+class ProfilerConfig:
+    """Configuration for PyTorch Profiler to analyze GPU performance.
+
+    Attributes:
+        enabled: Whether to enable profiling (default: False)
+        wait_steps: Steps to wait before profiling starts (warmup the model)
+        warmup_steps: Steps where profiler is on but results are discarded
+        active_steps: Steps to actively collect profiling data
+        repeat: Number of profiling cycles (0 = run once and stop)
+        record_shapes: Record tensor shapes for each operator
+        profile_memory: Profile CUDA memory allocations
+        with_stack: Record Python call stacks
+        with_flops: Estimate FLOPs for operators
+        with_modules: Record PyTorch module hierarchy
+        export_chrome_trace: Export traces for chrome://tracing
+        tensorboard: Export TensorBoard-compatible logs
+    """
+
+    enabled: bool = False
+    wait_steps: int = 5
+    warmup_steps: int = 5
+    active_steps: int = 10
+    repeat: int = 1
+    record_shapes: bool = True
+    profile_memory: bool = True
+    with_stack: bool = True
+    with_flops: bool = True
+    with_modules: bool = True
+    export_chrome_trace: bool = True
+    export_stacks: bool = False
+    tensorboard: bool = True
+
+
+@dataclass
 class TrainingConfig:
     deepspeed_conf_file: str = ""
     use_deepspeed: bool = False
@@ -159,6 +193,7 @@ class TrainingConfig:
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     finetune: FinetuneTrainConfig = field(default_factory=FinetuneTrainConfig)
     ft_eval: FinetuneEvalConfig = field(default_factory=FinetuneEvalConfig)
+    profiler: ProfilerConfig = field(default_factory=ProfilerConfig)
 
 
 def update_ft_num_steps(train_cfg: TrainingConfig, samples_per_gpu):

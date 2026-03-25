@@ -27,6 +27,8 @@ from ..utils import (
     inspect_tokenization_results,
     opt_utils,
     training_utils,
+    create_profiler_from_config,
+    profile_region,
 )
 from ..utils.log_eval_dump_utils import ft_evaluate as evaluate
 from ..conf import (
@@ -59,6 +61,7 @@ class FinetuneMode(TrainingMode):
         self.train_loader_for_eval = None
         self.valid_loader = None
         self.test_loader = None
+        self.torch_profiler = None  # PyTorch Profiler for detailed GPU analysis
         # Reference to train dataset for dict_bounds check in _create_model
         self._train_dataset_for_bounds = None
 
@@ -386,6 +389,13 @@ class FinetuneMode(TrainingMode):
         if not train_cfg.ft_eval.eval_only:
             OmegaConf.save(config=cfg, f=os.path.join(output_dir, "config.yaml"))
 
+        # Initialize PyTorch Profiler for detailed GPU analysis
+        self.torch_profiler = create_profiler_from_config(
+            train_cfg.profiler, output_dir, rank=pipeline.rank
+        )
+        if self.torch_profiler.enabled and not train_cfg.ft_eval.eval_only:
+            self.torch_profiler.start()
+
         with pipeline.tmp_env:
             for epoch in range(train_stats.epoch_start, sched_cfg.epochs):
                 train_stats.epoch = epoch
@@ -411,15 +421,21 @@ class FinetuneMode(TrainingMode):
 
                     for i, data in enumerate(loader_stats.train_loader):
                         train_stats.i = i
-                        training_utils.ft_batch_training(
-                            data,
-                            model,
-                            pipeline.model_cfg.ft_head,
-                            train_cfg,
-                            train_stats,
-                            opt_stats,
-                        )
-                        ema_stats.update_ema(model, step=train_stats.j, ft=True)
+
+                        # Wrap training step with PyTorch Profiler
+                        with self.torch_profiler.step(train_stats.j):
+                            with profile_region("batch_training"):
+                                training_utils.ft_batch_training(
+                                    data,
+                                    model,
+                                    pipeline.model_cfg.ft_head,
+                                    train_cfg,
+                                    train_stats,
+                                    opt_stats,
+                                )
+                            with profile_region("ema_update"):
+                                ema_stats.update_ema(model, step=train_stats.j, ft=True)
+
                         if train_stats.j % sched_cfg.logging_steps == 0:
                             log_eval_dump_utils.log_ft_training_stats(
                                 train_cfg, train_stats, tb_writer
@@ -465,3 +481,8 @@ class FinetuneMode(TrainingMode):
                         ema_stats,
                         tb_writer,
                     )
+
+        # Export PyTorch Profiler summary
+        if self.torch_profiler.enabled and not train_cfg.ft_eval.eval_only:
+            self.torch_profiler.stop()
+            self.torch_profiler.export_summary()
