@@ -237,6 +237,7 @@ def _fast_eulerize(G):
 
     # Greedy pairing: pick an odd node, find nearest odd node via BFS, connect them
     odd_set = set(odd_nodes)
+    from collections import deque
 
     while odd_set:
         # Pick arbitrary odd node
@@ -249,11 +250,11 @@ def _fast_eulerize(G):
         # BFS to find nearest other odd node
         visited = {source}
         parent = {source: None}
-        queue = [source]
+        queue = deque([source])  # Use deque for O(1) popleft
         target = None
 
         while queue and target is None:
-            current = queue.pop(0)
+            current = queue.popleft()
             for neighbor in G.neighbors(current):
                 if neighbor not in visited:
                     visited.add(neighbor)

@@ -12,11 +12,11 @@
 
 ## Update Summary
 **Changes Made**
-- Added comprehensive documentation for new optimized Eulerian graph algorithms
-- Documented performance improvements (7.83x to 72.08x speedup) for _fast_is_eulerian, _fast_eulerize, _fast_eulerian_circuit, and _fast_customized_eulerian_path
-- Updated algorithmic implementation details with benchmark results
-- Enhanced performance considerations section with new optimization strategies
-- Added new function references and API documentation
+- Added comprehensive documentation for the new `_optimal_fast_eulerize` function that provides significantly improved performance for Chinese Postman problem solving
+- Documented the optimal Chinese Postman algorithm implementation with up to 10.02x speedup compared to original nx.eulerize
+- Enhanced benchmarking data showing performance improvements across different graph types and sizes
+- Updated algorithmic implementation details with the new optimal eulerization approach
+- Added new function references and API documentation for the enhanced eulerization capabilities
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -77,6 +77,7 @@ D1 --> T1
 - **Optimized Eulerian path construction utilities**:
   - Fast Eulerian graph checking with early termination
   - Efficient graph Eulerization using greedy shortest-path pairing
+  - Optimal Chinese Postman solution with blossom algorithm matching
   - Optimized Hierholzer's algorithm for path/circuit construction
   - Randomized path/circuit selection for augmentation
   - Shortening Eulerian paths to remove redundant edges
@@ -90,16 +91,16 @@ D1 --> T1
   - Performance optimization settings
 
 Key functions and responsibilities:
-- **Fast algorithms**: [_fast_is_eulerian:174-192](file://src/utils/nx_utils.py#L174-L192), [_fast_eulerize:195-284](file://src/utils/nx_utils.py#L195-L284), [_fast_eulerian_circuit:317-388](file://src/utils/nx_utils.py#L317-L388), [_fast_customized_eulerian_path:390-404](file://src/utils/nx_utils.py#L390-L404)
-- **Path construction**: [graph2path_v2:388-410](file://src/utils/nx_utils.py#L388-L410), [connected_graph2path:413-422](file://src/utils/nx_utils.py#L413-L422)
+- **Fast algorithms**: [_fast_is_eulerian:174-192](file://src/utils/nx_utils.py#L174-L192), [_fast_eulerize:195-284](file://src/utils/nx_utils.py#L195-L284), [_optimal_fast_eulerize:287-388](file://src/utils/nx_utils.py#L287-L388), [_fast_eulerian_circuit:421-492](file://src/utils/nx_utils.py#L421-L492), [_fast_customized_eulerian_path:494-508](file://src/utils/nx_utils.py#L494-L508)
+- **Path construction**: [graph2path_v2:662-696](file://src/utils/nx_utils.py#L662-L696), [connected_graph2path:687-696](file://src/utils/nx_utils.py#L687-L696)
 - **Eulerization and traversal**: [nx.eulerize:177-179](file://src/utils/nx_utils.py#L177-L179), [_customized_eulerian_path:205-210](file://src/utils/nx_utils.py#L205-L210)
-- **Path shortening**: [shorten_path:331-348](file://src/utils/nx_utils.py#L331-L348)
+- **Path shortening**: [shorten_path:605-622](file://src/utils/nx_utils.py#L605-L622)
 - **Tokenization pipeline**: [GSTTokenizer.raw_tokenize:425-535](file://src/data/tokenizer/core.py#L425-L535)
 - **Edge typing**: [get_edge_type:277-290](file://src/utils/nx_utils.py#L277-L290)
 
 **Section sources**
-- [nx_utils.py:174-404](file://src/utils/nx_utils.py#L174-L404)
-- [nx_utils.py:331-422](file://src/utils/nx_utils.py#L331-L422)
+- [nx_utils.py:174-508](file://src/utils/nx_utils.py#L174-L508)
+- [nx_utils.py:605-696](file://src/utils/nx_utils.py#L605-L696)
 - [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535)
 - [nx_utils.py:271-290](file://src/utils/nx_utils.py#L271-L290)
 
@@ -126,7 +127,7 @@ Util->>Util : connect_graph_sequential()
 end
 Util->>Util : _fast_is_eulerian(G)
 alt Not Eulerian
-Util->>Util : _fast_eulerize(G)
+Util->>Util : _fast_eulerize(G) or _optimal_fast_eulerize(G)
 end
 Util->>Util : Choose source node
 Util->>Util : _fast_customized_eulerian_path(source)
@@ -141,9 +142,9 @@ Tok-->>DS : Tokenized input + labels
 
 **Diagram sources**
 - [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535)
-- [nx_utils.py:388-437](file://src/utils/nx_utils.py#L388-L437)
+- [nx_utils.py:662-696](file://src/utils/nx_utils.py#L662-L696)
 - [nx_utils.py:205-210](file://src/utils/nx_utils.py#L205-L210)
-- [nx_utils.py:331-348](file://src/utils/nx_utils.py#L331-L348)
+- [nx_utils.py:605-622](file://src/utils/nx_utils.py#L605-L622)
 
 ## Detailed Component Analysis
 
@@ -151,6 +152,7 @@ Tok-->>DS : Tokenized input + labels
 - **Eulerian cycle**: A closed walk traversing each edge exactly once.
 - **Eulerian path**: An open walk traversing each edge exactly once, starting and ending at distinct vertices.
 - **Semi-Eulerian**: Graphs with an Eulerian path but not an Eulerian cycle.
+- **Chinese Postman Problem**: Finding the minimum weight set of edges to add to make all vertices have even degree.
 - **Necessary and sufficient conditions**:
   - Undirected graph: All vertices have even degree (Eulerian cycle), or exactly two vertices have odd degree (semi-Eulerian path).
   - Directed graph: Strong connectivity and equal in-degree and out-degree for all vertices (Eulerian cycle), or a single pair differing by one (semi-Eulerian path).
@@ -159,15 +161,16 @@ Tok-->>DS : Tokenized input + labels
 Practical implications in the code:
 - Non-Eulerian graphs are fast-Eulerized before path discovery using optimized algorithms.
 - Disconnected graphs are made connected by adding jump edges between components.
+- The new `_optimal_fast_eulerize` function provides the optimal Chinese Postman solution with blossom algorithm matching.
 
 **Section sources**
 - [nx_utils.py:174-192](file://src/utils/nx_utils.py#L174-L192)
-- [nx_utils.py:310-323](file://src/utils/nx_utils.py#L310-L323)
+- [nx_utils.py:287-388](file://src/utils/nx_utils.py#L287-L388)
 
 ### Path Construction and Traversal Strategies
 - **Connected graphs**:
   - Fast-check if Eulerian using _fast_is_eulerian.
-  - Fast-Eulerize if not Eulerian using _fast_eulerize.
+  - Fast-Eulerize if not Eulerian using either _fast_eulerize (greedy) or _optimal_fast_eulerize (optimal).
   - Randomly select a source node and compute an Eulerian path or circuit using _fast_customized_eulerian_path.
   - Shorten the path to remove redundant edges after revisiting the start node.
 - **Disconnected graphs**:
@@ -179,23 +182,26 @@ flowchart TD
 Start(["Start"]) --> CheckConn["Check connectedness"]
 CheckConn --> |Disconnected| Connect["Add jump edges between components"]
 CheckConn --> |Connected| FastCheck["Fast check Eulerian status"]
-FastCheck --> |Not Eulerian| FastEulerize["Fast Eulerize graph"]
+FastCheck --> |Not Eulerian| ChooseEulerize{"Choose Eulerization Method"}
+ChooseEulerize --> |Greedy| FastEulerize["Fast Eulerize graph (greedy)"]
+ChooseEulerize --> |Optimal| OptimalEulerize["_optimal_fast_eulerize (Chinese Postman)"]
 FastCheck --> |Eulerian| ChooseSrc["Choose random source node"]
 FastEulerize --> ChooseSrc
+OptimalEulerize --> ChooseSrc
 ChooseSrc --> FastTraverse["Compute Eulerian path or circuit<br/>using optimized algorithms"]
 FastTraverse --> Shorten["Shorten path to unique edges"]
 Shorten --> Out(["Return path"])
 ```
 
 **Diagram sources**
-- [nx_utils.py:388-422](file://src/utils/nx_utils.py#L388-L422)
-- [nx_utils.py:331-348](file://src/utils/nx_utils.py#L331-L348)
+- [nx_utils.py:662-696](file://src/utils/nx_utils.py#L662-L696)
+- [nx_utils.py:605-622](file://src/utils/nx_utils.py#L605-L622)
 - [nx_utils.py:205-210](file://src/utils/nx_utils.py#L205-L210)
 
 **Section sources**
-- [nx_utils.py:388-422](file://src/utils/nx_utils.py#L388-L422)
+- [nx_utils.py:662-696](file://src/utils/nx_utils.py#L662-L696)
 - [nx_utils.py:205-210](file://src/utils/nx_utils.py#L205-L210)
-- [nx_utils.py:331-348](file://src/utils/nx_utils.py#L331-L348)
+- [nx_utils.py:605-622](file://src/utils/nx_utils.py#L605-L622)
 
 ### Edge Inclusion and Type Tokens
 - Edge types are inferred from the graph's edge_index:
@@ -223,7 +229,7 @@ Bwd2 --> |Yes| Bi["Type: bi"]
 - [nx_utils.py:271-290](file://src/utils/nx_utils.py#L271-L290)
 
 ### Tokenization Pipeline and Sequence Representation
-- The path is transformed into a raw sequence alternating nodes and edges: [get_raw_seq_from_path:425-437](file://src/utils/nx_utils.py#L425-L437).
+- The path is transformed into a raw sequence alternating nodes and edges: [get_raw_seq_from_path:699-711](file://src/utils/nx_utils.py#L699-L711).
 - Node and edge structure mappings are generated from the path:
   - Node mapping: positional or cyclic indexing within configured scope.
   - Edge mapping: type tokens derived from edge directionality.
@@ -245,17 +251,17 @@ Tok-->>Tok : Final token sequence + labels
 
 **Diagram sources**
 - [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535)
-- [nx_utils.py:425-437](file://src/utils/nx_utils.py#L425-L437)
-- [nx_utils.py:234-268](file://src/utils/nx_utils.py#L234-L268)
+- [nx_utils.py:699-711](file://src/utils/nx_utils.py#L699-L711)
+- [nx_utils.py:528-564](file://src/utils/nx_utils.py#L528-L564)
 - [nx_utils.py:263-268](file://src/utils/nx_utils.py#L263-L268)
-- [nx_utils.py:554-591](file://src/utils/nx_utils.py#L554-L591)
+- [nx_utils.py:826-865](file://src/utils/nx_utils.py#L826-L865)
 
 **Section sources**
 - [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535)
-- [nx_utils.py:234-268](file://src/utils/nx_utils.py#L234-L268)
+- [nx_utils.py:528-564](file://src/utils/nx_utils.py#L528-L564)
 - [nx_utils.py:263-268](file://src/utils/nx_utils.py#L263-L268)
-- [nx_utils.py:425-437](file://src/utils/nx_utils.py#L425-L437)
-- [nx_utils.py:554-591](file://src/utils/nx_utils.py#L554-L591)
+- [nx_utils.py:699-711](file://src/utils/nx_utils.py#L699-L711)
+- [nx_utils.py:826-865](file://src/utils/nx_utils.py#L826-L865)
 
 ### Configuration Options for Path Selection and Optimization
 - **Structure and semantics**:
@@ -282,15 +288,15 @@ Tok-->>Tok : Final token sequence + labels
   - Disconnected graphs are connected via jump edges; paths are concatenated across components with inter-component jump edges included in the sequence.
 
 These behaviors are implemented by:
-- [graph2path_v2:388-410](file://src/utils/nx_utils.py#L388-L410)
-- [connected_graph2path:413-422](file://src/utils/nx_utils.py#L413-L422)
-- [connect_graph_sequential:310-323](file://src/utils/nx_utils.py#L310-L323)
-- [shorten_path:331-348](file://src/utils/nx_utils.py#L331-L348)
+- [graph2path_v2:662-696](file://src/utils/nx_utils.py#L662-L696)
+- [connected_graph2path:687-696](file://src/utils/nx_utils.py#L687-L696)
+- [connect_graph_sequential:584-597](file://src/utils/nx_utils.py#L584-L597)
+- [shorten_path:605-622](file://src/utils/nx_utils.py#L605-L622)
 
 **Section sources**
-- [nx_utils.py:388-422](file://src/utils/nx_utils.py#L388-L422)
-- [nx_utils.py:310-323](file://src/utils/nx_utils.py#L310-L323)
-- [nx_utils.py:331-348](file://src/utils/nx_utils.py#L331-L348)
+- [nx_utils.py:662-696](file://src/utils/nx_utils.py#L662-L696)
+- [nx_utils.py:584-597](file://src/utils/nx_utils.py#L584-L597)
+- [nx_utils.py:605-622](file://src/utils/nx_utils.py#L605-L622)
 
 ## Optimized Algorithms
 
@@ -333,6 +339,35 @@ The `_fast_eulerize` function transforms a connected undirected graph into an Eu
 3. Greedy pairing using BFS shortest paths
 4. Add duplicate edges along reconstructed paths
 
+### Optimal Chinese Postman Solution
+The `_optimal_fast_eulerize` function implements the optimal Chinese Postman solution using blossom algorithm matching, achieving up to 10.02x speedup compared to NetworkX's `nx.eulerize`.
+
+**Key optimizations**:
+- Single-source BFS from each odd node instead of all-pairs - O(k×(V+E)) vs O(k²×(V+E))
+- Efficient path reconstruction using parent pointers
+- Reuses NetworkX's `max_weight_matching` (Blossom algorithm)
+- Optimal edge addition minimizes total added weight
+
+**Time Complexity**: O(k × (V + E) + k³) where k = number of odd-degree nodes
+**Space Complexity**: O(k × V) for storing paths from each odd node
+
+**Algorithm Details**:
+1. Find all odd-degree nodes in O(V)
+2. Run BFS from each odd node once to get all shortest paths
+3. Build complete graph on odd nodes with weights = path lengths
+4. Find minimum weight perfect matching using blossom algorithm
+5. Add duplicate edges along matched paths
+
+**Benchmark Results**:
+```
+Graph              | Odd Nodes | nx.eulerize | _optimal_fast | Speedup | Same Result
+-------------------|-----------|-------------|---------------|---------|-------------
+Grid 20x20         | 72        | 172.0 ms    | 17.2 ms       | 10.02x  | ✓ Yes
+Grid 10x10         | 32        | 10.7 ms     | 2.5 ms        | 4.20x   | ✓ Yes
+Wheel 200          | 200       | 80.2 ms     | 43.3 ms       | 1.85x   | ✓ Yes
+Watts-Strogatz 500 | 232       | 877.0 ms    | 592.2 ms      | 1.48x   | ✓ Yes
+```
+
 ### Fast Hierholzer's Algorithm
 The `_fast_eulerian_circuit` function implements an optimized Hierholzer's algorithm with 5.86x to 9.38x performance improvement.
 
@@ -353,8 +388,9 @@ The `_fast_customized_eulerian_path` function provides ~6-9x faster path/circuit
 **Section sources**
 - [nx_utils.py:174-192](file://src/utils/nx_utils.py#L174-L192)
 - [nx_utils.py:195-284](file://src/utils/nx_utils.py#L195-L284)
-- [nx_utils.py:317-388](file://src/utils/nx_utils.py#L317-L388)
-- [nx_utils.py:390-404](file://src/utils/nx_utils.py#L390-L404)
+- [nx_utils.py:287-388](file://src/utils/nx_utils.py#L287-L388)
+- [nx_utils.py:421-492](file://src/utils/nx_utils.py#L421-L492)
+- [nx_utils.py:494-508](file://src/utils/nx_utils.py#L494-L508)
 
 ## Dependency Analysis
 - **Tokenizer depends on**:
@@ -383,6 +419,7 @@ NxU --> TG["torch_geometric"]
 - **Computational complexity**:
   - Fast Eulerian path/circuit computation is linear in the number of edges for optimized implementations.
   - Fast Eulerization adds edges to balance degrees using greedy pairing; worst-case depends on the number of odd-degree vertices.
+  - Optimal Chinese Postman solution uses blossom algorithm matching with O(k³) complexity for matching.
   - Path shortening remains linear in path length.
 - **Memory optimization**:
   - Converting PyG graphs to NetworkX and back introduces overhead; batching and caching can mitigate.
@@ -392,44 +429,46 @@ NxU --> TG["torch_geometric"]
 - **Performance improvements**:
   - **Fast Eulerian checking**: 7.83x to 72.08x speedup
   - **Fast Eulerization**: 7.83x to 72.08x speedup
+  - **Optimal Chinese Postman**: Up to 10.02x speedup
   - **Fast Hierholzer's algorithm**: 5.86x to 9.38x speedup
   - **Fast customized path**: 6-9x speedup
 - **Practical tips**:
   - Prefer connected graphs or use minimal jump edges to reduce path length.
   - Remove redundant edge type tokens to reduce sequence length.
+  - Use `_optimal_fast_eulerize` for graphs with many odd nodes where optimal solution is needed.
   - Leverage optimized algorithms for large-scale graph processing.
 
 ## Troubleshooting Guide
 Common issues and remedies:
 - **Disconnected graphs**:
   - Symptom: Missing connections between components.
-  - Fix: Ensure jump edges are added via [connect_graph_sequential:310-323](file://src/utils/nx_utils.py#L310-L323).
+  - Fix: Ensure jump edges are added via [connect_graph_sequential:584-597](file://src/utils/nx_utils.py#L584-L597).
 - **Self-loops and multi-edges**:
   - Behavior: Self-loops are treated as edges; multi-edges are handled by edge_index lookup.
   - Verify: Use [get_edge_index:271-274](file://src/utils/nx_utils.py#L271-L274) and [get_edge_type:277-290](file://src/utils/nx_utils.py#L277-L290) to confirm mapping.
 - **Overly long sequences**:
   - Cause: Eulerian paths revisit the start node; redundant edges accumulate.
-  - Solution: Apply [shorten_path:331-348](file://src/utils/nx_utils.py#L331-L348) to prune duplicates.
+  - Solution: Apply [shorten_path:605-622](file://src/utils/nx_utils.py#L605-L622) to prune duplicates.
 - **Node permutation effects**:
   - Behavior: Nodes are permuted for augmentation; original node-to-token mapping is preserved via inverse permutation.
-  - Check: [permute_nodes:594-612](file://src/utils/nx_utils.py#L594-L612) and related mapping logic.
+  - Check: [permute_nodes:868-886](file://src/utils/nx_utils.py#L868-L886) and related mapping logic.
 - **Configuration mismatches**:
   - Symptoms: Unexpected tokenization or missing structure functions.
   - Verify: [structure.yaml:77-121](file://configs/tokenization/graph_lvl/structure.yaml#L77-L121) and [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535).
 - **Performance degradation**:
   - Cause: Using legacy NetworkX algorithms instead of optimized versions.
-  - Solution: Ensure optimized algorithms (_fast_*) are being used for production workloads.
+  - Solution: Ensure optimized algorithms (_fast_* and _optimal_fast_*) are being used for production workloads.
 
 **Section sources**
-- [nx_utils.py:310-323](file://src/utils/nx_utils.py#L310-L323)
+- [nx_utils.py:584-597](file://src/utils/nx_utils.py#L584-L597)
 - [nx_utils.py:271-290](file://src/utils/nx_utils.py#L271-L290)
-- [nx_utils.py:331-348](file://src/utils/nx_utils.py#L331-L348)
-- [nx_utils.py:594-612](file://src/utils/nx_utils.py#L594-L612)
+- [nx_utils.py:605-622](file://src/utils/nx_utils.py#L605-L622)
+- [nx_utils.py:868-886](file://src/utils/nx_utils.py#L868-L886)
 - [structure.yaml:77-121](file://configs/tokenization/graph_lvl/structure.yaml#L77-L121)
 - [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535)
 
 ## Conclusion
-The Eulerian path conversion system provides a robust framework for turning graphs into sequential representations suitable for tokenization and downstream modeling. The newly optimized algorithms deliver significant performance improvements (7.83x to 72.08x speedup) while maintaining functional equivalence with NetworkX implementations. By leveraging fast Eulerian graph checking, efficient Eulerization, and optimized Hierholzer's algorithm, the system supports large-scale graph processing. The integration with NetworkX for graph algorithms, applying fast Eulerization and connectivity adjustments, and carefully managing edge types and node mappings enables diverse graph topologies. Configuration options allow fine-tuning of tokenization behavior, while path shortening and randomization improve generalization. The documented optimized components and examples offer a clear blueprint for extending or customizing the path conversion strategy with substantial performance benefits.
+The Eulerian path conversion system provides a robust framework for turning graphs into sequential representations suitable for tokenization and downstream modeling. The newly optimized algorithms deliver significant performance improvements (7.83x to 72.08x speedup) while maintaining functional equivalence with NetworkX implementations. The addition of the `_optimal_fast_eulerize` function provides the optimal Chinese Postman solution with up to 10.02x speedup, making it suitable for scenarios where minimal edge additions are required. By leveraging fast Eulerian graph checking, efficient greedy Eulerization, optimal Chinese Postman solution, and optimized Hierholzer's algorithm, the system supports large-scale graph processing. The integration with NetworkX for graph algorithms, applying fast Eulerization and connectivity adjustments, and carefully managing edge types and node mappings enables diverse graph topologies. Configuration options allow fine-tuning of tokenization behavior, while path shortening and randomization improve generalization. The documented optimized components and examples offer a clear blueprint for extending or customizing the path conversion strategy with substantial performance benefits.
 
 ## Appendices
 
@@ -437,32 +476,34 @@ The Eulerian path conversion system provides a robust framework for turning grap
 - **Fast algorithms**:
   - [_fast_is_eulerian:174-192](file://src/utils/nx_utils.py#L174-L192)
   - [_fast_eulerize:195-284](file://src/utils/nx_utils.py#L195-L284)
-  - [_fast_eulerian_circuit:317-388](file://src/utils/nx_utils.py#L317-L388)
-  - [_fast_customized_eulerian_path:390-404](file://src/utils/nx_utils.py#L390-L404)
+  - [_optimal_fast_eulerize:287-388](file://src/utils/nx_utils.py#L287-L388)
+  - [_fast_eulerian_circuit:421-492](file://src/utils/nx_utils.py#L421-L492)
+  - [_fast_customized_eulerian_path:494-508](file://src/utils/nx_utils.py#L494-L508)
 - **Path construction**:
-  - [graph2path_v2:388-410](file://src/utils/nx_utils.py#L388-L410)
-  - [connected_graph2path:413-422](file://src/utils/nx_utils.py#L413-L422)
-  - [shorten_path:331-348](file://src/utils/nx_utils.py#L331-L348)
+  - [graph2path_v2:662-696](file://src/utils/nx_utils.py#L662-L696)
+  - [connected_graph2path:687-696](file://src/utils/nx_utils.py#L687-L696)
+  - [shorten_path:605-622](file://src/utils/nx_utils.py#L605-L622)
 - **Traversal and augmentation**:
   - [_customized_eulerian_path:205-210](file://src/utils/nx_utils.py#L205-L210)
 - **Connectivity and edge typing**:
-  - [connect_graph_sequential:310-323](file://src/utils/nx_utils.py#L310-L323)
+  - [connect_graph_sequential:584-597](file://src/utils/nx_utils.py#L584-L597)
   - [get_edge_type:277-290](file://src/utils/nx_utils.py#L277-L290)
 - **Tokenization**:
   - [GSTTokenizer.raw_tokenize:425-535](file://src/data/tokenizer/core.py#L425-L535)
-  - [get_raw_seq_from_path:425-437](file://src/utils/nx_utils.py#L425-L437)
+  - [get_raw_seq_from_path:699-711](file://src/utils/nx_utils.py#L699-L711)
 
 ### Appendix B: Performance Benchmark Summary
 - **Fast Eulerian checking**: 7.83x to 72.08x speedup
 - **Fast Eulerization**: 7.83x to 72.08x speedup
+- **Optimal Chinese Postman**: Up to 10.02x speedup
 - **Fast Hierholzer's algorithm**: 5.86x to 9.38x speedup
 - **Fast customized path**: 6-9x speedup
 - **Overall system improvement**: Significant reduction in tokenization latency for large graphs
 
 **Section sources**
-- [nx_utils.py:174-404](file://src/utils/nx_utils.py#L174-L404)
-- [nx_utils.py:388-437](file://src/utils/nx_utils.py#L388-L437)
+- [nx_utils.py:174-508](file://src/utils/nx_utils.py#L174-L508)
+- [nx_utils.py:662-696](file://src/utils/nx_utils.py#L662-L696)
 - [nx_utils.py:205-210](file://src/utils/nx_utils.py#L205-L210)
-- [nx_utils.py:310-323](file://src/utils/nx_utils.py#L310-L323)
+- [nx_utils.py:584-597](file://src/utils/nx_utils.py#L584-L597)
 - [nx_utils.py:277-290](file://src/utils/nx_utils.py#L277-L290)
 - [core.py:425-535](file://src/data/tokenizer/core.py#L425-L535)
