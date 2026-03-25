@@ -19,6 +19,13 @@
 - [modeling_pretrain.py](file://src/models/graphgpt/modeling_pretrain.py)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Enhanced evaluation logging integration with Weights & Biases (wandb) for better monitoring capabilities
+- Added comprehensive evaluation metrics logging with improved training statistics correlation
+- Implemented structured evaluation result logging with prefix-based metric naming
+- Enhanced monitoring capabilities for pre-training processes through unified logging infrastructure
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -33,6 +40,8 @@
 
 ## Introduction
 This document explains the end-to-end Graph-GPT pre-training pipeline, from configuration to checkpoint saving. It covers how the TrainingPipeline orchestrates the workflow, how PretrainMode implements pre-training specifics, and how Hydra integrates configuration. It also documents the step-by-step execution flow (data loading, model initialization, training loop management, evaluation), checkpoint and logging strategies, distributed training setup, memory optimization, fault tolerance, and practical debugging and profiling tips.
+
+**Updated** Enhanced with improved evaluation logging capabilities through Weights & Biases integration, providing better monitoring and correlation between training statistics and evaluation metrics.
 
 ## Project Structure
 The pre-training entry point is a Hydra-driven Python script that constructs a TrainingPipeline with a PretrainMode strategy. Configuration is organized via Hydra groups (tokenization, model, training, generation) and defaults. Shell scripts demonstrate command-line usage and configuration overrides for different datasets and hardware setups.
@@ -92,8 +101,10 @@ Key responsibilities:
 - Data pipeline: dataset reading, tokenizer, vocab, sampler, schedule updates
 - Model creation and initialization (including DeepSpeed and gradient checkpointing)
 - Training loop: batching, optimization, EMA updates, logging, periodic evaluation, and checkpointing
-- Evaluation: validation, test, and generation evaluation
-- Logging and checkpointing: CSV logs, TensorBoard summaries, and model checkpoints
+- Evaluation: validation, test, and generation evaluation with enhanced logging integration
+- Logging and checkpointing: CSV logs, TensorBoard summaries, Weights & Biases monitoring, and model checkpoints
+
+**Updated** Enhanced evaluation logging with Weights & Biases integration for comprehensive monitoring and better correlation between training statistics and evaluation metrics.
 
 **Section sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
@@ -136,9 +147,12 @@ Mode->>Mode : "run_training()"
 loop "Per step"
 Mode->>Model : "forward/backward/update"
 Mode->>Utils : "log_pt_training_stats(), log_dump_pt_training_stats()"
+Mode->>Utils : "log_to_wandb_pt(), log_eval_to_wandb()"
 end
 Pipe->>Pipe : "_cleanup()"
 ```
+
+**Updated** Enhanced with Weights & Biases logging integration for comprehensive monitoring of both training and evaluation metrics.
 
 **Diagram sources**
 - [train_pretrain.py:12-18](file://examples/train_pretrain.py#L12-L18)
@@ -273,12 +287,16 @@ Mode->>Model : "Batch training"
 Mode->>EMA : "Update EMA"
 alt "Logging step"
 Mode->>Log : "log_pt_training_stats()"
+Mode->>Log : "log_to_wandb_pt()"
 end
 alt "Saving step"
 Mode->>Log : "log_dump_pt_training_stats()"
+Mode->>Log : "log_eval_to_wandb()"
 end
 end
 ```
+
+**Updated** Enhanced with Weights & Biases logging integration for comprehensive monitoring of both training and evaluation metrics.
 
 **Diagram sources**
 - [pretrain_mode.py:412-499](file://src/training/pretrain_mode.py#L412-L499)
@@ -313,6 +331,36 @@ EMATest --> Done
 - [log_eval_dump_utils.py:242-304](file://src/utils/log_eval_dump_utils.py#L242-L304)
 - [log_eval_dump_utils.py:307-384](file://src/utils/log_eval_dump_utils.py#L307-L384)
 - [log_eval_dump_utils.py:588-641](file://src/utils/log_eval_dump_utils.py#L588-L641)
+
+### Enhanced Evaluation Logging and Monitoring
+**Updated** The evaluation logging system has been significantly enhanced with Weights & Biases integration for comprehensive monitoring capabilities.
+
+- **Comprehensive Metrics Logging**: Evaluation metrics are now logged with structured naming conventions using prefix-based metric names (e.g., "valid/loss", "test/loss").
+- **Training-Evaluation Correlation**: Evaluation metrics are logged alongside training statistics, enabling better correlation between training progress and evaluation performance.
+- **Unified Logging Infrastructure**: Both CSV logs and Weights & Biases provide synchronized evaluation results for comprehensive monitoring.
+- **Enhanced WandB Integration**: Dedicated evaluation logging function (`log_eval_to_wandb`) provides structured metric logging with proper step tracking.
+
+```mermaid
+flowchart TD
+A["Evaluation Complete"] --> B["Collect Metrics"]
+B --> C["Format Metrics"]
+C --> D{"WandB Enabled?"}
+D --> |Yes| E["log_eval_to_wandb()"]
+D --> |No| F["CSV Logging Only"]
+E --> G["Prefix Metrics (valid/test/ema)"]
+G --> H["Log to WandB"]
+F --> I["Update CSV Logs"]
+H --> J["Monitor Results"]
+I --> J
+```
+
+**Diagram sources**
+- [pretrain_mode.py:544-555](file://src/training/pretrain_mode.py#L544-L555)
+- [log_eval_dump_utils.py:1109-1127](file://src/utils/log_eval_dump_utils.py#L1109-L1127)
+
+**Section sources**
+- [pretrain_mode.py:544-555](file://src/training/pretrain_mode.py#L544-L555)
+- [log_eval_dump_utils.py:1109-1127](file://src/utils/log_eval_dump_utils.py#L1109-L1127)
 
 ### Checkpoint Management and Logging
 - Checkpoint saving: Uses DeepSpeed save_checkpoint or PyTorch save for DDP; cleans up older checkpoints.
@@ -365,7 +413,7 @@ E --> H["Disable Cache"]
 
 ### Fault Tolerance Mechanisms
 - Resume from latest checkpoint: If a log exists in output_dir, resume training from there instead of pretrained checkpoint.
-- Robust checkpoint loading: Falls back to DeepSpeed’s zero-to-fp32 API when direct loading fails.
+- Robust checkpoint loading: Falls back to DeepSpeed's zero-to-fp32 API when direct loading fails.
 - Graceful evaluation: Handles distributed reductions and NaN checks during evaluation.
 
 **Section sources**
@@ -412,6 +460,8 @@ Mode --> Model["modeling_pretrain.py"]
 - Steps per saving: Tune to balance checkpoint frequency and I/O overhead.
 - Profiling: Use DeepSpeed flops profiler to identify bottlenecks.
 
+**Updated** Enhanced monitoring capabilities through Weights & Biases integration provide better performance insights and correlation between training and evaluation metrics.
+
 [No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
@@ -421,6 +471,9 @@ Common issues and remedies:
 - OOM errors: Reduce batch_size, enable gradient checkpointing, or switch to smaller model variants.
 - Evaluation hangs: Verify distributed environment variables and sampler distribution across ranks.
 - Logging gaps: Confirm steps_per_saving and logging_steps alignment with schedule configuration.
+- **WandB Issues**: Ensure API key is configured and project name is set when enabling wandb logging.
+
+**Updated** Added troubleshooting guidance for Weights & Biases integration issues.
 
 **Section sources**
 - [pipeline.py:129-135](file://src/training/pipeline.py#L129-L135)
@@ -429,6 +482,8 @@ Common issues and remedies:
 
 ## Conclusion
 The Graph-GPT pre-training pipeline integrates Hydra configuration, a flexible TrainingMode strategy, and robust utilities to support scalable, distributed pre-training. By following the documented workflow—from configuration to checkpoint saving—users can reliably execute pre-training across diverse datasets and hardware setups while leveraging logging, evaluation, and memory optimization features.
+
+**Updated** Enhanced with comprehensive evaluation logging capabilities through Weights & Biases integration, providing better monitoring and correlation between training statistics and evaluation metrics for improved pre-training process oversight.
 
 [No sources needed since this section summarizes without analyzing specific files]
 
@@ -454,6 +509,9 @@ Key runtime parameters controlled via configuration:
 - Tokenization: tokenizer_class, dataset selection, vocab_file, structure tokens.
 - Model: model_type, hidden_size, num_hidden_layers, max_position_embeddings, dropout settings.
 - Generation: do_generation, generation algorithm, parallel generation.
+- **Weights & Biases**: enabled, api_key, project, entity, name, tags, notes, group, job_type, resume, log_model, log_freq.
+
+**Updated** Added Weights & Biases configuration parameters for enhanced monitoring.
 
 **Section sources**
 - [base.yaml (training):24-78](file://configs/training/base.yaml#L24-L78)

@@ -26,13 +26,11 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced pretraining diagnostics section to document the temporary maximum position embeddings (MPE) cap mechanism
-- Updated sequence length parameter naming from `max_position_embeddings` to `max_length` for better conceptual clarity
-- Added new section on automatic data inspection system for first batch analysis
-- Updated performance optimization details for debugging workflows
-- Added new section on diagnostic performance improvements
-- Revised data preparation section to include MPE cap implementation and updated parameter naming
-- Updated configuration documentation to reflect parameter naming changes
+- Enhanced evaluation logging system with improved metric reporting and Weights & Biases integration
+- Updated log_dump_pt_training_stats function to return evaluation metrics for proper logging
+- Added comprehensive Weights & Biases integration for pre-training metrics
+- Enhanced training loop to automatically log evaluation metrics to Weights & Biases
+- Updated configuration documentation to include Weights & Biases setup
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -45,14 +43,16 @@
 8. [Sequence Length Parameter Naming](#sequence-length-parameter-naming)
 9. [Automatic Data Inspection System](#automatic-data-inspection-system)
 10. [Diagnostic Performance Optimization](#diagnostic-performance-optimization)
-11. [Troubleshooting Guide](#troubleshooting-guide)
-12. [Conclusion](#conclusion)
-13. [Appendices](#appendices)
+11. [Enhanced Evaluation Logging System](#enhanced-evaluation-logging-system)
+12. [Weights & Biases Integration](#weights-biases-integration)
+13. [Troubleshooting Guide](#troubleshooting-guide)
+14. [Conclusion](#conclusion)
+15. [Appendices](#appendices)
 
 ## Introduction
 This document explains the PretrainingMode implementation within the training modes strategy. It details how pre-training mode differs from fine-tuning mode, including data preparation, optimizer setup, training objectives, and evaluation. It also documents pre-training-specific methods, configurations, checkpoint handling, and evaluation procedures. Practical workflows and common pre-training objectives (NTP, SMTP, Position Prediction) are included, along with how pre-training mode integrates with the broader training pipeline.
 
-**Updated** Enhanced with performance optimizations for diagnostic workflows during tokenization inspection, featuring a temporary maximum position embeddings (MPE) cap mechanism to prevent slow diagnostic runs. Also includes a new automatic data inspection system that prints detailed information about the first batch of data during the initial epoch of training. The documentation now reflects the improved parameter naming convention where `max_length` is used instead of `max_position_embeddings` to better distinguish between positional embedding dimensions and sequence length constraints.
+**Updated** Enhanced with performance optimizations for diagnostic workflows during tokenization inspection, featuring a temporary maximum position embeddings (MPE) cap mechanism to prevent slow diagnostic runs. Also includes a new automatic data inspection system that prints detailed information about the first batch of data during the initial epoch of training. The documentation now reflects the improved parameter naming convention where `max_length` is used instead of `max_position_embeddings` to better distinguish between positional embedding dimensions and sequence length constraints. Additionally, the evaluation logging system has been enhanced with improved metric reporting and comprehensive Weights & Biases integration for real-time experiment tracking.
 
 ## Project Structure
 Pre-training mode is orchestrated by the unified TrainingPipeline and implemented via the PretrainMode strategy. The key components are:
@@ -80,6 +80,7 @@ Inspection["inspection_utils"]
 Tokenizer["tokenizer"]
 TrainingUtils["training_utils"]
 Cfg["Configs"]
+Wandb["Weights & Biases"]
 end
 TP --> PM
 PM --> MB
@@ -91,6 +92,7 @@ PM --> Inspection
 PM --> Tokenizer
 PM --> TrainingUtils
 TP --> Cfg
+Eval --> Wandb
 ```
 
 **Diagram sources**
@@ -117,7 +119,7 @@ TP --> Cfg
 - Utilities:
   - DataCollatorForGST: tokenization and batching for pre-training using `max_length` parameter.
   - loader_utils: pre-training samplers and loader initialization.
-  - log_eval_dump_utils: evaluation and inference utilities for pre-training.
+  - log_eval_dump_utils: evaluation and inference utilities for pre-training with enhanced metric reporting and Weights & Biases integration.
   - inspection_utils: comprehensive tokenization inspection with performance optimizations.
   - training_utils: batch processing and training utilities.
   - loader_utils.load_from_ckp_with_try: loads checkpoints with skip_keys behavior.
@@ -161,6 +163,7 @@ loop Training
 PM->>Loader : iterate batches
 PM->>Model : forward/backward/update
 PM->>Eval : log_dump_pt_training_stats()
+PM->>Eval : log_eval_to_wandb()
 end
 TP->>TP : cleanup()
 ```
@@ -336,9 +339,11 @@ The run_training phase:
 - Sets model.train() and starts profiler if not using DeepSpeed
 - Iterates over epochs and loaders, executes batch_training, updates EMA, logs training stats, and periodically dumps stats and checkpoints
 - **Enhanced**: Automatically inspects the first batch of data during the initial epoch (epoch 0, batch 0) to provide detailed information about tensor shapes, data types, statistical summaries, and unique value counts
+- **Enhanced**: Logs training metrics to Weights & Biases during regular logging steps
+- **Enhanced**: Returns evaluation metrics from log_dump_pt_training_stats and logs them to Weights & Biases during checkpoint saves
 - Breaks on reaching total_num_steps
 
-**Updated** Added automatic data inspection system that prints detailed information about the first batch of data during the initial epoch of training.
+**Updated** Added automatic data inspection system that prints detailed information about the first batch of data during the initial epoch of training. Enhanced training loop to include Weights & Biases integration for real-time experiment tracking.
 
 ```mermaid
 flowchart TD
@@ -360,7 +365,9 @@ Log --> |Yes| LogStats["log_pt_training_stats(...)"]
 Log --> |No| SaveCheck{"j % steps_per_saving == 0<br/>and j>j_init?"}
 SaveCheck --> |Yes| Dump["log_dump_pt_training_stats(...)"]
 SaveCheck --> |No| StepInc["j += 1"]
-Dump --> StepInc
+Dump --> EvalMetrics["eval_metrics = log_dump_pt_training_stats(...)"]
+EvalMetrics --> WandbEval["log_eval_to_wandb('eval', eval_metrics, j)"]
+WandbEval --> StepInc
 StepInc --> Final{"j == total_num_steps?"}
 Final --> |Yes| Break["break loops"]
 Final --> |No| Loop
@@ -437,10 +444,11 @@ Load-->>PM : model with loaded weights
 - [loader_utils.py:176-220](file://src/utils/loader_utils.py#L176-L220)
 - [mode.py:19-24](file://src/training/mode.py#L19-L24)
 
-### Evaluation Procedures
+### Enhanced Evaluation Procedures
 - Pre-training evaluation runs on validation and test sets before training and periodically during training.
 - Generation evaluation can be enabled to assess generation quality.
 - Inference-only mode is supported for pre-training models.
+- **Enhanced**: Evaluation metrics are now returned by log_dump_pt_training_stats and logged to Weights & Biases for real-time monitoring.
 
 ```mermaid
 sequenceDiagram
@@ -448,10 +456,11 @@ participant PM as "PretrainMode"
 participant Eval as "log_eval_dump_utils"
 participant Loader as "loader_utils"
 PM->>Loader : initialize_pt_valid_loader()
-PM->>Eval : evaluate(model, valid_loader, "valid", do_valid)
-PM->>Eval : evaluate_generation(model, valgen_loader, "valid", do_valid and do_generation)
+PM->>Eval : evaluate(valid)
+PM->>Eval : evaluate_generation(valid)
 PM->>Loader : initialize_pt_test_loader()
-PM->>Eval : evaluate(model, test_loader, "test", do_test)
+PM->>Eval : evaluate(test)
+PM->>Eval : log_eval_to_wandb("eval", eval_metrics, step)
 ```
 
 **Diagram sources**
@@ -653,6 +662,156 @@ gtokenizer.mpe = _saved_mpe
 **Section sources**
 - [pretrain_mode.py:199-208](file://src/training/pretrain_mode.py#L199-L208)
 
+## Enhanced Evaluation Logging System
+**New Section** The evaluation logging system has been significantly enhanced with improved metric reporting and Weights & Biases integration. The log_dump_pt_training_stats function now returns evaluation metrics that are properly logged to Weights & Biases.
+
+### Return Value Enhancement
+The log_dump_pt_training_stats function now returns a dictionary containing evaluation metrics:
+
+```python
+return {"valid_loss": valid_acc, "test_loss": test_acc, "ema_loss": ema_acc}
+```
+
+This enhancement allows for:
+- Real-time monitoring of validation, test, and EMA losses
+- Automated logging to Weights & Biases during checkpoint saves
+- Improved experiment tracking and comparison
+
+### Integration with Training Loop
+The enhanced system integrates seamlessly with the training loop:
+
+```python
+if (
+    (train_stats.j % sched_cfg.steps_per_saving == 0)
+    and (train_stats.j > j_init)
+) or (train_stats.j == sched_cfg.total_num_steps):
+    eval_metrics = log_eval_dump_utils.log_dump_pt_training_stats(
+        model,
+        cfg,
+        train_stats,
+        opt_stats,
+        loader_stats,
+        ema_stats,
+        tb_writer,
+    )
+    log_eval_dump_utils.log_eval_to_wandb(
+        "eval", eval_metrics, train_stats.j
+    )
+```
+
+### Metric Categories
+The returned evaluation metrics include:
+- **Valid Loss**: Validation loss computed on the validation dataset
+- **Test Loss**: Test loss computed on the test dataset
+- **EMA Loss**: Exponential Moving Average loss (if EMA is enabled)
+
+### Weights & Biases Logging
+The log_eval_to_wandb function automatically logs these metrics with appropriate prefixes:
+- `eval/valid_loss`: Validation loss
+- `eval/test_loss`: Test loss
+- `eval/ema_loss`: EMA loss (when applicable)
+
+**Section sources**
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
+- [pretrain_mode.py:544-555](file://src/training/pretrain_mode.py#L544-L555)
+
+## Weights & Biases Integration
+**New Section** Comprehensive Weights & Biases integration has been implemented for real-time experiment tracking and monitoring during pre-training.
+
+### Initialization Process
+The Weights & Biases integration is initialized during the setup_training phase:
+
+```python
+pipeline.wandb_run = log_eval_dump_utils.init_wandb(
+    cfg, output_dir, model=model, job_type="pretrain"
+)
+```
+
+### Configuration Options
+The Weights & Biases configuration supports extensive customization:
+
+- **enabled**: Enable/disable wandb logging
+- **api_key**: API key for authentication (can also use WANDB_API_KEY environment variable)
+- **project**: Name of the wandb project (required when enabled)
+- **entity**: Wandb entity (team or username)
+- **name**: Run name (auto-generated if null)
+- **tags**: List of tags for categorizing runs
+- **notes**: Descriptive notes for the run
+- **group**: Group name for organizing related runs
+- **job_type**: Job type ("pretrain" for this mode)
+- **resume**: Resume mode for continuing interrupted runs
+- **log_model**: Whether to log model checkpoints as artifacts
+- **log_freq**: Log frequency in steps (defaults to logging_steps)
+
+### Training Metrics Logging
+During regular training steps, metrics are logged to Weights & Biases:
+
+```python
+def log_to_wandb_pt(
+    train_stats: TrainingStats,
+    opt_stats: OptimizingStats,
+    training: TrainingConfig,
+):
+    metrics = {
+        "train/loss": train_stats.loss.item(),
+        "train/learning_rate": curr_lr[0],
+        "train/epoch": train_stats.ckp,
+        "train/samples_per_second": train_stats.samples_per_second,
+        "train/tokens_per_second": train_stats.tokens_per_second,
+    }
+
+    if train_stats.main_loss is not None:
+        metrics["train/main_loss"] = train_stats.main_loss.item()
+    if train_stats.aux_loss is not None:
+        metrics["train/aux_loss"] = train_stats.aux_loss.item()
+
+    wandb_log(metrics, step=train_stats.j)
+```
+
+### Evaluation Metrics Logging
+Enhanced evaluation metrics are logged during checkpoint saves:
+
+```python
+def log_eval_to_wandb(
+    eval_name: str,
+    metrics: dict,
+    step: int = None,
+):
+    prefixed_metrics = {
+        f"{eval_name}/{k}": v for k, v in metrics.items() if v is not None
+    }
+    wandb_log(prefixed_metrics, step=step)
+```
+
+### Model Artifact Logging
+Optional model checkpoint logging as Weights & Biases artifacts:
+
+```python
+def wandb_log_model(model_path: str, name: str = None, aliases: list = None):
+    artifact = wandb.Artifact(
+        name=name or "model",
+        type="model",
+    )
+    if os.path.isdir(model_path):
+        artifact.add_dir(model_path)
+    else:
+        artifact.add_file(model_path)
+    wandb.log_artifact(artifact, aliases=aliases)
+```
+
+### Error Handling and Graceful Degradation
+The Weights & Biases integration includes robust error handling:
+- Checks for wandb availability before initialization
+- Graceful fallback when API keys are missing
+- Safe logging with exception handling
+- Rank-based initialization (only on rank 0)
+
+**Section sources**
+- [log_eval_dump_utils.py:891-1031](file://src/utils/log_eval_dump_utils.py#L891-L1031)
+- [log_eval_dump_utils.py:1044-1127](file://src/utils/log_eval_dump_utils.py#L1044-L1127)
+- [base.yaml:92-106](file://configs/training/base.yaml#L92-L106)
+- [base_configs.py:164-194](file://src/conf/base_configs.py#L164-L194)
+
 ## Troubleshooting Guide
 Common issues and remedies:
 - Checkpoint loading fails due to mismatched shapes for score-related keys: ensure skip_keys=True (default for PretrainMode) so loader_utils skips keys containing "score".
@@ -662,19 +821,25 @@ Common issues and remedies:
 - **Diagnostic performance issues**: If tokenization inspection runs slowly, verify the MPE cap mechanism is active and functioning correctly.
 - **Data inspection not appearing**: Ensure you're running the first epoch (epoch 0) and first batch (batch 0) of training, as the inspection only activates once per training session.
 - **Parameter naming confusion**: If encountering issues with `max_position_embeddings`, update to use `max_length` instead, as the latter provides clearer conceptual distinction between positional embedding dimensions and sequence length constraints.
+- **Weights & Biases not logging**: Verify that wandb is installed, API key is configured, and project name is set in the configuration.
+- **Evaluation metrics missing**: Ensure log_dump_pt_training_stats is returning evaluation metrics and that log_eval_to_wandb is properly invoked during checkpoint saves.
+- **Training metrics not appearing**: Check that log_to_wandb_pt is called during logging steps and that the wandb run is properly initialized.
 
 **Section sources**
 - [loader_utils.py:176-220](file://src/utils/loader_utils.py#L176-L220)
 - [pipeline.py:129-136](file://src/training/pipeline.py#L129-L136)
 - [pretrain_mode.py:271-303](file://src/training/pretrain_mode.py#L271-L303)
 - [pretrain_mode.py:466-485](file://src/training/pretrain_mode.py#L466-L485)
+- [log_eval_dump_utils.py:891-1031](file://src/utils/log_eval_dump_utils.py#L891-L1031)
 
 ## Conclusion
 PretrainingMode encapsulates the pre-training strategy within the unified TrainingPipeline. It provides robust data preparation, flexible pre-training objectives (generative and discriminative), and efficient training loops with evaluation and checkpointing. The default skip_keys=True ensures that pre-training checkpoints can be safely resumed without loading task-specific score heads.
 
 **Updated** Recent enhancements include a sophisticated MPE cap mechanism for diagnostic performance optimization, significantly improving debugging workflows while maintaining full functionality. Additionally, the new automatic data inspection system provides valuable insights into the first batch of training data during the initial epoch, helping developers quickly validate their data pipeline and model inputs. The improved parameter naming convention using `max_length` instead of `max_position_embeddings` enhances conceptual clarity and distinguishes between positional embedding dimensions and sequence length constraints.
 
-Practical examples and scripts demonstrate how to configure and run pre-training across different graph learning tasks, with comprehensive diagnostic capabilities to support development and debugging workflows.
+The most significant enhancement is the comprehensive Weights & Biases integration, which provides real-time experiment tracking, automated metric logging, and seamless integration with modern ML experiment management workflows. The enhanced evaluation logging system now returns structured evaluation metrics that are automatically logged to Weights & Biases, enabling researchers to monitor training progress, compare experiments, and track performance improvements across different configurations.
+
+Practical examples and scripts demonstrate how to configure and run pre-training across different graph learning tasks, with comprehensive diagnostic capabilities and modern experiment tracking to support development and debugging workflows.
 
 ## Appendices
 
@@ -683,11 +848,13 @@ Practical examples and scripts demonstrate how to configure and run pre-training
 - Task type and pretrain objectives: task_type, pretrain_mlm (name, params, dlm_wgt), focal_gamma
 - Token packing and collation: pack_tokens, pad_to_multiple_of, max_length
 - Generation and evaluation: do_generation, do_infer, pt_eval_only, valid_percent, do_test
+- **Enhanced**: Weights & Biases configuration: wandb.enabled, wandb.api_key, wandb.project, wandb.entity, wandb.name, wandb.tags, wandb.notes, wandb.group, wandb.job_type, wandb.resume, wandb.log_model, wandb.log_freq
 
-**Updated** Configuration now uses `max_length` parameter consistently throughout the pre-training pipeline, providing clearer distinction between positional embedding dimensions and sequence length constraints.
+**Updated** Configuration now uses `max_length` parameter consistently throughout the pre-training pipeline, providing clearer distinction between positional embedding dimensions and sequence length constraints. The Weights & Biases configuration enables comprehensive experiment tracking and monitoring.
 
 **Section sources**
 - [base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
 - [base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
 - [base_configs.py:145-146](file://src/conf/base_configs.py#L145-L146)
 - [base_configs.py:243-244](file://src/conf/base_configs.py#L243-L244)
+- [base_configs.py:164-194](file://src/conf/base_configs.py#L164-L194)

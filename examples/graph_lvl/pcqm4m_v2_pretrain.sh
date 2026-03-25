@@ -47,7 +47,7 @@ do_infer=false
 
 # iii.d training::directories
 ds_prefix="pcqm4m-v2"
-mid_dir="202511/"
+mid_dir="202603/"
 pretrain_cpt=""
 
 # iii.e training::optimization config

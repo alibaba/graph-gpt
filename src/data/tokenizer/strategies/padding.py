@@ -189,10 +189,11 @@ class StackedPaddingStrategy(PaddingStrategy):
 
         if pad_to > len(feature["input_ids"]):
             padding_len = pad_to - len(feature["input_ids"])
-            token_components = len(feature["input_ids"][0])
+            input_components = len(feature["input_ids"][0])
+            label_components = len(feature["labels"][0])
 
-            input_pad_val = [self.pad_token_id] * token_components
-            label_pad_val = [self.label_pad_token_id] * token_components
+            input_pad_val = [self.pad_token_id] * input_components
+            label_pad_val = [self.label_pad_token_id] * label_components
 
             padded_input_ids = [input_pad_val] * padding_len
             padded_labels = [label_pad_val] * padding_len

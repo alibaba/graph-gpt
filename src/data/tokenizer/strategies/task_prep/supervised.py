@@ -26,18 +26,30 @@ class GraphLevelStrategy(TaskPreparationStrategy):
             in_dict["embed"].extend(extended_embed)
             assert len(in_dict["embed"]) == len(in_dict["input_ids"])
 
-        # Attach node mask if available
+        # Append positional metadata if available
         if ls_raw_node_idx is not None:
-            in_dict = self._attach_node_mask(
+            in_dict = self.append_positional_metadata(
                 in_dict, ls_raw_node_idx, len_extended_tokens
             )
-
-        in_dict["split_lens"] = [len(in_dict["input_ids"])]
-        in_dict["attn_modes"] = ["full"]
         return in_dict
 
-    def _attach_node_mask(self, in_dict, ls_raw_node_idx, len_extended_tokens):
-        """Attach node mask to inputs."""
+    def append_positional_metadata(self, in_dict, ls_raw_node_idx, len_extended_tokens):
+        """Append 4D positional metadata [pos_type, node_mask, node_idx, edge_mask] to input_ids.
+
+        Extends each token's feature dimension by 4 columns for graph structure awareness:
+        - pos_type: Clipped node position type (0-4): 0 for padding, 1/2/3 for 3 nodes defining the cartesian coordinates, 4 for other nodes
+        - node_mask: Binary mask for node-level structural regularization
+        - node_idx: Node index for node-level attention/masking (SMTP)
+        - edge_mask: Binary mask for edge-level structural regularization
+
+        Args:
+            in_dict: Dictionary containing 'input_ids' [seq_len, stacked_feat]
+            ls_raw_node_idx: Raw node indices from tokenization (-1 for non-node positions)
+            len_extended_tokens: Number of extended tokens (usually 0 for graph tasks)
+
+        Returns:
+            Updated in_dict with 'input_ids' shape [seq_len, stacked_feat + 4]
+        """
         from ...masking import get_mask_of_raw_seq
         import numpy as np
 
@@ -135,9 +147,6 @@ class EdgeLevelStrategy(TaskPreparationStrategy):
 
         if hasattr(graph, "wgt"):
             in_dict["wgt"] = graph.wgt.item()
-
-        in_dict["split_lens"] = [len(in_dict["input_ids"])]
-        in_dict["attn_modes"] = ["full"]
         return in_dict
 
 
@@ -198,9 +207,6 @@ class NodeLevelStrategy(TaskPreparationStrategy):
 
         if hasattr(graph, "wgt"):
             in_dict["wgt"] = graph.wgt.item()
-
-        in_dict["split_lens"] = [len(in_dict["input_ids"])]
-        in_dict["attn_modes"] = ["full"]
         return in_dict
 
 
@@ -269,7 +275,4 @@ class NodeV2Strategy(TaskPreparationStrategy):
                 keys=("nodev2_labels", "raw_node_idx"),
                 vals=(-100, -100),
             )
-
-        in_dict["split_lens"] = [len(in_dict["input_ids"])]
-        in_dict["attn_modes"] = ["full"]
         return in_dict

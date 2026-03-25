@@ -16,14 +16,15 @@
 - [flex_attn_utils.py](file://src/utils/flex_attn_utils.py)
 - [tokenizer.py](file://src/data/tokenizer.py)
 - [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
+- [pretrain_mode.py](file://src/training/pretrain_mode.py)
 - [README.md](file://README.md)
 </cite>
 
 ## Update Summary
 **Changes Made**
+- Updated evaluation function signatures to remove unused parameters (split_lens, attn_modes) from evaluation functions
+- Enhanced log_dump_pt_training_stats to return structured evaluation metrics dictionary
 - Updated attention mask system documentation to reflect parameter naming changes from split_lens/attn_modes to sample_lens
-- Removed documentation for packed sequence attention system
-- Updated attention mask configuration section to reflect current parameter naming conventions
 - Revised function signatures and parameter passing documentation to use sample_lens instead of split_lens
 - Updated tokenizer utilities documentation to reflect the new parameter naming scheme
 
@@ -65,6 +66,7 @@ The logging and evaluation ecosystem centers around several key modules with enh
 graph TB
 subgraph "Training Orchestration"
 P["TrainingPipeline<br/>pipeline.py"]
+PM["PretrainMode<br/>pretrain_mode.py"]
 end
 subgraph "Logging & Evaluation Utils"
 LEDU["log_eval_dump_utils.py"]
@@ -85,7 +87,8 @@ subgraph "Configs"
 BC["base_configs.py"]
 CF["control_flow.py"]
 end
-P --> LEDU
+P --> PM
+PM --> LEDU
 P --> MU
 P --> LGU
 LEDU --> MET
@@ -104,10 +107,12 @@ TK --> TKU
 
 **Diagram sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
 - [log_eval_dump_utils.py:41-80](file://src/utils/log_eval_dump_utils.py#L41-L80)
 - [log_eval_dump_utils.py:84-175](file://src/utils/log_eval_dump_utils.py#L84-L175)
 - [log_eval_dump_utils.py:179-212](file://src/utils/log_eval_dump_utils.py#L179-L212)
 - [log_eval_dump_utils.py:261-329](file://src/utils/log_eval_dump_utils.py#L261-L329)
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
 - [attn_mask_utils.py:12-84](file://src/utils/attn_mask_utils.py#L12-L84)
 - [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
 - [tokenizer_utils.py:21-881](file://src/utils/tokenizer_utils.py#L21-L881)
@@ -115,7 +120,8 @@ TK --> TKU
 
 **Section sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
+- [log_eval_dump_utils.py:41-662](file://src/utils/log_eval_dump_utils.py#L41-L662)
 - [attn_mask_utils.py:12-84](file://src/utils/attn_mask_utils.py#L12-L84)
 - [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
 - [tokenizer_utils.py:21-881](file://src/utils/tokenizer_utils.py#L21-L881)
@@ -148,7 +154,7 @@ TK --> TKU
   - Integration with both SDPA and flex attention backends.
 
 **Section sources**
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [log_eval_dump_utils.py:41-662](file://src/utils/log_eval_dump_utils.py#L41-L662)
 - [metrics_utils.py:16-348](file://src/utils/metrics_utils.py#L16-L348)
 - [ogb_utils.py:13-214](file://src/utils/ogb_utils.py#L13-L214)
 - [loader_utils.py:445-479](file://src/utils/loader_utils.py#L445-L479)
@@ -164,6 +170,7 @@ The logging and evaluation architecture integrates training orchestration with m
 ```mermaid
 sequenceDiagram
 participant TP as "TrainingPipeline<br/>pipeline.py"
+participant PM as "PretrainMode<br/>pretrain_mode.py"
 participant LOG as "log_eval_dump_utils.py"
 participant MET as "metrics_utils.py"
 participant OGB as "ogb_utils.py"
@@ -172,13 +179,14 @@ participant MISC as "misc_utils.py"
 participant GEN as "generation_utils.py"
 participant AMU as "attn_mask_utils.py"
 participant FAU as "flex_attn_utils.py"
-TP->>LOG : Initialize logging and TB writer
-TP->>LOADER : Build loaders for train/valid/test
-TP->>LOG : log_pt_training_stats / log_ft_training_stats
+TP->>PM : Initialize training mode
+PM->>LOG : Initialize logging and TB writer
+PM->>LOADER : Build loaders for train/valid/test
+PM->>LOG : log_pt_training_stats / log_ft_training_stats
 LOG->>AMU : Build attention masks
 LOG->>FAU : Create flex attention masks
 LOG->>TB : add_scalar(loss)
-TP->>LOG : log_dump_pt_training_stats / log_dump_ft_training_stats
+PM->>LOG : log_dump_pt_training_stats / log_dump_ft_training_stats
 LOG->>LOADER : evaluate / evaluate_generation
 LOG->>MET : update metrics, compute()
 LOG->>OGB : evaluate_ogb(dataset_name, results)
@@ -188,7 +196,8 @@ LOG->>TB : add_histogram(parameters)
 
 **Diagram sources**
 - [pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
+- [log_eval_dump_utils.py:41-662](file://src/utils/log_eval_dump_utils.py#L41-L662)
 - [metrics_utils.py:38-137](file://src/utils/metrics_utils.py#L38-L137)
 - [ogb_utils.py:13-214](file://src/utils/ogb_utils.py#L13-L214)
 - [loader_utils.py:445-479](file://src/utils/loader_utils.py#L445-L479)
@@ -221,14 +230,13 @@ TBAdd --> End(["End Logging"])
 ```
 
 **Diagram sources**
-- [log_eval_dump_utils.py:41-80](file://src/utils/log_eval_dump_utils.py#L41-L80)
-- [log_eval_dump_utils.py:84-175](file://src/utils/log_eval_dump_utils.py#L84-L175)
-- [log_eval_dump_utils.py:179-212](file://src/utils/log_eval_dump_utils.py#L179-L212)
-- [log_eval_dump_utils.py:261-329](file://src/utils/log_eval_dump_utils.py#L261-L329)
+- [log_eval_dump_utils.py:520-578](file://src/utils/log_eval_dump_utils.py#L520-L578)
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
+- [log_eval_dump_utils.py:665-823](file://src/utils/log_eval_dump_utils.py#L665-L823)
 - [misc_utils.py:124-176](file://src/utils/misc_utils.py#L124-L176)
 
 **Section sources**
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [log_eval_dump_utils.py:520-823](file://src/utils/log_eval_dump_utils.py#L520-L823)
 - [misc_utils.py:124-176](file://src/utils/misc_utils.py#L124-L176)
 
 ### Evaluation Pipelines
@@ -245,33 +253,38 @@ TBAdd --> End(["End Logging"])
 ```mermaid
 sequenceDiagram
 participant TP as "TrainingPipeline"
+participant PM as "PretrainMode"
 participant FT as "log_dump_ft_training_stats"
 participant PT as "log_dump_pt_training_stats"
 participant EVAL as "evaluate / evaluate_generation"
 participant MET as "metrics_utils.py"
 participant OGB as "ogb_utils.py"
 participant MISC as "misc_utils.py"
-TP->>FT : Epoch end
+TP->>PM : Initialize training mode
+PM->>FT : Epoch end
 FT->>EVAL : Evaluate train/valid/test with attention masks
 EVAL->>EVAL : Pass sample_lens, attn_modes to model
 FT->>MET : update/compute metrics
 FT->>OGB : evaluate_ogb (if supported)
 FT->>MISC : save_all(), dump_infer_results()
-TP->>PT : Periodic checkpoint
+PM->>PT : Periodic checkpoint
 PT->>EVAL : evaluate (valid/test) with attention masks
 PT->>EVAL : evaluate_generation (valid/test) with attention masks
 PT->>MISC : save_all(), save ckp
+PT->>PT : Return structured metrics dict
 ```
 
 **Diagram sources**
-- [log_eval_dump_utils.py:648-806](file://src/utils/log_eval_dump_utils.py#L648-L806)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
 - [log_eval_dump_utils.py:261-329](file://src/utils/log_eval_dump_utils.py#L261-L329)
 - [metrics_utils.py:38-137](file://src/utils/metrics_utils.py#L38-L137)
 - [ogb_utils.py:13-214](file://src/utils/ogb_utils.py#L13-L214)
 - [misc_utils.py:124-176](file://src/utils/misc_utils.py#L124-L176)
 
 **Section sources**
-- [log_eval_dump_utils.py:648-806](file://src/utils/log_eval_dump_utils.py#L648-L806)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
 - [log_eval_dump_utils.py:261-329](file://src/utils/log_eval_dump_utils.py#L261-L329)
 - [metrics_utils.py:38-137](file://src/utils/metrics_utils.py#L38-L137)
 - [ogb_utils.py:13-214](file://src/utils/ogb_utils.py#L13-L214)
@@ -407,11 +420,11 @@ EVAL->>EVAL : Aggregate and reduce across GPUs
 ```
 
 **Diagram sources**
-- [log_eval_dump_utils.py:307-384](file://src/utils/log_eval_dump_utils.py#L307-L384)
+- [log_eval_dump_utils.py:323-400](file://src/utils/log_eval_dump_utils.py#L323-L400)
 - [generation_utils.py:84-464](file://src/utils/generation_utils.py#L84-L464)
 
 **Section sources**
-- [log_eval_dump_utils.py:307-384](file://src/utils/log_eval_dump_utils.py#L307-L384)
+- [log_eval_dump_utils.py:323-400](file://src/utils/log_eval_dump_utils.py#L323-L400)
 - [generation_utils.py:84-464](file://src/utils/generation_utils.py#L84-L464)
 
 ### Training Step Utilities
@@ -436,6 +449,20 @@ Step --> End(["End Step"])
 **Section sources**
 - [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
 
+### Enhanced Evaluation Function Signatures
+**Updated** The evaluation functions have been cleaned up to remove unused parameters and improve return value handling:
+
+- `evaluate()` function signature simplified to remove unused attention mask parameters
+- `evaluate_generation()` function signature simplified to remove unused attention mask parameters
+- `log_dump_pt_training_stats()` now returns structured evaluation metrics dictionary
+- `log_dump_ft_training_stats()` maintains existing interface for fine-tuning evaluation
+
+**Section sources**
+- [log_eval_dump_utils.py:256-320](file://src/utils/log_eval_dump_utils.py#L256-L320)
+- [log_eval_dump_utils.py:323-400](file://src/utils/log_eval_dump_utils.py#L323-L400)
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
+- [log_eval_dump_utils.py:665-823](file://src/utils/log_eval_dump_utils.py#L665-L823)
+
 ## Attention Mask System
 
 ### Sample-Based Attention Mask Construction
@@ -455,8 +482,8 @@ H --> I["Flexible attention patterns"]
 ```
 
 **Diagram sources**
-- [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
-- [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
+- [flex_attn_utils.py:21-127](file://src/utils/flex_attn_utils.py#L21-L127)
+- [flex_attn_utils.py:83-127](file://src/utils/flex_attn_utils.py#L83-L127)
 - [attn_mask_utils.py:12-84](file://src/utils/attn_mask_utils.py#L12-L84)
 
 ### Attention Mask Utilities
@@ -467,8 +494,8 @@ The system provides utilities for both SDPA and flex attention backends:
 - **Mixed Attention**: Supports causal, full, and noise attention modes per sample
 
 **Section sources**
-- [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
-- [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
+- [flex_attn_utils.py:21-127](file://src/utils/flex_attn_utils.py#L21-L127)
+- [flex_attn_utils.py:83-127](file://src/utils/flex_attn_utils.py#L83-L127)
 - [attn_mask_utils.py:12-84](file://src/utils/attn_mask_utils.py#L12-L84)
 
 ### Attention Mode Types
@@ -477,8 +504,8 @@ The system provides utilities for both SDPA and flex attention backends:
 - **Noise**: Masks certain positions for noise injection during training
 
 **Section sources**
-- [flex_attn_utils.py:20-112](file://src/utils/flex_attn_utils.py#L20-L112)
-- [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
+- [flex_attn_utils.py:21-77](file://src/utils/flex_attn_utils.py#L21-L77)
+- [flex_attn_utils.py:83-127](file://src/utils/flex_attn_utils.py#L83-L127)
 
 ## Dependency Analysis
 - Control-flow registry enables dynamic dispatch for metrics and OGB evaluators.
@@ -505,6 +532,8 @@ TK["tokenizer.py"] --> TKU
 PIPE["pipeline.py"] --> LEDU
 PIPE --> MISC
 PIPE --> LGU
+PIPE --> PM["pretrain_mode.py"]
+PM --> LEDU
 CFG["base_configs.py"] --> PIPE
 ```
 
@@ -512,7 +541,7 @@ CFG["base_configs.py"] --> PIPE
 - [control_flow.py:9-33](file://src/utils/control_flow.py#L9-L33)
 - [metrics_utils.py:11-13](file://src/utils/metrics_utils.py#L11-L13)
 - [ogb_utils.py:8-11](file://src/utils/ogb_utils.py#L8-L11)
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [log_eval_dump_utils.py:41-662](file://src/utils/log_eval_dump_utils.py#L41-L662)
 - [loader_utils.py:445-479](file://src/utils/loader_utils.py#L445-L479)
 - [misc_utils.py:124-176](file://src/utils/misc_utils.py#L124-L176)
 - [generation_utils.py:84-136](file://src/utils/generation_utils.py#L84-L136)
@@ -520,13 +549,14 @@ CFG["base_configs.py"] --> PIPE
 - [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
 - [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
 - [pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 
 **Section sources**
 - [control_flow.py:9-33](file://src/utils/control_flow.py#L9-L33)
 - [metrics_utils.py:11-13](file://src/utils/metrics_utils.py#L11-L13)
 - [ogb_utils.py:8-11](file://src/utils/ogb_utils.py#L8-L11)
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [log_eval_dump_utils.py:41-662](file://src/utils/log_eval_dump_utils.py#L41-L662)
 - [loader_utils.py:445-479](file://src/utils/loader_utils.py#L445-L479)
 - [misc_utils.py:124-176](file://src/utils/misc_utils.py#L124-L176)
 - [generation_utils.py:84-136](file://src/utils/generation_utils.py#L84-L136)
@@ -534,6 +564,7 @@ CFG["base_configs.py"] --> PIPE
 - [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
 - [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
 - [pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 
 ## Performance Considerations
@@ -552,6 +583,8 @@ CFG["base_configs.py"] --> PIPE
   - SDPA path offers compatibility with traditional attention implementations.
 - Parameter passing:
   - Attention mask parameters (sample_lens, attn_modes) are efficiently passed through model forward passes without additional overhead.
+- Structured metrics return:
+  - Enhanced evaluation functions now return structured dictionaries for easier metric consumption and comparison.
 
 ## Troubleshooting Guide
 - Missing TensorBoard:
@@ -568,6 +601,9 @@ CFG["base_configs.py"] --> PIPE
   - Ensure sample_lens and attn_modes are properly aligned with input sequence lengths.
   - Verify attention mask dimensions match model expectations.
   - Check for proper device placement of attention mask parameters.
+- Evaluation function signature changes:
+  - Updated evaluation functions no longer accept split_lens and attn_modes parameters.
+  - Use simplified function signatures for cleaner code integration.
 
 **Section sources**
 - [log_eval_dump_utils.py:34-38](file://src/utils/log_eval_dump_utils.py#L34-L38)
@@ -578,6 +614,8 @@ CFG["base_configs.py"] --> PIPE
 
 ## Conclusion
 The logging and evaluation subsystem in Graph-GPT provides a robust framework for experiment tracking, metrics computation, and result analysis with enhanced attention mask support. It integrates seamlessly with distributed training, optional DeepSpeed, and TensorBoard, while supporting diverse evaluation scenarios across classification, regression, and graph tasks. The new attention mask system enables flexible attention patterns through sample-based construction, supporting different attention modes for various parts of the input sequence. The modular design enables straightforward extension and customization for new datasets, metrics, and attention patterns.
+
+**Updated** Recent enhancements include improved parameter cleanup by removing unused split_lens and attn_modes parameters from evaluation functions, and enhanced log_dump_pt_training_stats to return structured evaluation metrics for better integration with monitoring systems.
 
 ## Appendices
 
@@ -593,11 +631,14 @@ The logging and evaluation subsystem in Graph-GPT provides a robust framework fo
 - Attention mask evaluation:
   - Test different attention modes (causal, full, noise) for various sequence segments.
   - Compare performance across different attention configurations.
+- Structured metrics consumption:
+  - Use returned evaluation metrics dictionary for wandb logging and experiment comparison.
 
 **Section sources**
-- [log_eval_dump_utils.py:648-806](file://src/utils/log_eval_dump_utils.py#L648-L806)
-- [log_eval_dump_utils.py:261-329](file://src/utils/log_eval_dump_utils.py#L261-L329)
-- [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
+- [log_eval_dump_utils.py:581-662](file://src/utils/log_eval_dump_utils.py#L581-L662)
+- [log_eval_dump_utils.py:665-823](file://src/utils/log_eval_dump_utils.py#L665-L823)
+- [pretrain_mode.py:540-579](file://src/training/pretrain_mode.py#L540-L579)
+- [flex_attn_utils.py:21-127](file://src/utils/flex_attn_utils.py#L21-L127)
 
 ### Metric Interpretation
 - AUROC:
@@ -625,6 +666,7 @@ The logging and evaluation subsystem in Graph-GPT provides a robust framework fo
 - Checkpoint and result dumping facilitate reproducibility and artifact retention.
 - Environment variables for summary directory and distributed ranks should be configured in CI runners.
 - Attention mask parameters can be included in experiment configurations for reproducible attention pattern testing.
+- Structured metrics return enables seamless integration with monitoring and alerting systems.
 
 **Section sources**
 - [log_eval_dump_utils.py:817-866](file://src/utils/log_eval_dump_utils.py#L817-L866)
@@ -635,8 +677,20 @@ The logging and evaluation subsystem in Graph-GPT provides a robust framework fo
 - **sample_lens**: List of integers specifying the length of each attention sample within a sequence.
 - **attn_modes**: List of strings specifying attention mode for each sample ('causal', 'full', 'noise').
 - **Integration**: Parameters are automatically generated during tokenization and passed through evaluation functions to model forward passes.
+- **Cleanup**: Unused split_lens and attn_modes parameters have been removed from evaluation function signatures for cleaner interfaces.
 
 **Section sources**
-- [tokenizer_utils.py:226-368](file://src/utils/tokenizer_utils.py#L226-L368)
-- [flex_attn_utils.py:20-206](file://src/utils/flex_attn_utils.py#L20-L206)
-- [log_eval_dump_utils.py:41-329](file://src/utils/log_eval_dump_utils.py#L41-L329)
+- [flex_attn_utils.py:21-127](file://src/utils/flex_attn_utils.py#L21-L127)
+- [flex_attn_utils.py:83-127](file://src/utils/flex_attn_utils.py#L83-L127)
+- [log_eval_dump_utils.py:41-662](file://src/utils/log_eval_dump_utils.py#L41-L662)
+
+### Structured Metrics Return Format
+**New** The enhanced evaluation system now returns structured metrics dictionaries:
+
+- **log_dump_pt_training_stats()**: Returns `{"valid_loss": float, "test_loss": float, "ema_loss": float}`
+- Enables direct integration with wandb logging and experiment comparison workflows
+- Simplifies metric consumption in training pipelines and monitoring systems
+
+**Section sources**
+- [log_eval_dump_utils.py:665-662](file://src/utils/log_eval_dump_utils.py#L665-L662)
+- [pretrain_mode.py:540-555](file://src/training/pretrain_mode.py#L540-L555)
