@@ -562,9 +562,11 @@ def decorate_node_edge_graph_with_mask(
         if i % 2 == 0:  # deco node
             node_id = node_structure_mapping[raw_token]
             # node_id will be List if it is represented by several ids, e.g., global+local-ids
-            ls_tokens.extend(node_id) if isinstance(node_id, Tuple) or isinstance(
-                node_id, List
-            ) else ls_tokens.append(node_id)
+            is_tuple_or_list = isinstance(node_id, (tuple, list))
+            if is_tuple_or_list:
+                ls_tokens.extend(node_id)
+            else:
+                ls_tokens.append(node_id)
             if is_deco:
                 node_attr = node_semantics_mapping["discrete"].get(raw_token, None)
                 if node_attr:
@@ -606,18 +608,10 @@ def permute_nodes(graph, g=None):
 
 
 def get_labels_from_input_tokens(ls_tokens, gtokenizer, skipped=0):
-    mapping_type = int(gtokenizer.config["structure"]["node"].get("cyclic", False))
     if len(ls_tokens) > 0:
         ls_labels = ls_tokens[1:] + [gtokenizer.get_eos_token()]
-        for i, token in enumerate(ls_labels):
-            if (
-                token not in set(ls_tokens[skipped:i])
-                and token in gtokenizer.get_node_idx_tokens()
-                and mapping_type == 2
-            ):
-                ls_labels[i] = gtokenizer.get_new_node_token()
-            if i < skipped:
-                ls_labels[i] = gtokenizer.get_label_pad_token()
+        for i in range(skipped):
+            ls_labels[i] = gtokenizer.get_label_pad_token()
         return ls_labels
     else:
         return []
