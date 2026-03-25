@@ -40,12 +40,11 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced performance through comprehensive caching mechanisms: TokenCache and DigitTokenCache for reduced string formatting overhead
-- Implemented configuration value caching in tokenizers for improved runtime performance
-- Optimized batch processing in stacking operations with vectorized map() function usage
-- Enhanced SequencePacker with pre-allocation, component caching, and batch extend operations
-- Improved edge type determination using set-based lookups for O(1) performance
-- Added comprehensive caching strategy throughout graph encoding and utility modules
+- Removed scope_base parameter throughout the codebase, simplifying hierarchical indexing to flat indexing approach
+- Updated node re-indexing system to use flat tuple-based indexing (str(idx),) instead of hierarchical base-based indexing
+- Simplified node and edge indexing logic to use direct string-based flat indices
+- Updated configuration examples and implementation details to reflect the new simplified tokenization approach
+- Maintained backward compatibility through preserved scope_base parameter with no functional impact
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -82,11 +81,11 @@ The new modular architecture organizes tokenization functionality into specializ
 - **Types**: Data structures and constants with TokenizationOutput dataclass
 - **Vocabulary**: Building and loading token mappings with structure and semantics vocabularies
 
-Key features include Eulerian path-based serialization, attribute stacking strategies (short, long, prolonged), cyclical node re-indexing, semantic-structural token combination, comprehensive configuration management with strategy-based parameter handling, and enhanced error handling throughout the system.
+Key features include Eulerian path-based serialization, attribute stacking strategies (short, long, prolonged), **simplified flat indexing system** replacing hierarchical indexing, semantic-structural token combination, comprehensive configuration management with strategy-based parameter handling, and enhanced error handling throughout the system.
 
-**Updated** The tokenization system now features a sophisticated strategy pattern implementation with BaseTokenizer as the abstract base class, pluggable strategy components for padding, sequence packing, and task preparation, enhanced vectorized masking functionality with improved packed sequence handling, streamlined attention mask processing, comprehensive backward compatibility system with lazy loading, and comprehensive default attribute mapping support for StackedGSTTokenizer. The SequencePacker has been significantly optimized with pre-allocation of lists, token component caching, pre-computed separators, length checks before extending operations, and batch extend operations for improved memory management and computational efficiency.
+**Updated** The tokenization system now features a sophisticated strategy pattern implementation with BaseTokenizer as the abstract base class, pluggable strategy components for padding, sequence packing, and task preparation, enhanced vectorized masking functionality with improved packed sequence handling, streamlined attention mask processing, comprehensive backward compatibility system with lazy loading, and comprehensive default attribute mapping support for StackedGSTTokenizer. The **flat indexing system** has replaced the previous hierarchical indexing approach, providing simpler and more efficient node and edge tokenization.
 
-**Enhanced Performance Optimizations**: The system now includes comprehensive performance improvements in graph encoding and utility modules, featuring optimized edge attribute mapping and edge type determination operations that provide substantial speed improvements for large-scale graph processing tasks. Key optimizations include TokenCache and DigitTokenCache implementations for reduced string formatting overhead, set-based edge existence checks for O(1) edge type determination, and pre-built edge index maps for efficient attribute mapping.
+**Enhanced Performance Optimizations**: The system now includes comprehensive performance improvements in graph encoding and utility modules, featuring optimized edge attribute mapping and edge type determination operations that provide substantial speed improvements for large-scale graph processing tasks. Key optimizations include TokenCache and DigitTokenCache implementations for reduced string formatting overhead, set-based edge existence checks for O(1) performance, and pre-built edge index maps for efficient attribute mapping.
 
 ## Project Structure
 The tokenization system is organized as a package with specialized modules following the strategy pattern, each handling specific aspects of the tokenization process through composition rather than inheritance:
@@ -108,6 +107,7 @@ TE["TokenCache<br/>Global token string caching"]
 DT["DigitTokenCache<br/>Cached digit token generation"]
 EA["Edge Attribute Mapping<br/>Optimized with pre-built index maps"]
 ET["Edge Type Determination<br/>Set-based O(1) lookups"]
+FI["Flat Indexing System<br/>Simplified _rebase_idx to flat tuple-based indexing"]
 end
 subgraph "Concrete Implementations"
 GST["GSTTokenizer<br/>1D token sequences"]
@@ -152,6 +152,8 @@ SGST --> DEMS
 TE --> EA
 DT --> EA
 EA --> ET
+FI --> TE
+FI --> DT
 ```
 
 **Diagram sources**
@@ -167,6 +169,7 @@ EA --> ET
 - [masking.py:54-123](file://src/data/tokenizer/masking.py#L54-L123)
 - [graph_encoding.py:11-96](file://src/data/tokenizer/graph_encoding.py#L11-L96)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 **Section sources**
 - [base.py:13-187](file://src/data/tokenizer/base.py#L13-L187)
@@ -335,8 +338,14 @@ I["Future Migration"] --> J["Use modular imports directly"]
 The core tokenization process transforms graphs into Eulerian paths with specialized handling for different scenarios:
 
 - **Graph-to-path conversion**: Handles disconnected graphs, redundant traversals, and prioritization
-- **Node re-indexing**: Supports cyclic and non-cyclic modes with configurable scope
+- **Node re-indexing**: Supports cyclic and non-cyclic modes with **simplified flat indexing approach**
 - **Structure decoration**: Adds node/edge/graph structure tokens throughout the path
+
+**Updated** The node re-indexing system has been simplified to use flat indexing instead of hierarchical indexing:
+- **Previous approach**: Used scope_base parameter for hierarchical base-based indexing
+- **Current approach**: Uses `_rebase_idx()` function that returns `(str(idx),)` tuple for flat indexing
+- **Scope parameter**: Still honored for node_scope but base parameter is preserved for backward compatibility
+- **Performance improvement**: Eliminates complex base calculations in favor of simple string conversion
 
 ```mermaid
 flowchart TD
@@ -345,7 +354,8 @@ Path --> CheckConn{"Connected?"}
 CheckConn --> |No| Split["Split Components"]
 CheckConn --> |Yes| Direct["Direct Path"]
 Split --> Jump["Add Jump Edges"]
-Direct --> Decorate["Decorate with Structure Tokens"]
+Direct --> Reindex["Flat Index Re-indexing"]
+Reindex --> Decorate["Decorate with Structure Tokens"]
 Jump --> Decorate
 Decorate --> Shorten["Shorten Redundant Traversals"]
 Shorten --> Output(["Token Sequence"])
@@ -354,10 +364,12 @@ Shorten --> Output(["Token Sequence"])
 **Diagram sources**
 - [core.py:106-111](file://src/data/tokenizer/core.py#L106-L111)
 - [nx_utils.py:368-402](file://src/utils/nx_utils.py#L368-L402)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 **Section sources**
 - [core.py:100-183](file://src/data/tokenizer/core.py#L100-L183)
 - [nx_utils.py:368-402](file://src/utils/nx_utils.py#L368-L402)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 ### Enhanced Attribute Stacking Methods
 The system provides comprehensive attribute stacking strategies with enhanced default attribute support:
@@ -549,6 +561,12 @@ The system now includes comprehensive performance optimizations in graph encodin
 
 **Comprehensive Caching Strategy**: Strategic caching throughout the tokenization pipeline reduces memory allocations and improves computational efficiency.
 
+**Updated** The flat indexing system provides significant performance improvements:
+- **Simplified `_rebase_idx()`**: Now returns `(str(idx),)` tuple instead of complex hierarchical base calculations
+- **Scope parameter preservation**: node_scope still controls indexing scope but base parameter is ignored
+- **Eliminated base calculations**: Removed all base-based indexing logic in favor of direct string conversion
+- **Backward compatibility**: scope_base parameter preserved but has no functional impact
+
 ```mermaid
 flowchart TD
 Start["Graph Encoding"] --> CacheCheck{"TokenCache Hit?"}
@@ -564,11 +582,13 @@ ReturnToken --> NextStep["Continue Processing"]
 - [graph_encoding.py:26-96](file://src/data/tokenizer/graph_encoding.py#L26-L96)
 - [graph_encoding.py:202-215](file://src/data/tokenizer/graph_encoding.py#L202-L215)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 **Section sources**
 - [graph_encoding.py:11-96](file://src/data/tokenizer/graph_encoding.py#L11-L96)
 - [graph_encoding.py:202-215](file://src/data/tokenizer/graph_encoding.py#L202-L215)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 ## Enhanced Vectorized Masking System
 
@@ -800,6 +820,11 @@ The SequencePacker has been comprehensively optimized with the following perform
 
 **Memory Management**: The optimized SequencePacker reduces memory allocations by pre-computing separator tokens and caching token component information, resulting in more efficient memory utilization during packed sequence processing.
 
+**Updated** The flat indexing system provides additional performance benefits:
+- **Eliminated base calculations**: Removed complex hierarchical base calculations in favor of simple string conversion
+- **Reduced memory overhead**: Flat indexing requires fewer intermediate data structures
+- **Simplified algorithms**: All indexing operations now use straightforward string-based flat indices
+
 ```mermaid
 flowchart TD
 Start["SequencePacker.pack()"] --> PreAlloc["Pre-allocate lists"]
@@ -854,6 +879,12 @@ The system now includes comprehensive performance optimizations in graph encodin
 
 **Comprehensive Caching Strategy**: Strategic caching throughout the tokenization pipeline reduces memory allocations and improves computational efficiency.
 
+**Updated** The flat indexing system delivers significant performance improvements:
+- **Simplified `_rebase_idx()`**: Direct string conversion eliminates complex base calculations
+- **Reduced computational overhead**: Flat indexing requires fewer mathematical operations
+- **Improved cache locality**: Simple string indices provide better memory access patterns
+- **Eliminated scope_base dependency**: All scope_base references are now ignored but preserved for compatibility
+
 **Section sources**
 - [strategies/packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
 - [strategies/task_prep/pretrain.py:16-62](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L16-L62)
@@ -862,6 +893,7 @@ The system now includes comprehensive performance optimizations in graph encodin
 - [graph_encoding.py:11-96](file://src/data/tokenizer/graph_encoding.py#L11-L96)
 - [graph_encoding.py:202-215](file://src/data/tokenizer/graph_encoding.py#L202-L215)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 ## Backward Compatibility System
 
@@ -955,6 +987,7 @@ The strategy pattern architecture provides several performance benefits:
 - **Configuration Value Caching**: Frequently accessed configuration values cached in tokenizers for improved runtime performance
 - **Batch Processing Optimizations**: Vectorized map() function usage in stacking operations improves processing efficiency
 - **Edge Type Determination Optimization**: Set-based edge existence checks provide O(1) performance for edge type mapping
+- **Flat Indexing Performance**: Simplified flat indexing system eliminates complex base calculations and improves computational efficiency
 
 Key considerations:
 - **Strategy Initialization**: Strategies are initialized only when needed, reducing memory footprint
@@ -969,6 +1002,7 @@ Key considerations:
 - **Graph Encoding Performance**: TokenCache and optimized edge operations provide significant speed improvements for large-scale graph processing
 - **Configuration Caching**: Cached configuration values reduce repeated dictionary access overhead
 - **Batch Processing**: Vectorized operations in stacking provide significant performance improvements over iterative processing
+- **Flat Indexing Benefits**: Simplified indexing system provides performance improvements through reduced computational overhead and better memory access patterns
 
 ## Troubleshooting Guide
 Common issues and resolutions in the strategy pattern architecture:
@@ -1065,6 +1099,13 @@ Common issues and resolutions in the strategy pattern architecture:
 - **Edge Type Determination Speed**: Check that set-based edge existence checks are providing O(1) lookup performance
 - **Edge Attribute Mapping Performance**: Verify pre-built edge index maps are improving attribute extraction speed
 - **Caching Strategy Effectiveness**: Monitor overall caching effectiveness throughout the tokenization pipeline
+- **Flat Indexing Performance**: Verify that flat indexing system is providing expected performance improvements
+
+**Flat Indexing Issues**:
+- **Scope Parameter Usage**: Verify that node_scope parameter is properly controlling indexing scope
+- **Base Parameter Ignoring**: Check that scope_base parameter is being ignored as designed
+- **Index Conversion**: Ensure that `_rebase_idx()` function is correctly converting indices to flat string tuples
+- **Backward Compatibility**: Verify that existing code continues to work despite scope_base parameter changes
 
 **Configuration Value Caching Issues**:
 - **Cache Initialization**: Verify that frequently accessed configuration values are properly cached in tokenizers
@@ -1093,13 +1134,14 @@ Common issues and resolutions in the strategy pattern architecture:
 - [graph_encoding.py:11-96](file://src/data/tokenizer/graph_encoding.py#L11-L96)
 - [graph_encoding.py:202-215](file://src/data/tokenizer/graph_encoding.py#L202-L215)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 
 ## Conclusion
 The Graph-GPT tokenization system has successfully transitioned from a monolithic to a modern strategy pattern-based architecture, providing improved maintainability, performance, flexibility, and extensibility. The system continues to support advanced graph-to-sequence conversion through Eulerian path serialization, flexible attribute stacking strategies, comprehensive vocabulary management, and task-specific input preparation.
 
-**Updated** The system now features a sophisticated strategy pattern implementation with BaseTokenizer as the abstract base class, pluggable strategy components for padding, sequence packing, and task preparation, enhanced vectorized masking functionality with improved packed sequence handling, streamlined attention mask processing, comprehensive backward compatibility system with lazy loading, and comprehensive default attribute mapping support for StackedGSTTokenizer with lazy initialization and caching. The SequencePacker has been significantly optimized with pre-allocation of lists, token component caching, pre-computed separators, length checks before extending operations, and batch extend operations for improved memory management and computational efficiency.
+**Updated** The system now features a sophisticated strategy pattern implementation with BaseTokenizer as the abstract base class, pluggable strategy components for padding, sequence packing, and task preparation, enhanced vectorized masking functionality with improved packed sequence handling, streamlined attention mask processing, comprehensive backward compatibility system with lazy loading, and comprehensive default attribute mapping support for StackedGSTTokenizer with lazy initialization and caching. The **flat indexing system** has replaced the previous hierarchical indexing approach, providing simpler and more efficient node and edge tokenization while maintaining full backward compatibility.
 
-**Enhanced Performance Optimizations**: The system now includes comprehensive performance improvements in graph encoding and utility modules, featuring optimized edge attribute mapping and edge type determination operations that provide substantial speed improvements for large-scale graph processing tasks. Key optimizations include TokenCache and DigitTokenCache implementations for reduced string formatting overhead, set-based edge existence checks for O(1) edge type determination, and pre-built edge index maps for efficient attribute mapping.
+**Enhanced Performance Optimizations**: The system now includes comprehensive performance improvements in graph encoding and utility modules, featuring optimized edge attribute mapping and edge type determination operations that provide substantial speed improvements for large-scale graph processing tasks. Key optimizations include TokenCache and DigitTokenCache implementations for reduced string formatting overhead, set-based edge existence checks for O(1) edge type determination, and pre-built edge index maps for efficient attribute mapping. **The flat indexing system provides additional performance benefits through simplified index calculations and improved memory access patterns.**
 
 The strategy pattern architecture positions the system for future enhancements while ensuring existing implementations remain functional. The sophisticated integration with model architecture ensures seamless packed sequence processing, attention mode coordination, memory-efficient attention mask construction, and robust mask ratio computation for improved training stability. The backward compatibility system provides a smooth migration path for existing codebases while enabling gradual adoption of the new modular design.
 
@@ -1111,6 +1153,7 @@ The recent performance enhancements further strengthen the system's capabilities
 - **Batch Processing Optimizations**: Vectorized map() function usage in stacking operations improves processing efficiency
 - **Edge Type Determination Optimization**: Set-based edge existence checks provide O(1) performance for edge type mapping
 - **Comprehensive Caching Strategy**: Strategic caching throughout the pipeline reduces memory allocations and improves computational efficiency
+- **Flat Indexing Performance**: Simplified flat indexing system eliminates complex base calculations and provides improved computational efficiency
 
 These optimizations collectively provide substantial performance improvements while maintaining full backward compatibility and not changing any public APIs or breaking existing functionality.
 
@@ -1122,7 +1165,7 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 **Base Configuration**:
 - Defines tokenizer class selection and parameter defaults
 - Controls attribute assignment and shuffling behavior
-- Manages structure token definitions and scope parameters
+- Manages structure token definitions and **node_scope parameter** (scope_base preserved for compatibility)
 - **Updated** Includes max_length parameter for sequence length control
 
 **Enhanced Masking Configuration**:
@@ -1156,6 +1199,7 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - **Edge Type Determination**: Set-based O(1) edge existence checks
 - **Edge Attribute Mapping**: Pre-built edge index maps for efficient attribute extraction
 - **Caching Strategy**: Strategic caching throughout the tokenization pipeline
+- **Flat Indexing Settings**: Simplified flat indexing system with node_scope control
 
 **Example Configurations**:
 - PCQM4Mv2: Demonstrates pretraining with masked language modeling and attention mode coordination
@@ -1221,6 +1265,13 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - **Edge Type Determination**: Configure set-based edge existence checks for optimal performance
 - **Edge Attribute Mapping**: Enable pre-built edge index maps for efficient attribute extraction
 - **Caching Strategy**: Configure comprehensive caching throughout the pipeline
+- **Flat Indexing Configuration**: Configure flat indexing system with node_scope parameter
+
+**Flat Indexing Configuration**:
+- **Node Scope Control**: Configure node_scope parameter for indexing scope
+- **Base Parameter Ignoring**: Configure scope_base parameter to be ignored (backward compatibility)
+- **Index Conversion**: Configure _rebase_idx() function for flat string tuple conversion
+- **Performance Monitoring**: Monitor flat indexing performance improvements
 
 **Configuration Value Caching Configuration**:
 - **Cache Initialization**: Frequently accessed configuration values are cached in tokenizers
@@ -1235,7 +1286,7 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - **Processing Overhead**: Verify that batch optimizations provide net performance benefits
 
 **Section sources**
-- [base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
+- [base.yaml:1-116](file://configs/tokenization/base.yaml#L1-L116)
 - [token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 - [__init__.py:17-123](file://src/data/tokenizer/__init__.py#L17-L123)
 - [_legacy.py:1-42](file://src/data/tokenizer/_legacy.py#L1-L42)
@@ -1257,4 +1308,5 @@ The strategy pattern architecture maintains comprehensive configuration capabili
 - [graph_encoding.py:11-96](file://src/data/tokenizer/graph_encoding.py#L11-L96)
 - [graph_encoding.py:202-215](file://src/data/tokenizer/graph_encoding.py#L202-L215)
 - [nx_utils.py:256-270](file://src/utils/nx_utils.py#L256-L270)
+- [nx_utils.py:223-226](file://src/utils/nx_utils.py#L223-L226)
 - [instruct_tuning_utils.py:181-192](file://src/utils/instruct_tuning_utils.py#L181-L192)

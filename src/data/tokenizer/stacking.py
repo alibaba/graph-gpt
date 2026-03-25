@@ -35,7 +35,9 @@ def _get_node_feats_batch(
     """
     # Discrete tokens
     ls_node_id = (
-        list(node_structure_mapping[node]) if node_structure_mapping is not None else []
+        [node_structure_mapping[node]]
+        if node_structure_mapping is not None
+        else []  # List[str]
     )
     if node_semantics_mapping.get("discrete"):
         ls_node_attr = (

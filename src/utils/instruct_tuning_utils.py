@@ -171,7 +171,9 @@ def _get_all_node_feats(
 ):
     assert attr_type in {"discrete", "embed"}
     ls_node_id = (
-        list(node_structure_mapping[node]) if node_structure_mapping is not None else []
+        [node_structure_mapping[node]]
+        if node_structure_mapping is not None
+        else []  # List[str]
     )
     if node_semantics_mapping[attr_type]:
         ls_node_attr = node_semantics_mapping[attr_type][node]

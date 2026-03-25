@@ -59,7 +59,7 @@ def _obtain_node_degree(
     num = G.degree[idx]
 
     func_tokens = [config["structure"]["common"]["reserved_token"][reserved_token_id]]
-    tgt_node_tokens = list(node_structure_mapping[idx])
+    tgt_node_tokens = [node_structure_mapping[idx]]  # List[str]
     num_tokens = [f"<{ele}>" for ele in list(str(num))]
     return func_tokens + tgt_node_tokens + num_tokens
 
@@ -73,7 +73,7 @@ def _obtain_graph_triangles(
     num = nx.triangles(G, idx)
 
     func_tokens = [config["structure"]["common"]["reserved_token"][reserved_token_id]]
-    tgt_node_tokens = list(node_structure_mapping[idx])
+    tgt_node_tokens = [node_structure_mapping[idx]]  # List[str]
     num_tokens = [f"<{ele}>" for ele in list(str(num))]
     return func_tokens + tgt_node_tokens + num_tokens
 
