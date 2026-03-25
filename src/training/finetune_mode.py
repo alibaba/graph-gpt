@@ -327,6 +327,11 @@ class FinetuneMode(TrainingMode):
             self.scheduler_conf,
         )
 
+        # 4.43 init wandb
+        pipeline.wandb_run = log_eval_dump_utils.init_wandb(
+            cfg, output_dir, model=model, job_type="finetune"
+        )
+
         # TrainingStats
         pipeline.train_stats = TrainingStats(
             device=pipeline.device,
@@ -440,6 +445,8 @@ class FinetuneMode(TrainingMode):
                             log_eval_dump_utils.log_ft_training_stats(
                                 train_cfg, train_stats, tb_writer
                             )
+                            # Log to wandb
+                            log_eval_dump_utils.log_to_wandb_ft(train_stats, train_cfg)
                         train_stats.j += 1
                 else:
                     # eval_only mode: load from ckp and then eval

@@ -162,6 +162,39 @@ class ProfilerConfig:
 
 
 @dataclass
+class WandbConfig:
+    """Configuration for Weights & Biases (wandb) logging and tracking.
+
+    Attributes:
+        enabled: Whether to enable wandb logging (default: False)
+        api_key: Wandb API key for authentication. Can also be set via WANDB_API_KEY env var
+        project: Name of the wandb project to log to
+        entity: Wandb entity (team or username). If None, uses the default entity
+        name: Name for this specific run. If None, wandb auto-generates a name
+        tags: List of tags to associate with the run
+        notes: Notes to add to the run
+        group: Group name for organizing related runs
+        job_type: Type of job (e.g., 'train', 'eval', 'pretrain', 'finetune')
+        resume: Resume mode: 'allow', 'must', 'never', 'auto', or None
+        log_model: Whether to log model checkpoints to wandb
+        log_freq: How often to log metrics (in steps). Uses logging_steps if None
+    """
+
+    enabled: bool = False
+    api_key: Optional[str] = None
+    project: Optional[str] = None
+    entity: Optional[str] = None
+    name: Optional[str] = None
+    tags: Optional[List[str]] = None
+    notes: Optional[str] = None
+    group: Optional[str] = None
+    job_type: Optional[str] = None
+    resume: Optional[str] = None
+    log_model: bool = False
+    log_freq: Optional[int] = None
+
+
+@dataclass
 class TrainingConfig:
     deepspeed_conf_file: str = ""
     use_deepspeed: bool = False
@@ -194,6 +227,7 @@ class TrainingConfig:
     finetune: FinetuneTrainConfig = field(default_factory=FinetuneTrainConfig)
     ft_eval: FinetuneEvalConfig = field(default_factory=FinetuneEvalConfig)
     profiler: ProfilerConfig = field(default_factory=ProfilerConfig)
+    wandb: WandbConfig = field(default_factory=WandbConfig)
 
 
 def update_ft_num_steps(train_cfg: TrainingConfig, samples_per_gpu):

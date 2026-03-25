@@ -16,6 +16,7 @@ networkx[default]==3.1
 urllib3
 numpy<2
 sentencepiece
+wandb>=0.15.0
 
 # FlashAttention is only supported on CUDA 11.6 and above
 transformers==4.53.3

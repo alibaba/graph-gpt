@@ -89,3 +89,18 @@ training:
     export_chrome_trace: true  # Export chrome://tracing compatible traces
     export_stacks: false  # Export stack traces to file
     tensorboard: true  # Export TensorBoard logs for visualization
+  # --- Weights & Biases (wandb) Logging Configuration ---
+  # Enable to log training metrics, system info, and visualizations to wandb
+  wandb:
+    enabled: false  # Set to true to enable wandb logging
+    api_key: null  # Wandb API key. Can also use WANDB_API_KEY env var
+    project: null  # Name of the wandb project (required when enabled)
+    entity: null  # Wandb entity (team or username). Uses default if null
+    name: null  # Run name. Auto-generated if null
+    tags: null  # List of tags for the run, e.g., ["pretrain", "pcqm4m"]
+    notes: null  # Notes/description for the run
+    group: null  # Group name for organizing related runs
+    job_type: null  # Job type, e.g., "train", "eval", "pretrain", "finetune"
+    resume: null  # Resume mode: "allow", "must", "never", "auto", or null
+    log_model: false  # Whether to log model checkpoints to wandb
+    log_freq: null  # Log frequency in steps. Uses logging_steps if null

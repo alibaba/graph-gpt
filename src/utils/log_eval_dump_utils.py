@@ -36,6 +36,14 @@ try:
 except ModuleNotFoundError:
     from tensorboardX import SummaryWriter
 
+try:
+    import wandb
+
+    WANDB_AVAILABLE = True
+except ImportError:
+    wandb = None
+    WANDB_AVAILABLE = False
+
 
 @torch.no_grad()
 def ft_infer_hidden_states(model, loader, cfg: Config, eval_name: str):
@@ -889,6 +897,248 @@ def ft_dump_cfg_and_init_tb(
             model, use_deepspeed, use_tb_writer, output_dir, scheduler_conf
         )
     return tb_writer
+
+
+# ============================================================================
+# Weights & Biases (wandb) Logging Functions
+# ============================================================================
+
+
+def init_wandb(
+    cfg,
+    output_dir: str,
+    model=None,
+    job_type: str = None,
+):
+    """Initialize wandb logging if enabled in config.
+
+    Args:
+        cfg: Full Config object containing wandb settings in cfg.training.wandb
+        output_dir: Directory where training outputs are saved
+        model: Optional model to watch for gradient/parameter logging
+        job_type: Override job type (e.g., 'pretrain', 'finetune')
+
+    Returns:
+        wandb.Run object if initialized, None otherwise
+    """
+    if not WANDB_AVAILABLE:
+        print("[wandb] wandb not installed. Skipping wandb initialization.")
+        return None
+
+    # Only initialize on rank 0
+    if int(os.environ.get("RANK", 0)) != 0:
+        return None
+
+    wandb_cfg = cfg.training.wandb
+    if not wandb_cfg.enabled:
+        return None
+
+    # Validate required fields
+    if not wandb_cfg.project:
+        print("[wandb] Warning: wandb.project not set. Skipping wandb initialization.")
+        return None
+
+    # Set API key if provided (can also use WANDB_API_KEY env var)
+    if wandb_cfg.api_key:
+        os.environ["WANDB_API_KEY"] = wandb_cfg.api_key
+
+    # Check if API key is available
+    api_key = os.environ.get("WANDB_API_KEY")
+    if not api_key:
+        print(
+            "[wandb] Warning: No API key found. Set wandb.api_key in config or WANDB_API_KEY env var."
+        )
+        return None
+
+    # Determine run name
+    run_name = wandb_cfg.name
+    if not run_name:
+        # Auto-generate name from output_dir
+        run_name = os.path.basename(output_dir.rstrip("/"))
+
+    # Determine job type
+    actual_job_type = job_type or wandb_cfg.job_type
+    if not actual_job_type:
+        task_type = cfg.training.task_type
+        if "pretrain" in task_type:
+            actual_job_type = "pretrain"
+        else:
+            actual_job_type = "finetune"
+
+    # Convert OmegaConf to dict for wandb config
+    try:
+        config_dict = OmegaConf.to_container(cfg, resolve=True)
+    except Exception:
+        config_dict = {}
+
+    # Initialize wandb
+    try:
+        run = wandb.init(
+            project=wandb_cfg.project,
+            entity=wandb_cfg.entity,
+            name=run_name,
+            tags=list(wandb_cfg.tags) if wandb_cfg.tags else None,
+            notes=wandb_cfg.notes,
+            group=wandb_cfg.group,
+            job_type=actual_job_type,
+            resume=wandb_cfg.resume,
+            config=config_dict,
+            dir=output_dir,
+            reinit=True,
+        )
+        print(f"[wandb] Initialized wandb run: {run.name} ({run.id})")
+        print(
+            f"[wandb] Project: {wandb_cfg.project}, Entity: {wandb_cfg.entity or 'default'}"
+        )
+        print(f"[wandb] URL: {run.url}")
+
+        # Watch model for gradient logging if specified
+        if model is not None and wandb_cfg.log_model:
+            wandb.watch(model, log="all", log_freq=wandb_cfg.log_freq or 100)
+
+        return run
+    except Exception as e:
+        print(f"[wandb] Failed to initialize wandb: {e}")
+        return None
+
+
+def wandb_log(metrics: dict, step: int = None, commit: bool = True):
+    """Log metrics to wandb if initialized.
+
+    Args:
+        metrics: Dictionary of metric names and values to log
+        step: Optional step number for x-axis
+        commit: Whether to commit the log (default True)
+    """
+    if not WANDB_AVAILABLE or wandb.run is None:
+        return
+
+    try:
+        wandb.log(metrics, step=step, commit=commit)
+    except Exception as e:
+        print(f"[wandb] Failed to log metrics: {e}")
+
+
+def wandb_log_model(model_path: str, name: str = None, aliases: list = None):
+    """Log a model checkpoint to wandb as an artifact.
+
+    Args:
+        model_path: Path to the model checkpoint file or directory
+        name: Name for the artifact (default: 'model')
+        aliases: List of aliases for this version (e.g., ['best', 'latest'])
+    """
+    if not WANDB_AVAILABLE or wandb.run is None:
+        return
+
+    try:
+        artifact = wandb.Artifact(
+            name=name or "model",
+            type="model",
+        )
+        if os.path.isdir(model_path):
+            artifact.add_dir(model_path)
+        else:
+            artifact.add_file(model_path)
+        wandb.log_artifact(artifact, aliases=aliases)
+        print(f"[wandb] Logged model artifact: {name or 'model'}")
+    except Exception as e:
+        print(f"[wandb] Failed to log model artifact: {e}")
+
+
+def wandb_finish():
+    """Finish the current wandb run."""
+    if not WANDB_AVAILABLE or wandb.run is None:
+        return
+
+    try:
+        wandb.finish()
+        print("[wandb] Finished wandb run.")
+    except Exception as e:
+        print(f"[wandb] Failed to finish wandb run: {e}")
+
+
+def log_to_wandb_pt(
+    train_stats: TrainingStats,
+    opt_stats: OptimizingStats,
+    training: TrainingConfig,
+):
+    """Log pre-training metrics to wandb.
+
+    Args:
+        train_stats: Training statistics
+        opt_stats: Optimizer statistics
+        training: Training configuration
+    """
+    if not WANDB_AVAILABLE or wandb.run is None:
+        return
+
+    curr_lr = (
+        opt_stats.lr_scheduler.get_lr()
+        if opt_stats.lr_scheduler is not None
+        else [training.optimizer.lr]
+    )
+
+    metrics = {
+        "train/loss": train_stats.loss.item(),
+        "train/learning_rate": curr_lr[0],
+        "train/epoch": train_stats.ckp,
+        "train/samples_per_second": train_stats.samples_per_second,
+        "train/tokens_per_second": train_stats.tokens_per_second,
+    }
+
+    if train_stats.main_loss is not None:
+        metrics["train/main_loss"] = train_stats.main_loss.item()
+    if train_stats.aux_loss is not None:
+        metrics["train/aux_loss"] = train_stats.aux_loss.item()
+
+    wandb_log(metrics, step=train_stats.j)
+
+
+def log_to_wandb_ft(
+    train_stats: TrainingStats,
+    train_cfg: TrainingConfig,
+):
+    """Log fine-tuning metrics to wandb.
+
+    Args:
+        train_stats: Training statistics
+        train_cfg: Training configuration
+    """
+    if not WANDB_AVAILABLE or wandb.run is None:
+        return
+
+    metrics = {
+        "train/loss": train_stats.loss.item(),
+        "train/epoch": train_stats.epoch,
+        "train/samples_per_second": train_stats.samples_per_second,
+        "train/tokens_per_second": train_stats.tokens_per_second,
+    }
+
+    if train_stats.main_loss is not None:
+        metrics["train/main_loss"] = train_stats.main_loss.item()
+    if train_stats.aux_loss is not None:
+        metrics["train/aux_loss"] = train_stats.aux_loss.item()
+
+    wandb_log(metrics, step=train_stats.j)
+
+
+def log_eval_to_wandb(
+    eval_name: str,
+    metrics: dict,
+    step: int = None,
+):
+    """Log evaluation metrics to wandb.
+
+    Args:
+        eval_name: Name of evaluation split (e.g., 'valid', 'test')
+        metrics: Dictionary of metric names and values
+        step: Optional step number
+    """
+    if not WANDB_AVAILABLE or wandb.run is None:
+        return
+
+    prefixed_metrics = {f"{eval_name}/{k}": v for k, v in metrics.items()}
+    wandb_log(prefixed_metrics, step=step)
 
 
 @torch.no_grad()

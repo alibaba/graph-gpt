@@ -381,7 +381,12 @@ class PretrainMode(TrainingMode):
             model, pipeline.use_deepspeed, use_tb_writer, output_dir
         )
 
-        # 4.43 reset train sampler
+        # 4.43 init wandb
+        pipeline.wandb_run = log_eval_dump_utils.init_wandb(
+            cfg, output_dir, model=model, job_type="pretrain"
+        )
+
+        # 4.44 reset train sampler
         self.pt_sampler = loader_utils.reset_pt_train_sampler(
             self.reset_samples_per_epoch,
             self.task_type,
@@ -390,7 +395,7 @@ class PretrainMode(TrainingMode):
             self.pt_sampler,
         )
 
-        # 4.44 set-up train loader
+        # 4.45 set-up train loader
         self.train_loader = DataLoader(
             dataset=self.dataset,
             batch_size=self.batch_size,
@@ -526,6 +531,10 @@ class PretrainMode(TrainingMode):
                             opt_stats,
                             prof=self.prof,
                             tb_writer=tb_writer,
+                        )
+                        # Log to wandb
+                        log_eval_dump_utils.log_to_wandb_pt(
+                            train_stats, opt_stats, train_cfg
                         )
 
                     if (

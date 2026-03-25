@@ -56,6 +56,7 @@ class TrainingPipeline:
         # Set by mode.setup_training
         self.train_stats = None
         self.tb_writer = None
+        self.wandb_run = None
 
     def run(self):
         """Execute the full training pipeline."""
@@ -216,9 +217,14 @@ class TrainingPipeline:
         )
 
     def _cleanup(self):
-        """Close TB writer and save final config."""
+        """Close TB writer, finish wandb run, and save final config."""
         if self.tb_writer is not None:
             self.tb_writer.close()
+        # Finish wandb run
+        if self.wandb_run is not None:
+            from ..utils import log_eval_dump_utils
+
+            log_eval_dump_utils.wandb_finish()
         if self.mode.allow_save_config():
             OmegaConf.save(
                 config=self.cfg,
