@@ -241,7 +241,7 @@ def get_structure_raw_node2idx_mapping(
     # `random.randint` Return random integer in range [a, b], including both end points.
     start_idx = random.randint(0, scope - 1) if mapping_type > 0 else 0
     if path:
-        path_s = [src for src, tgt in path]
+        path_s = [src for src, _ in path]
         path_s.append(path[-1][-1])
         uniques = list(dict.fromkeys(path_s))
         dict_map = {
@@ -463,9 +463,7 @@ def get_paths(graph: Data, form: str = "pair") -> List[Union[Tuple[int], int]]:
     for node in G.nodes():
         raw_path = list(_customized_eulerian_path(G, source=node))
         path = shorten_path(raw_path)
-        path = (
-            [src for src, tgt in path] + [path[-1][-1]] if form == "singular" else path
-        )
+        path = [src for src, _ in path] + [path[-1][-1]] if form == "singular" else path
         ls_paths.append(path)
     return ls_paths
 
