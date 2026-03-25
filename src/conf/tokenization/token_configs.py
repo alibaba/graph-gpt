@@ -76,7 +76,6 @@ class StructureNodeConfig:
     eos_token: str
     new_node_token: str
     node_scope: int
-    scope_base: int
     cyclic: int
 
 

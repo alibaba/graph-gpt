@@ -64,7 +64,6 @@ class GSTTokenizer(BaseTokenizer):
 
         # Cache frequently accessed config values for performance
         self._node_scope = config["structure"]["node"]["node_scope"]
-        self._scope_base = config["structure"]["node"]["scope_base"]
         self._cyclic = config["structure"]["node"].get("cyclic", False)
         self._remove_edge_type_token = config["structure"]["edge"].get(
             "remove_edge_type_token", False
@@ -123,7 +122,6 @@ class GSTTokenizer(BaseTokenizer):
         # 3. Obtain mappings
         node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
             path,
-            self._scope_base,
             self._node_scope,
             self._cyclic,
         )
@@ -294,7 +292,6 @@ class StackedGSTTokenizer(BaseTokenizer):
 
         # Cache frequently accessed config values for performance
         self._node_scope = config["structure"]["node"]["node_scope"]
-        self._scope_base = config["structure"]["node"]["scope_base"]
         self._cyclic = config["structure"]["node"].get("cyclic", False)
         self._remove_edge_type_token = config["structure"]["edge"].get(
             "remove_edge_type_token", False
@@ -396,7 +393,6 @@ class StackedGSTTokenizer(BaseTokenizer):
         # 3. Obtain mappings
         node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
             path,
-            self._scope_base,
             self._node_scope,
             self._cyclic,
         )

@@ -140,7 +140,6 @@ def _obtain_eulerian_path(
     func_tokens = [config["structure"]["common"]["reserved_token"][reserved_token_id]]
     local_node_structure_mapping = get_structure_raw_node2idx_mapping(
         path,
-        config["structure"]["node"]["scope_base"],
         config["structure"]["node"]["node_scope"],
         config["structure"]["node"].get("cyclic", False),
     )
@@ -222,17 +221,13 @@ def _flatten_list(ls):
 
 
 def _rebase_idx(idx: int, base: int):
-    if base == 0:
-        return f"{idx}"
-    assert idx < base * base
-    idx_1 = idx // base
-    idx_2 = idx - idx_1 * base
-    rebased_idx = (f"{idx_1}*{base}", str(idx_2)) if idx_1 > 0 else (str(idx_2),)
-    return rebased_idx
+    # Simplified: return flat index as string tuple
+    # The base parameter is kept for backward compatibility but no longer used
+    return (str(idx),)
 
 
 def get_structure_raw_node2idx_mapping(
-    path: List[Tuple[int, int]], scope_base: int, scope: int, mapping_type: int = 0
+    path: List[Tuple[int, int]], scope: int, mapping_type: int = 0
 ):
     # mapping_type: 0/1/2 -> normal/cyclic/random
     mapping_type = int(mapping_type)
@@ -245,11 +240,11 @@ def get_structure_raw_node2idx_mapping(
         path_s.append(path[-1][-1])
         uniques = list(dict.fromkeys(path_s))
         dict_map = {
-            old_idx: _rebase_idx(idx % scope, scope_base)
+            old_idx: str(idx % scope)
             for idx, old_idx in enumerate(uniques, start=start_idx)
         }
     else:  # in case `path=[]` when graph has ONLY 1 node
-        dict_map = {0: _rebase_idx(start_idx % scope, scope_base)}
+        dict_map = {0: str(start_idx % scope)}
     return dict_map
 
 

@@ -88,8 +88,7 @@ tokenization:
       bos_token: "<bos>"
       eos_token: "<eos>"
       new_node_token: "<new>"
-      node_scope: 512  # TODO: remove redundant config, such as scope_base, cyclic
-      scope_base: 512
+      node_scope: 512
       cyclic: 1
     edge:
       remove_edge_type_token: true

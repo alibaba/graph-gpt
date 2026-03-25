@@ -95,7 +95,6 @@ tokenization:
       eos_token: "<eos>"
       new_node_token: "<new>"
       node_scope: 512
-      scope_base: 512
       cyclic: 1
     edge:
       remove_edge_type_token: false

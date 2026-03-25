@@ -171,7 +171,6 @@ config = {
         "node": {
             "bos_token": "<s>",
             "eos_token": "</s>",
-            "scope_base": 1000,
             "node_scope": 100000,
         },
         "edge": {

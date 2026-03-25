@@ -88,7 +88,6 @@ def test_pretrain_forward():
                     "eos_token": "<eos>",
                     "new_node_token": "<new_node>",
                     "node_scope": 1,
-                    "scope_base": 10,
                     "cyclic": 0,
                 },
                 "edge": {

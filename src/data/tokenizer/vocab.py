@@ -1,7 +1,6 @@
 """Vocabulary building and loading utilities."""
 
 from datetime import datetime
-import math
 import os
 import time
 import numpy as np
@@ -121,14 +120,8 @@ def _get_node_structure_vocab(config: Dict):
         config.get("weight_token", None),
         config.get("summary_token", None),
     ]
-    idx_token = [str(ele) for ele in range(0, config["scope_base"])]
-    high_lvl_scope = int(math.ceil(config["node_scope"] / config["scope_base"]))
-    idx_token_high_lvl = [
-        f"{ele}*{config['scope_base']}" for ele in range(1, high_lvl_scope)
-    ]
-    vocab = (
-        s_tokens + [eos_token, bos_token, new_token] + idx_token + idx_token_high_lvl
-    )
+    idx_token = [str(ele) for ele in range(0, config["node_scope"])]
+    vocab = s_tokens + [eos_token, bos_token, new_token] + idx_token
     vocab = [ele for ele in vocab if ele is not None]
     return vocab
 
