@@ -17,7 +17,6 @@ from .graph_encoding import (  # noqa: F401
     _tokenize_discrete_attr,
     _tokenize_continuous_attr,
     _remove_lead_zero,
-    _add_regression_token,
     _get_node2attr_mapping,
     _get_edge2attr_mapping,
     _get_graph2attr_mapping,

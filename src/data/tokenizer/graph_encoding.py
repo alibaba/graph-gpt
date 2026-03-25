@@ -190,11 +190,6 @@ def _tokenize_continuous_attr(
     return tokens
 
 
-def _add_regression_token(dict_map, reg_token):
-    for val in dict_map.values():
-        val.append(reg_token)
-
-
 def _get_node2attr_mapping(path, data: Data, attr_name: str):
     if path:
         tmp_map = {}
