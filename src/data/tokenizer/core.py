@@ -62,6 +62,16 @@ class GSTTokenizer(BaseTokenizer):
         self.sampler = None
         self.random_ratio = 1.0
 
+        # Cache frequently accessed config values for performance
+        self._node_scope = config["structure"]["node"]["node_scope"]
+        self._scope_base = config["structure"]["node"]["scope_base"]
+        self._cyclic = config["structure"]["node"].get("cyclic", False)
+        self._remove_edge_type_token = config["structure"]["edge"].get(
+            "remove_edge_type_token", False
+        )
+        self._bi_token = config["structure"]["edge"].get("bi_token", "<edge_bi>")
+        self._attr_shuffle = config["semantics"].get("attr_shuffle", False)
+
     def _get_label_token_id_to_be_padded(self):
         """Get label token IDs that should be padded."""
         if self.task_type != "pretrain":
@@ -105,17 +115,17 @@ class GSTTokenizer(BaseTokenizer):
 
         # 1-2. Transform graph to Eulerian sequence
         assert (
-            graph.num_nodes <= self.config["structure"]["node"]["node_scope"]
-        ), f"num_nodes: {graph.num_nodes} > node_scope: {self.config['structure']['node']['node_scope']}"
+            graph.num_nodes <= self._node_scope
+        ), f"num_nodes: {graph.num_nodes} > node_scope: {self._node_scope}"
 
         path = graph2path(graph)
 
         # 3. Obtain mappings
         node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
             path,
-            self.config["structure"]["node"]["scope_base"],
-            self.config["structure"]["node"]["node_scope"],
-            self.config["structure"]["node"].get("cyclic", False),
+            self._scope_base,
+            self._node_scope,
+            self._cyclic,
         )
         edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
             path, graph
@@ -154,13 +164,12 @@ class GSTTokenizer(BaseTokenizer):
             node_semantics_mapping,
             edge_semantics_mapping,
             graph_semantics_mapping,
-            attr_shuffle=self.config["semantics"].get("attr_shuffle", False),
+            attr_shuffle=self._attr_shuffle,
         )
 
         # 5. Remove bidirectional edge-type tokens if configured
-        dict_edge = self.config["structure"]["edge"]
-        if dict_edge.get("remove_edge_type_token", False):
-            edge_types = {dict_edge["bi_token"]}
+        if self._remove_edge_type_token:
+            edge_types = {self._bi_token}
             ls_tokens = [t for t in ls_tokens if t not in edge_types]
 
         # 5.1 Get labels from input tokens
@@ -203,8 +212,10 @@ class GSTTokenizer(BaseTokenizer):
 
     def convert_tokens_to_ids(self, seq_tokens, seq_labels) -> Dict:
         """Convert 1D token sequences to IDs."""
-        seq_tokens_id = [self.vocab_map[token] for token in seq_tokens]
-        seq_labels_id = [self.vocab_map[token] for token in seq_labels]
+        # Use local variable for faster lookup
+        vocab_map = self.vocab_map
+        seq_tokens_id = [vocab_map[token] for token in seq_tokens]
+        seq_labels_id = [vocab_map[token] for token in seq_labels]
 
         return get_input_dict_from_seq_tokens_id(
             seq_tokens_id,
@@ -280,6 +291,15 @@ class StackedGSTTokenizer(BaseTokenizer):
         # Set ignored values to None for stacking
         self.config["semantics"]["node"]["ignored_val"] = None
         self.config["semantics"]["edge"]["ignored_val"] = None
+
+        # Cache frequently accessed config values for performance
+        self._node_scope = config["structure"]["node"]["node_scope"]
+        self._scope_base = config["structure"]["node"]["scope_base"]
+        self._cyclic = config["structure"]["node"].get("cyclic", False)
+        self._remove_edge_type_token = config["structure"]["edge"].get(
+            "remove_edge_type_token", False
+        )
+        self._eos_token = config["structure"]["node"]["eos_token"]
 
     def get_default_node_attr(self, graph=None):
         if self.default_node_attr is None:
@@ -376,9 +396,9 @@ class StackedGSTTokenizer(BaseTokenizer):
         # 3. Obtain mappings
         node_structure_mapping = nx_utils.get_structure_raw_node2idx_mapping(
             path,
-            self.config["structure"]["node"]["scope_base"],
-            self.config["structure"]["node"]["node_scope"],
-            self.config["structure"]["node"].get("cyclic", False),
+            self._scope_base,
+            self._node_scope,
+            self._cyclic,
         )
         edge_structure_mapping = nx_utils.get_structure_raw_edge2type_mapping(
             path, graph
@@ -434,7 +454,7 @@ class StackedGSTTokenizer(BaseTokenizer):
             )
 
         # 4. Remove edge type tokens if configured
-        if self.config["structure"]["edge"]["remove_edge_type_token"]:
+        if self._remove_edge_type_token:
             edge_structure_mapping = None
 
         # 5. Stack attributes
@@ -455,7 +475,7 @@ class StackedGSTTokenizer(BaseTokenizer):
 
         # 6. Add EOS
         if self.add_eos:
-            eos_token = self.config["structure"]["node"]["eos_token"]
+            eos_token = self._eos_token
             token_components = len(ls_tokens[0])
             ls_tokens.append([eos_token] * token_components)
             ls_embed = add_eos_embed(ls_embed)
@@ -499,13 +519,15 @@ class StackedGSTTokenizer(BaseTokenizer):
 
     def convert_tokens_to_ids(self, seq_tokens: List[List[str]], seq_labels) -> Dict:
         """Convert 2D stacked token sequences to IDs."""
+        # Use local variable for faster lookup
+        vocab_map = self.vocab_map
+
+        # Optimize by using map for inner lists (faster than nested list comprehension)
         seq_tokens_id = [
-            [self.vocab_map[token] for token in feat_tokens]
-            for feat_tokens in seq_tokens
+            list(map(vocab_map.__getitem__, feat_tokens)) for feat_tokens in seq_tokens
         ]
         seq_labels_id = [
-            [self.vocab_map[token] for token in feat_tokens]
-            for feat_tokens in seq_labels
+            list(map(vocab_map.__getitem__, feat_tokens)) for feat_tokens in seq_labels
         ]
 
         return get_input_dict_from_seq_tokens_id(
