@@ -255,32 +255,19 @@ def get_structure_raw_node2idx_mapping(
 
 def get_structure_raw_edge2type_mapping(path: List[Tuple[int, int]], data: Data):
     # map the edge to its type
-    dict_map = {
-        (src, tgt): get_edge_type(data.edge_index, src, tgt) for src, tgt in path
-    }
+    # Build edge set once - O(E)
+    edge_set = set(zip(data.edge_index[0].tolist(), data.edge_index[1].tolist()))
+
+    dict_map = {}
+    for src, tgt in path:
+        has_forward = (src, tgt) in edge_set  # O(1)
+        has_backward = (tgt, src) in edge_set  # O(1)
+        if has_forward:
+            edge_type = "<edge_bi>" if has_backward else "<edge_out>"
+        else:
+            edge_type = "<edge_in>" if has_backward else "<edge_jump>"
+        dict_map[(src, tgt)] = edge_type
     return dict_map
-
-
-def get_edge_index(edge_index: Tensor, src: int, tgt: int) -> Tensor:
-    vec_bool = (edge_index[0, :] == src) & (edge_index[1, :] == tgt)
-    idx = vec_bool.nonzero(as_tuple=True)[0]  # tensor
-    return idx
-
-
-def get_edge_type(edge_index: Tensor, src: int, tgt: int):
-    foward_idx = get_edge_index(edge_index, src, tgt)
-    backward_idx = get_edge_index(edge_index, tgt, src)
-    if foward_idx.shape[0] == 0:
-        if backward_idx.shape[0] == 0:
-            edge_type = "<edge_jump>"
-        else:
-            edge_type = "<edge_in>"
-    else:
-        if backward_idx.shape[0] == 0:
-            edge_type = "<edge_out>"
-        else:
-            edge_type = "<edge_bi>"
-    return edge_type
 
 
 def connect_graph_central(G):

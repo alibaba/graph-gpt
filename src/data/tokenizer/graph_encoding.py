@@ -101,22 +101,18 @@ def _get_node2attr_mapping(path, data: Data, attr_name: str):
 
 
 def _get_edge2attr_mapping(path, data: Data, attr_name: str, verbose: bool = False):
+    # Build edge→index mapping once
+    edge_index_map = {}
+    for i, (s, t) in enumerate(
+        zip(data.edge_index[0].tolist(), data.edge_index[1].tolist())
+    ):
+        edge_index_map[(s, t)] = i
+
     tmp_map = {}
     for src, tgt in path:
-        idx = nx_utils.get_edge_index(data.edge_index, src, tgt)
-        if idx.shape[0] == 0:
-            idx_backward = nx_utils.get_edge_index(data.edge_index, tgt, src)
-            if idx_backward.shape[0] == 0:
-                idx = None
-                print(
-                    f"Edge ({src}, {tgt}) or ({tgt}, {src}) does not have attr {attr_name}"
-                ) if verbose else None
-            else:
-                idx = idx_backward
+        idx = edge_index_map.get((src, tgt)) or edge_index_map.get((tgt, src))
         if idx is not None:
-            idx = idx.item()
-            attr_val = data[attr_name][idx]
-            tmp_map[(src, tgt)] = attr_val.numpy()
+            tmp_map[(src, tgt)] = data[attr_name][idx].numpy()
     return tmp_map
 
 
