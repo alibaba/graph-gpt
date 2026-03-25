@@ -4,36 +4,29 @@
 **Referenced Files in This Document**
 - [training_utils.py](file://src/utils/training_utils.py)
 - [opt_utils.py](file://src/utils/opt_utils.py)
-- [optimization_utils.py](file://src/utils/optimization_utils.py)
+- [flex_attn_utils.py](file://src/utils/flex_attn_utils.py)
+- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
+- [modeling_helpers.py](file://src/models/graphgpt/modeling_helpers.py)
+- [utils_graphgpt.py](file://src/models/graphgpt/utils_graphgpt.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [pipeline.py](file://src/training/pipeline.py)
 - [mode.py](file://src/training/mode.py)
 - [pretrain_mode.py](file://src/training/pretrain_mode.py)
-- [finetune_mode.py](file://src/training/finetune_mode.py)
 - [base_configs.py](file://src/conf/base_configs.py)
 - [loader_utils.py](file://src/utils/loader_utils.py)
 - [base.yaml](file://configs/training/base.yaml)
 - [train_pretrain.py](file://examples/train_pretrain.py)
 - [train_supervised.py](file://examples/train_supervised.py)
 - [ds_config2.json](file://examples/ds_config2.json)
-- [utils_graphgpt.py](file://src/models/graphgpt/utils_graphgpt.py)
-- [modeling_common.py](file://src/models/graphgpt/modeling_common.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [flex_attn_utils.py](file://src/utils/flex_attn_utils.py)
-- [modeling_helpers.py](file://src/models/graphgpt/modeling_helpers.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
-- [core.py](file://src/data/tokenizer/core.py)
-- [task_prep.py](file://src/data/tokenizer/task_prep.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced attention mechanism with streamlined sample length processing and conditional attention mode switching
-- Updated attention utilities to support split-length attention with comprehensive sample length handling
-- Implemented conditional attention mode switching between flex_attention and SDPA paths based on training mode
-- Updated architecture diagrams to reflect new attention mechanism integration with sample_lens focus
-- Expanded troubleshooting guide with attention mechanism-specific error scenarios for sample_lens processing
-- Added new section covering attention mask utilities and flexible attention implementation with sample_lens emphasis
+- Enhanced training utilities with improved batch training functions supporting streamlined attention processing
+- Updated attention mechanism implementation with better error handling and conditional attention mode switching
+- Improved training workflow with enhanced attention metadata processing and robust fallback mechanisms
+- Streamlined attention processing now focuses exclusively on sample_lens parameter handling
+- Enhanced documentation covers new features in training_utils.py with improved attention utilities
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -52,7 +45,7 @@
 ## Introduction
 This document explains the training support utilities for Graph-GPT with a focus on optimization algorithms, learning rate scheduling, and training workflow management. It covers optimizer configurations, gradient clipping, and training state management. Advanced topics include mixed precision training, distributed training utilities, and integration with DeepSpeed and PyTorch DDP. The system now includes enhanced attention mechanisms with streamlined sample length processing and comprehensive attention utility support for improved training efficiency and flexibility.
 
-**Updated** Enhanced attention system now focuses exclusively on sample_lens parameter processing, implementing conditional attention mode switching between flex_attention and SDPA paths based on training mode and configuration.
+**Updated** Enhanced attention system now focuses exclusively on sample_lens parameter processing, implementing conditional attention mode switching between flex_attention and SDPA paths based on training mode and configuration. Training utilities have been improved with better error handling and streamlined attention metadata processing.
 
 ## Project Structure
 The training system is organized around a shared pipeline and mode-specific strategies with enhanced attention mechanism support:
@@ -73,7 +66,6 @@ end
 subgraph "Optimization"
 OU["opt_utils.initialize_optimizer()"]
 TU["training_utils.batch_training()<br/>training_utils.ft_batch_training()"]
-OPU["optimization_utils.update_deepspeed_config()"]
 end
 subgraph "Configs"
 BC["base_configs.py<br/>TrainingConfig, ScheduleConfig,<br/>OptimizerConfig"]
@@ -81,9 +73,7 @@ BY["configs/training/base.yaml"]
 end
 subgraph "Data & Samplers"
 LU["loader_utils.py<br/>samplers, loaders, ODPS helpers"]
-TK["tokenizer.py<br/>attention metadata handling"]
-TU2["tokenizer_utils.py<br/>task preparation"]
-TK3["core.py<br/>sample_lens processing,<br/>attention metadata"]
+TK["tokenizer.core.py<br/>attention metadata handling"]
 end
 subgraph "Models"
 MG["utils_graphgpt.py<br/>reset_pos_ids()"]
@@ -108,12 +98,11 @@ P --> EH
 EH --> MG
 EH --> MC
 EH --> FAU
-TK --> TU2
-TK3 --> TU
-TK3 --> FAU
+TK --> TU
+TK --> FAU
 TP --> P
 TS --> P
-DSJ --> OPU
+DSJ --> OU
 BY --> BC
 ```
 
@@ -121,18 +110,13 @@ BY --> BC
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [pretrain_mode.py:48-501](file://src/training/pretrain_mode.py#L48-L501)
-- [finetune_mode.py:43-459](file://src/training/finetune_mode.py#L43-L459)
 - [opt_utils.py:7-38](file://src/utils/opt_utils.py#L7-L38)
 - [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
-- [optimization_utils.py:4-14](file://src/utils/optimization_utils.py#L4-L14)
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [loader_utils.py:17-752](file://src/utils/loader_utils.py#L17-L752)
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
-- [modeling_common.py:187-203](file://src/models/graphgpt/modeling_common.py#L187-L203)
-- [tokenizer.py:289-337](file://src/data/tokenizer.py#L289-L337)
-- [tokenizer_utils.py:16](file://src/utils/tokenizer_utils.py#L16)
-- [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
+- [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [attn_mask_utils.py:12-128](file://src/utils/attn_mask_utils.py#L12-L128)
 - [core.py:244](file://src/data/tokenizer/core.py#L244)
 - [base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
@@ -162,7 +146,6 @@ BY --> BC
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [pretrain_mode.py:48-501](file://src/training/pretrain_mode.py#L48-L501)
-- [finetune_mode.py:43-459](file://src/training/finetune_mode.py#L43-L459)
 - [opt_utils.py:7-38](file://src/utils/opt_utils.py#L7-L38)
 - [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
@@ -213,7 +196,6 @@ Pipe->>Pipe : _cleanup()
 **Diagram sources**
 - [pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
 - [pretrain_mode.py:271-301](file://src/training/pretrain_mode.py#L271-L301)
-- [finetune_mode.py:218-258](file://src/training/finetune_mode.py#L218-L258)
 - [opt_utils.py:7-38](file://src/utils/opt_utils.py#L7-L38)
 - [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
@@ -516,7 +498,7 @@ OU --> BC
 TU --> BC
 TU --> PG["utils_graphgpt.py"]
 PG --> MC["modeling_common.py"]
-TK["tokenizer.py"] --> TU2["tokenizer_utils.py"]
+TK["tokenizer.core.py"] --> TU2["tokenizer_utils.py"]
 TK3["core.py"] --> TU
 TK3 --> FAU["flex_attn_utils.py"]
 FAU --> MH["modeling_helpers.py"]
@@ -534,8 +516,6 @@ AMU["attn_mask_utils.py"] --> MH
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
 - [modeling_common.py:187-203](file://src/models/graphgpt/modeling_common.py#L187-L203)
-- [tokenizer.py:289-337](file://src/data/tokenizer.py#L289-L337)
-- [tokenizer_utils.py:16](file://src/utils/tokenizer_utils.py#L16)
 - [core.py:244](file://src/data/tokenizer/core.py#L244)
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
@@ -552,8 +532,6 @@ AMU["attn_mask_utils.py"] --> MH
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
 - [modeling_common.py:187-203](file://src/models/graphgpt/modeling_common.py#L187-L203)
-- [tokenizer.py:289-337](file://src/data/tokenizer.py#L289-L337)
-- [tokenizer_utils.py:16](file://src/utils/tokenizer_utils.py#L16)
 - [core.py:244](file://src/data/tokenizer/core.py#L244)
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
@@ -616,7 +594,6 @@ Process --> End(["Continue training"])
 - [training_utils.py:150-154](file://src/utils/training_utils.py#L150-L154)
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
-- [tokenizer.py:289-337](file://src/data/tokenizer.py#L289-L337)
 - [core.py:244](file://src/data/tokenizer/core.py#L244)
 
 ## Attention Mechanisms and Sample Length Processing

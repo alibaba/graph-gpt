@@ -19,6 +19,7 @@
 - [src/utils/loader_utils.py](file://src/utils/loader_utils.py)
 - [src/data/collator.py](file://src/data/collator.py)
 - [src/data/tokenizer/padding.py](file://src/data/tokenizer/padding.py)
+- [src/training/pipeline.py](file://src/training/pipeline.py)
 - [tests/test_forward_simple.py](file://tests/test_forward_simple.py)
 - [tests/test_model_forward_inputs.py](file://tests/test_model_forward_inputs.py)
 - [tests/test_forward_minimal.py](file://tests/test_forward_minimal.py)
@@ -28,11 +29,12 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced documentation of training configuration parameter naming and the evolution of max_length parameter
-- Clarified that max_length is now recognized as a fundamental training configuration parameter beyond its original finetuning-only scope
-- Updated configuration synchronization logic documentation to reflect the broader application of sequence length constraints
-- Expanded practical examples demonstrating max_length usage across different training modes
-- Improved understanding of parameter precedence and validation in the unified configuration system
+- Enhanced documentation of the `sync_config()` function and its role in parameter synchronization across training modes
+- Updated training configuration to reflect the evolution of `max_length` from a primarily finetuning parameter to a general training parameter
+- Documented the new `pad_to_multiple_of` parameter and its integration with sequence length constraints
+- Added comprehensive coverage of the enhanced parameter synchronization logic in `base_configs.py`
+- Updated practical examples to demonstrate the broader application of sequence length constraints across all training modes
+- Enhanced test configuration management documentation with OmegaConf integration improvements
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -50,7 +52,7 @@
 ## Introduction
 This document explains the Graph-GPT configuration system built on Hydra and OmegaConf. It covers the hierarchical configuration structure, modular sub-configurations for model, training, tokenization, and generation parameters, base configuration files and their relationships, how YAML integrates with dataclass-based validation, configuration loading and precedence, runtime updates, practical examples for datasets and tasks, validation and error handling, extension patterns for custom datasets and experiments, and best practices for parameter tuning.
 
-**Updated** The configuration system now recognizes `max_length` as a fundamental training parameter that applies broadly across all training modes, not just finetuning contexts. This enhancement clarifies the broader application of sequence length constraints in training pipelines and improves parameter consistency across different task types.
+**Updated** The configuration system now features enhanced parameter synchronization through the `sync_config()` function, which establishes `max_length` as a fundamental training parameter applicable across all training modes, not just finetuning contexts. This enhancement improves consistency and simplifies configuration management across different task types.
 
 ## Project Structure
 The configuration system is organized into:
@@ -74,13 +76,14 @@ K["examples/train_pretrain.py<br/>@hydra.main(config_path, config_name)"] --> A
 L["tests/test_forward_simple.py<br/>OmegaConf structured config"] --> G
 M["tests/test_model_forward_inputs.py<br/>Compose + OmegaConf.to_object"] --> A
 N["tests/test_forward_minimal.py<br/>Nested structure examples"] --> G
+O["src/training/pipeline.py<br/>_init_data_configs() calls sync_config()"] --> G
 ```
 
 **Diagram sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [configs/tokenization/base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
 - [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
-- [configs/training/base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [src/conf/__init__.py:1-13](file://src/conf/__init__.py#L1-L13)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
@@ -91,6 +94,7 @@ N["tests/test_forward_minimal.py<br/>Nested structure examples"] --> G
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)
+- [src/training/pipeline.py:147-148](file://src/training/pipeline.py#L147-L148)
 
 **Section sources**
 - [configs/README.md:1-18](file://configs/README.md#L1-L18)
@@ -103,17 +107,19 @@ N["tests/test_forward_minimal.py<br/>Nested structure examples"] --> G
 - Dataclass-backed configuration: Typed configuration classes define validation and default values, enabling structured, safe configuration objects.
 - Example entry point: A script demonstrates how Hydra loads the configuration and passes it to the training pipeline.
 - Enhanced test configuration: OmegaConf integration for robust nested structure handling in test scenarios.
+- **Updated** Parameter synchronization: The `sync_config()` function establishes consistency across training parameters, particularly `max_length` and `task_type`.
 
 Key relationships:
 - The central orchestrator references sub-config names to merge into a unified configuration object.
 - The unified configuration object is a dataclass that aggregates sub-configs and exposes helpers for initialization and synchronization.
 - The training entry point uses Hydra to instantiate the unified configuration object.
 - Test scripts utilize OmegaConf for structured configuration creation and manipulation.
-- **Updated** The `max_length` parameter is now recognized as a general training parameter that applies across all training modes, not just finetuning contexts.
+- **Updated** The `sync_config()` function ensures `max_length` cascades from training configuration to model configuration when not explicitly set, and synchronizes task types across components.
 
 **Section sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 
@@ -124,7 +130,7 @@ The configuration architecture follows a layered pattern:
 - Hydra merges defaults and overrides, then instantiates dataclass-backed configuration objects.
 - Runtime helpers synchronize and validate configuration across domains.
 - Enhanced test infrastructure uses OmegaConf for structured configuration management.
-- **Updated** The synchronization logic now establishes `max_length` as a fundamental training parameter that cascades from training configuration to downstream components.
+- **Updated** The synchronization logic now establishes `max_length` as a fundamental training parameter that cascades from training configuration to downstream components, ensuring consistent sequence length constraints across all training modes.
 
 ```mermaid
 sequenceDiagram
@@ -155,7 +161,7 @@ Dataclass-->>Test : Validated configuration for testing
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
-- [src/conf/base_configs.py:239-247](file://src/conf/base_configs.py#L239-L247)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 
@@ -176,6 +182,7 @@ class TrainingConfig {
 +task_type : string
 +batch_size : int
 +max_length : int
++pad_to_multiple_of : int
 +optimizer : OptimizerConfig
 +schedule : ScheduleConfig
 +distributed : DistConfig
@@ -190,6 +197,7 @@ class OptimizerConfig {
 +lr : float
 +betas : float[]
 +weight_decay : float
++gradient_accumulation_steps : int
 }
 class TokenizationConfig {
 +data : DataConfig
@@ -321,6 +329,7 @@ class FinetuningHeadConfig {
 +task_type : string
 +pooling_method : string
 +mlp : int[]
++num_labels : int
 }
 class GeometricInputConfig {
 +pos_agg_method : string
@@ -347,33 +356,35 @@ GraphGPTModelConfig --> DropoutConfig
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
 
 ### Training Configuration
-Defines training schedule, optimizer, distributed settings, and fine-tuning controls. **Updated** Now recognizes `max_length` as a fundamental training parameter that applies broadly across all training modes.
+Defines training schedule, optimizer, distributed settings, and fine-tuning controls. **Updated** Now recognizes `max_length` as a fundamental training parameter that applies broadly across all training modes, with enhanced synchronization logic.
 
 ```mermaid
 flowchart TD
 Start(["Load training base YAML"]) --> Schedule["ScheduleConfig<br/>tokens, steps, logging"]
-Start --> Optim["OptimizerConfig<br/>lr, betas, weight_decay"]
+Start --> Optim["OptimizerConfig<br/>lr, betas, weight_decay, grad_accum"]
 Start --> Dist["DistConfig<br/>world_size, rank"]
 Start --> FineTune["FinetuneTrainConfig<br/>freeze, seed, ratios"]
 Start --> FineEval["FinetuneEvalConfig<br/>save_pred, eval_only"]
 Start --> MaxLen["MaxLengthConfig<br/>max_length (general training parameter)"]
+Start --> PadMult["PadToMultipleOf<br/>pad_to_multiple_of"]
 Schedule --> Merge["Merge into TrainingConfig"]
 Optim --> Merge
 Dist --> Merge
 FineTune --> Merge
 FineEval --> Merge
 MaxLen --> Merge
+PadMult --> Merge
 Merge --> End(["Unified TrainingConfig"])
 ```
 
 **Diagram sources**
-- [configs/training/base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
 - [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [src/conf/base_configs.py:28-51](file://src/conf/base_configs.py#L28-L51)
 - [src/conf/base_configs.py:107-130](file://src/conf/base_configs.py#L107-L130)
 
 **Section sources**
-- [configs/training/base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
 - [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 
 ### Generation Configuration
@@ -406,7 +417,7 @@ class GenerationConfig {
 - Overrides: Dataset/task YAML files override base values.
 - Command-line overrides: Values can be changed at runtime via command-line arguments.
 - Instantiation: Hydra constructs the unified configuration object from the merged YAML and dataclass definitions.
-- **Updated** Synchronization: The `sync_config()` function establishes `max_length` as a fundamental training parameter by cascading from training configuration to model configuration when not explicitly set.
+- **Updated** Synchronization: The `sync_config()` function establishes `max_length` as a fundamental training parameter by cascading from training configuration to model configuration when not explicitly set, and synchronizes task types across components.
 - Test configuration: OmegaConf integration enables structured configuration creation and manipulation.
 
 ```mermaid
@@ -439,14 +450,14 @@ DC-->>Test : Validated configuration for testing
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
-- [src/conf/base_configs.py:239-247](file://src/conf/base_configs.py#L239-L247)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 
 **Section sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
-- [src/conf/base_configs.py:239-247](file://src/conf/base_configs.py#L239-L247)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 
@@ -454,32 +465,34 @@ DC-->>Test : Validated configuration for testing
 - Change dataset and tokenizer class for a graph-level task:
   - Override tokenization base with a dataset-specific YAML.
   - Adjust model vocabulary and positional embeddings to match the dataset.
-  - **Updated** Set `max_length` in training configuration to control sequence length constraints across all training modes.
+  - **Updated** Set `max_length` in training configuration to control sequence length constraints across all training modes, including pretraining and finetuning.
   - Tune training schedule and optimizer for convergence speed.
   - Example dataset YAML for a Reddit-like graph-level task is available under tokenization graph-level configs.
 
 - Switch to supervised fine-tuning:
   - Set task type to a downstream task.
   - Configure fine-tuning head parameters and evaluation settings.
-  - **Updated** The `max_length` parameter now serves as a general training constraint that applies consistently across both pretraining and finetuning modes.
+  - **Updated** The `max_length` parameter now serves as a general training constraint that applies consistently across both pretraining and finetuning modes, automatically synchronized via `sync_config()`.
   - Adjust batch size and gradient accumulation for memory constraints.
 
 - Enable diffusion generation:
   - Select generation algorithm and sampling parameters.
   - Set special token IDs from the tokenizer.
-  - **Updated** Generation configuration maintains its own `max_length` parameter for generation-specific sequence length control.
+  - **Updated** Generation configuration maintains its own `max_length` parameter for generation-specific sequence length control, independent of training constraints.
 
 - Enhanced test configuration management:
   - Use OmegaConf structured configuration for complex nested structures.
   - Leverage CLI overrides for runtime parameter modification.
   - Implement robust configuration validation in test scenarios.
+  - **Updated** Test scripts now explicitly set `training.max_length` to ensure consistent sequence length constraints across different test modes.
 
 **Section sources**
 - [configs/tokenization/graph_lvl/reddit.yaml:1-121](file://configs/tokenization/graph_lvl/reddit.yaml#L1-L121)
-- [configs/training/base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
-- [tests/test_model_forward_inputs.py:116-169](file://tests/test_model_forward_inputs.py#L116-L169)
+- [tests/test_model_forward_inputs.py:164-165](file://tests/test_model_forward_inputs.py#L164-L165)
+- [tests/test_model_forward_inputs.py:276-277](file://tests/test_model_forward_inputs.py#L276-L277)
 
 ### Configuration Validation and Error Handling
 - Dataclass-level validation: Generation configuration validates algorithm choices and parameter bounds.
@@ -504,17 +517,17 @@ K["sync_config() called"] --> L["Set max_length from model or training"]
 **Diagram sources**
 - [src/conf/generation/generation_configs.py:74-97](file://src/conf/generation/generation_configs.py#L74-L97)
 - [src/utils/conf_utils.py:30-46](file://src/utils/conf_utils.py#L30-L46)
-- [src/conf/base_configs.py:239-247](file://src/conf/base_configs.py#L239-L247)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 
 **Section sources**
 - [src/conf/generation/generation_configs.py:74-97](file://src/conf/generation/generation_configs.py#L74-L97)
-- [src/conf/base_configs.py:240-264](file://src/conf/base_configs.py#L240-L264)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [src/utils/conf_utils.py:30-46](file://src/utils/conf_utils.py#L30-L46)
 
 ### Extending Configurations for Custom Datasets and Experiments
 - Add a new dataset YAML under the appropriate tokenization subfolder and reference it from the central orchestrator.
 - Introduce new sub-configs in the dataclass modules to capture dataset-specific parameters.
-- **Updated** Use the `max_length` parameter in training configuration to establish sequence length constraints that apply consistently across all training modes.
+- **Updated** Use the `max_length` parameter in training configuration to establish sequence length constraints that apply consistently across all training modes, with automatic synchronization via `sync_config()`.
 - Use command-line overrides to quickly experiment with hyperparameters without editing YAML files.
 - Keep validation logic close to the relevant dataclass to surface errors early.
 - Leverage OmegaConf integration for enhanced test configuration management.
@@ -524,6 +537,29 @@ K["sync_config() called"] --> L["Set max_length from model or training"]
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
+
+### Enhanced Parameter Synchronization
+**Updated** The `sync_config()` function in `base_configs.py` provides comprehensive parameter synchronization across the configuration system:
+
+#### Core Synchronization Logic
+The function performs critical parameter synchronization:
+- Sets `model_cfg.ft_head.task_type = train_cfg.task_type` for consistent task handling
+- Establishes `train_cfg.max_length = train_cfg.max_length or model_cfg.max_position_embeddings` for universal sequence length control
+- Enables discriminative pretraining for specific task types
+
+#### Integration Points
+- Called during pipeline initialization in `_init_data_configs()`
+- Ensures consistency between training and model configurations
+- Provides fallback behavior when `max_length` is not explicitly configured
+
+#### Impact on Training Modes
+- **Pretraining**: Automatically inherits sequence length constraints from model configuration
+- **Finetuning**: Explicitly controlled via training configuration with fallback to model settings
+- **Mixed Tasks**: Consistent sequence length handling across different task types
+
+**Section sources**
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:147-148](file://src/training/pipeline.py#L147-L148)
 
 ## Enhanced Test Configuration Management
 
@@ -622,7 +658,8 @@ conf_updated = OmegaConf.merge(conf, OmegaConf.from_cli(cli_overrides))
 
 **Section sources**
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
-- [tests/test_model_forward_inputs.py:116-169](file://tests/test_model_forward_inputs.py#L116-L169)
+- [tests/test_model_forward_inputs.py:164-165](file://tests/test_model_forward_inputs.py#L164-L165)
+- [tests/test_model_forward_inputs.py:276-277](file://tests/test_model_forward_inputs.py#L276-L277)
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)
 - [tests/README_FORWARD_TEST.md:1-211](file://tests/README_FORWARD_TEST.md#L1-L211)
 - [tests/QUICK_START.md:1-290](file://tests/QUICK_START.md#L1-L290)
@@ -633,7 +670,7 @@ The configuration system exhibits clear separation of concerns:
 - Dataclass modules define typed validation and relationships.
 - Utilities bridge configuration to runtime components (e.g., tokenizer conversion, DeepSpeed parsing).
 - Test infrastructure leverages OmegaConf for enhanced configuration management.
-- **Updated** The synchronization logic ensures `max_length` parameter consistency across all training modes.
+- **Updated** The synchronization logic ensures `max_length` parameter consistency across all training modes through the `sync_config()` function.
 
 ```mermaid
 graph TB
@@ -654,12 +691,13 @@ T2["tests/test_model_forward_inputs.py"] --> OC
 T3["tests/test_forward_minimal.py"] --> OC
 OC --> DC3
 Sync["sync_config()"] --> DC3
+Pipeline["_init_data_configs()"] --> Sync
 ```
 
 **Diagram sources**
 - [configs/tokenization/base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
 - [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
-- [configs/training/base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
@@ -669,7 +707,8 @@ Sync["sync_config()"] --> DC3
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [tests/test_forward_simple.py:17](file://tests/test_forward_simple.py#L17)
 - [tests/test_model_forward_inputs.py:29](file://tests/test_model_forward_inputs.py#L29)
-- [src/conf/base_configs.py:239-247](file://src/conf/base_configs.py#L239-L247)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:147-148](file://src/training/pipeline.py#L147-L148)
 
 **Section sources**
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
@@ -679,28 +718,30 @@ Sync["sync_config()"] --> DC3
 
 ## Performance Considerations
 - Prefer smaller base models and reduced positional embeddings for memory-constrained environments.
-- **Updated** Set `max_length` appropriately in training configuration to balance memory usage and training effectiveness across all training modes.
+- **Updated** Set `max_length` appropriately in training configuration to balance memory usage and training effectiveness across all training modes, with automatic fallback to model settings when not explicitly configured.
 - Tune batch size and gradient accumulation to balance throughput and stability.
 - Use appropriate schedule parameters (total tokens, warmup steps) aligned with dataset size and compute budget.
 - Limit unnecessary preprocessing workers and disable expensive features during experimentation.
 - **Updated** OmegaConf integration reduces configuration overhead in test scenarios through efficient structured configuration creation and validation.
+- **Updated** The `pad_to_multiple_of` parameter ensures optimal memory alignment for attention computations, improving performance in GPU environments.
 
 ## Troubleshooting Guide
 - Unknown generation algorithm or invalid numeric bounds: Generation configuration raises warnings or errors during validation.
 - Mismatched special token IDs: Ensure tokenizer IDs are set before generation; helpers can populate IDs from the tokenizer.
 - Resume training inconsistencies: Logging utilities validate resume indices against saved logs to prevent misalignment.
-- **Updated** Sequence length issues: If encountering sequence length problems, verify that `max_length` is properly set in training configuration or will cascade from `max_position_embeddings` via `sync_config()`.
+- **Updated** Sequence length issues: If encountering sequence length problems, verify that `max_length` is properly set in training configuration or will cascade from `max_position_embeddings` via `sync_config()`. Check both training and model configuration for consistency.
 - **Updated** Test configuration issues: OmegaConf structured configuration errors can be debugged using OmegaConf.to_yaml() for inspection and proper nested structure validation.
+- **Updated** Parameter synchronization problems: If `max_length` appears inconsistent across components, verify that `sync_config()` is being called during pipeline initialization and that there are no conflicting explicit settings.
 
 **Section sources**
 - [src/conf/generation/generation_configs.py:81-97](file://src/conf/generation/generation_configs.py#L81-L97)
-- [src/conf/base_configs.py:295-302](file://src/conf/base_configs.py#L295-L302)
+- [src/conf/base_configs.py:316-330](file://src/conf/base_configs.py#L316-L330)
 - [src/utils/conf_utils.py:150-232](file://src/utils/conf_utils.py#L150-L232)
-- [src/conf/base_configs.py:239-247](file://src/conf/base_configs.py#L239-L247)
+- [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 
 ## Conclusion
-Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, and utilizing OmegaConf for structured configuration management—you can efficiently tune and extend configurations for diverse graph learning scenarios.
+Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, and utilizing OmegaConf for structured configuration management—you can efficiently tune and extend configurations for diverse graph learning scenarios.
 
 ## Appendices
 
@@ -710,21 +751,24 @@ Graph-GPT's configuration system combines the flexibility of YAML with the safet
   - Encapsulate dataset-specific parameters in dedicated YAML files.
   - Use dataclass validation to catch invalid combinations early.
   - Keep command-line overrides concise and documented.
-  - Synchronize derived parameters using provided helpers.
+  - Synchronize derived parameters using provided helpers, particularly `sync_config()`.
   - **Updated** Leverage OmegaConf structured configuration for complex nested structures in tests.
   - Use CLI overrides for flexible parameter experimentation in test scenarios.
   - Implement proper configuration validation for nested structures.
-  - **Updated** Set `max_length` in training configuration for consistent sequence length control across all training modes.
+  - **Updated** Set `max_length` in training configuration for consistent sequence length control across all training modes, with automatic fallback to model settings.
+  - **Updated** Utilize the `pad_to_multiple_of` parameter to optimize memory alignment and performance.
 
 - Common pitfalls:
   - Forgetting to set special token IDs for generation.
   - Mismatched vocabulary sizes and positional embeddings across tokenization and model.
   - Incorrect schedule parameters causing premature stopping or excessive training.
   - Overly aggressive gradient accumulation leading to instability.
-  - **Updated** Assuming `max_length` only applies to finetuning contexts; remember it's now a general training parameter.
+  - **Updated** Assuming `max_length` only applies to finetuning contexts; remember it's now a general training parameter with automatic synchronization.
   - **Updated** Manual dictionary construction errors in test configurations.
   - Improper nested structure handling in complex test scenarios.
   - Missing OmegaConf validation in test configuration setup.
+  - **Updated** Conflicting `max_length` settings between training and model configurations.
+  - **Updated** Forgetting to call `sync_config()` during pipeline initialization.
 
 ### OmegaConf Configuration Patterns
 
@@ -752,5 +796,6 @@ max_length = OmegaConf.select(cfg, "training.max_length")  # Now works as genera
 
 **Section sources**
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
-- [tests/test_model_forward_inputs.py:116-169](file://tests/test_model_forward_inputs.py#L116-L169)
+- [tests/test_model_forward_inputs.py:164-165](file://tests/test_model_forward_inputs.py#L164-L165)
+- [tests/test_model_forward_inputs.py:276-277](file://tests/test_model_forward_inputs.py#L276-L277)
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)

@@ -541,7 +541,7 @@ class PretrainMode(TrainingMode):
                         (train_stats.j % sched_cfg.steps_per_saving == 0)
                         and (train_stats.j > j_init)
                     ) or (train_stats.j == sched_cfg.total_num_steps):
-                        log_eval_dump_utils.log_dump_pt_training_stats(
+                        eval_metrics = log_eval_dump_utils.log_dump_pt_training_stats(
                             model,
                             cfg,
                             train_stats,
@@ -549,6 +549,9 @@ class PretrainMode(TrainingMode):
                             loader_stats,
                             ema_stats,
                             tb_writer,
+                        )
+                        log_eval_dump_utils.log_eval_to_wandb(
+                            "eval", eval_metrics, train_stats.j
                         )
 
                     if train_stats.j == sched_cfg.total_num_steps:
