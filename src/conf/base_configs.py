@@ -162,6 +162,28 @@ class ProfilerConfig:
 
 
 @dataclass
+class TorchCompileConfig:
+    """Configuration for torch.compile() to reduce kernel fragmentation.
+
+    Attributes:
+        enabled: Whether to enable torch.compile (default: False)
+        mode: Compilation mode - 'default', 'reduce-overhead', 'max-autotune'
+              - 'reduce-overhead': Best for reducing kernel launch overhead
+              - 'max-autotune': Best performance but slower compilation
+              - 'default': Balanced option
+        backend: Compilation backend - 'inductor' (default), 'cudagraphs', etc.
+        fullgraph: Whether to require full graph compilation (default: False)
+        dynamic: Whether to use dynamic shapes (default: True for variable seq lengths)
+    """
+
+    enabled: bool = False
+    mode: str = "reduce-overhead"  # Best for reducing kernel fragmentation
+    backend: str = "inductor"
+    fullgraph: bool = False
+    dynamic: bool = True
+
+
+@dataclass
 class WandbConfig:
     """Configuration for Weights & Biases (wandb) logging and tracking.
 
@@ -228,6 +250,7 @@ class TrainingConfig:
     ft_eval: FinetuneEvalConfig = field(default_factory=FinetuneEvalConfig)
     profiler: ProfilerConfig = field(default_factory=ProfilerConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
+    torch_compile: TorchCompileConfig = field(default_factory=TorchCompileConfig)
 
 
 def update_ft_num_steps(train_cfg: TrainingConfig, samples_per_gpu):

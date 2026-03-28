@@ -3,6 +3,7 @@ from .base_configs import (
     TrainingConfig,
     ScheduleConfig,
     ProfilerConfig,
+    TorchCompileConfig,
     TASK_TYPES,
 )
 from .tokenization import TokenizationConfig, DataConfig

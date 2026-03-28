@@ -2,6 +2,7 @@ import os
 import sys
 import multiprocessing as mp
 
+import torch
 import deepspeed
 from datetime import datetime
 from omegaconf import OmegaConf
@@ -163,6 +164,41 @@ class TrainingPipeline:
             self.model.dict_bounds = train_ds.dict_bounds
         self.model.gradient_checkpointing_enable()
         self.model.config.use_cache = False
+        # Apply torch.compile if enabled (reduces kernel fragmentation)
+        self._apply_torch_compile()
+
+    def _apply_torch_compile(self):
+        """Apply torch.compile() for kernel fusion and reduced launch overhead."""
+        compile_cfg = self.train_cfg.torch_compile
+        if not compile_cfg.enabled:
+            return
+
+        if not hasattr(torch, "compile"):
+            print(
+                "Warning: torch.compile not available (requires PyTorch 2.0+). Skipping."
+            )
+            return
+
+        print(
+            f"Applying torch.compile with mode='{compile_cfg.mode}', "
+            f"backend='{compile_cfg.backend}', dynamic={compile_cfg.dynamic}"
+        )
+
+        try:
+            self.model = torch.compile(
+                self.model,
+                mode=compile_cfg.mode,
+                backend=compile_cfg.backend,
+                fullgraph=compile_cfg.fullgraph,
+                dynamic=compile_cfg.dynamic,
+            )
+            print(
+                "torch.compile applied successfully. First forward pass will trigger compilation."
+            )
+        except Exception as e:
+            print(
+                f"Warning: torch.compile failed with error: {e}. Continuing without compilation."
+            )
 
     def _load_initial_ckp(self):
         """Non-resuming: load from pretrained checkpoint if provided and

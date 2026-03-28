@@ -104,3 +104,14 @@ training:
     resume: null  # Resume mode: "allow", "must", "never", "auto", or null
     log_model: false  # Whether to log model checkpoints to wandb
     log_freq: null  # Log frequency in steps. Uses logging_steps if null
+  # --- torch.compile() Configuration for Kernel Optimization ---
+  # Enable to reduce kernel fragmentation and improve GPU efficiency
+  torch_compile:
+    enabled: false  # Set to true to enable torch.compile
+    mode: "reduce-overhead"  # Options: "default", "reduce-overhead", "max-autotune"
+    # - reduce-overhead: Best for reducing kernel launch overhead (recommended)
+    # - max-autotune: Best performance but slower compilation time
+    # - default: Balanced option
+    backend: "inductor"  # Compilation backend (inductor is recommended)
+    fullgraph: false  # Whether to require full graph compilation
+    dynamic: true  # Allow dynamic shapes (recommended for variable sequence lengths)

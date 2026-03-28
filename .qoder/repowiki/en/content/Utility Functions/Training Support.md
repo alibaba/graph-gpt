@@ -14,6 +14,8 @@
 - [pretrain_mode.py](file://src/training/pretrain_mode.py)
 - [base_configs.py](file://src/conf/base_configs.py)
 - [loader_utils.py](file://src/utils/loader_utils.py)
+- [stats_configs.py](file://src/conf/stats_configs.py)
+- [log_eval_dump_utils.py](file://src/utils/log_eval_dump_utils.py)
 - [base.yaml](file://configs/training/base.yaml)
 - [train_pretrain.py](file://examples/train_pretrain.py)
 - [train_supervised.py](file://examples/train_supervised.py)
@@ -22,11 +24,10 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced training utilities with improved batch training functions supporting streamlined attention processing
-- Updated attention mechanism implementation with better error handling and conditional attention mode switching
-- Improved training workflow with enhanced attention metadata processing and robust fallback mechanisms
-- Streamlined attention processing now focuses exclusively on sample_lens parameter handling
-- Enhanced documentation covers new features in training_utils.py with improved attention utilities
+- Enhanced TrainingStats class with new get_loss_values() method that batches multiple .item() calls into a single synchronization point, dramatically reducing cudaDeviceSynchronize overhead
+- Improved logging infrastructure across pre-training and fine-tuning modes with better speed calculations and reduced GPU-CPU transfers
+- Training configuration files updated with new parameters for optimized workflows including steps_per_saving and enhanced logging controls
+- Added comprehensive synchronization analysis and optimization guidance for GPU efficiency
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -38,21 +39,23 @@
 7. [Performance Considerations](#performance-considerations)
 8. [Enhanced Error Handling and Defensive Programming](#enhanced-error-handling-and-defensive-programming)
 9. [Attention Mechanisms and Sample Length Processing](#attention-mechanisms-and-sample-length-processing)
-10. [Troubleshooting Guide](#troubleshooting-guide)
-11. [Conclusion](#conclusion)
-12. [Appendices](#appendices)
+10. [Training Statistics and Logging Infrastructure](#training-statistics-and-logging-infrastructure)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+12. [Conclusion](#conclusion)
+13. [Appendices](#appendices)
 
 ## Introduction
-This document explains the training support utilities for Graph-GPT with a focus on optimization algorithms, learning rate scheduling, and training workflow management. It covers optimizer configurations, gradient clipping, and training state management. Advanced topics include mixed precision training, distributed training utilities, and integration with DeepSpeed and PyTorch DDP. The system now includes enhanced attention mechanisms with streamlined sample length processing and comprehensive attention utility support for improved training efficiency and flexibility.
+This document explains the training support utilities for Graph-GPT with a focus on optimization algorithms, learning rate scheduling, and training workflow management. It covers optimizer configurations, gradient clipping, and training state management. Advanced topics include mixed precision training, distributed training utilities, and integration with DeepSpeed and PyTorch DDP. The system now includes enhanced attention mechanisms with streamlined sample length processing, comprehensive attention utility support for improved training efficiency and flexibility, and significantly optimized logging infrastructure with reduced GPU-CPU synchronization overhead.
 
-**Updated** Enhanced attention system now focuses exclusively on sample_lens parameter processing, implementing conditional attention mode switching between flex_attention and SDPA paths based on training mode and configuration. Training utilities have been improved with better error handling and streamlined attention metadata processing.
+**Updated** Enhanced attention system now focuses exclusively on sample_lens parameter processing, implementing conditional attention mode switching between flex_attention and SDPA paths based on training mode and configuration. Training utilities have been improved with better error handling and streamlined attention metadata processing. The TrainingStats class now includes a sophisticated get_loss_values() method that dramatically reduces cudaDeviceSynchronize overhead by batching multiple .item() calls into a single synchronization point.
 
 ## Project Structure
-The training system is organized around a shared pipeline and mode-specific strategies with enhanced attention mechanism support:
+The training system is organized around a shared pipeline and mode-specific strategies with enhanced attention mechanism support and optimized logging infrastructure:
 - Unified pipeline orchestrates shared setup and delegates to pretrain or finetune modes with streamlined attention processing.
 - Mode-specific implementations handle data preparation, model creation, optimizer setup, and training loops with attention mechanism integration.
 - Utilities provide optimizer initialization, mixed precision training, gradient clipping, and distributed samplers with robust attention mask handling.
 - Streamlined attention utilities support split-length processing and comprehensive sample length handling for complex attention patterns.
+- Enhanced logging infrastructure with improved speed calculations and reduced GPU-CPU transfers for better training efficiency.
 
 ```mermaid
 graph TB
@@ -82,6 +85,10 @@ MH["modeling_helpers.py<br/>_update_causal_mask()<br/>flex_attention integration
 FAU["flex_attn_utils.py<br/>build_flex_block_mask()<br/>prepare_attention_mask_per_sample<br/>conditional attention mode"]
 AMU["attn_mask_utils.py<br/>4D attention mask utilities"]
 end
+subgraph "Statistics & Logging"
+SC["stats_configs.py<br/>TrainingStats<br/>get_loss_values()"]
+LEDU["log_eval_dump_utils.py<br/>Enhanced logging<br/>speed calculations"]
+end
 subgraph "Examples"
 TP["examples/train_pretrain.py"]
 TS["examples/train_supervised.py"]
@@ -100,6 +107,7 @@ EH --> MC
 EH --> FAU
 TK --> TU
 TK --> FAU
+SC --> LEDU
 TP --> P
 TS --> P
 DSJ --> OU
@@ -119,7 +127,9 @@ BY --> BC
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [attn_mask_utils.py:12-128](file://src/utils/attn_mask_utils.py#L12-L128)
 - [core.py:244](file://src/data/tokenizer/core.py#L244)
-- [base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [stats_configs.py:29-116](file://src/conf/stats_configs.py#L29-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
+- [base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [train_pretrain.py:12-18](file://examples/train_pretrain.py#L12-L18)
 - [train_supervised.py:12-18](file://examples/train_supervised.py#L12-L18)
 - [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43)
@@ -128,7 +138,7 @@ BY --> BC
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
-- [base.yaml:1-78](file://configs/training/base.yaml#L1-L78)
+- [base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 
 ## Core Components
 - TrainingPipeline: Orchestrates shared setup (configs, EMA, DeepSpeed flag, distributed), delegates to mode-specific handlers, manages lifecycle (checkpointing, cleanup), and implements streamlined attention processing with sample length handling.
@@ -139,8 +149,9 @@ BY --> BC
 - Configuration utilities: Centralized training, schedule, and optimizer configuration dataclasses and YAML defaults with attention mechanism configurations.
 - Loader utilities: Deterministic and distributed samplers, ODPS table dataset helpers, and loader construction with robust attention mask handling.
 - Attention utilities: Comprehensive flexible attention support with split-length processing, sample length handling, and attention mode management using streamlined sample_lens approach with conditional switching between flex_attention and SDPA paths.
+- **Enhanced TrainingStats**: Provides optimized logging infrastructure with get_loss_values() method that batches multiple .item() calls into a single synchronization point to dramatically reduce cudaDeviceSynchronize overhead.
 
-**Updated** Attention utilities now emphasize sample_lens parameter processing as the primary mechanism for attention configuration, implementing conditional attention mode switching between flex_attention and SDPA paths based on training mode and configuration.
+**Updated** Attention utilities now emphasize sample_lens parameter processing as the primary mechanism for attention configuration, implementing conditional attention mode switching between flex_attention and SDPA paths based on training mode and configuration. The TrainingStats class includes a sophisticated get_loss_values() method that dramatically reduces GPU-CPU synchronization overhead by batching .item() calls.
 
 **Section sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
@@ -151,9 +162,10 @@ BY --> BC
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [loader_utils.py:17-752](file://src/utils/loader_utils.py#L17-L752)
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
+- [stats_configs.py:29-116](file://src/conf/stats_configs.py#L29-L116)
 
 ## Architecture Overview
-The training architecture separates concerns between orchestration and mode-specific logic, enabling consistent workflows across pretraining and finetuning with streamlined attention mechanism support for sample_lens-focused attention patterns and conditional attention mode switching.
+The training architecture separates concerns between orchestration and mode-specific logic, enabling consistent workflows across pretraining and finetuning with streamlined attention mechanism support for sample_lens-focused attention patterns and conditional attention mode switching. The enhanced logging infrastructure provides optimized speed calculations and reduced GPU-CPU transfers for improved training efficiency.
 
 ```mermaid
 sequenceDiagram
@@ -165,6 +177,8 @@ participant Model as "Model"
 participant Att as "Attention Processor"
 participant Flex as "Flexible Attention Utils"
 participant Opt as "Optimizer/Scaler/Scheduler"
+participant Stats as "TrainingStats"
+participant Log as "Logging Infrastructure"
 participant DS as "DeepSpeed/DDP"
 User->>Pipe : run()
 Pipe->>Pipe : _extract_config(), _setup_deepspeed_flag(), _setup_distributed()
@@ -189,6 +203,11 @@ Opt->>Opt : clip_grad_norm (optional)
 Opt->>Opt : scaler.step(optimizer), scaler.update()
 Opt->>Opt : lr_scheduler.step()
 end
+Mode->>Stats : update loss tensors
+Stats->>Stats : get_loss_values() (single sync point)
+Stats->>Log : print_stats(loss_values)
+Log->>Log : cal_speed(batch_size)
+Log->>Log : distributed reduction (if applicable)
 end
 Pipe->>Pipe : _cleanup()
 ```
@@ -201,6 +220,8 @@ Pipe->>Pipe : _cleanup()
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
+- [stats_configs.py:102-116](file://src/conf/stats_configs.py#L102-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
 
 ## Detailed Component Analysis
 
@@ -381,6 +402,7 @@ Note over Load : Streamlined attention processing in distributed mode
 - YAML base configuration provides defaults for learning rates, gradient clipping, accumulation steps, and distributed settings.
 - Mode-specific updates adjust schedule computation and min learning rate depending on DeepSpeed usage.
 - Streamlined attention mechanism configurations for sample_lens-focused attention processing are included in training configurations.
+- **Enhanced logging parameters**: New steps_per_saving and steps_per_eval parameters for optimized logging workflows.
 
 ```mermaid
 classDiagram
@@ -393,6 +415,9 @@ class TrainingConfig {
 +optimizer : OptimizerConfig
 +finetune : FinetuneTrainConfig
 +attention_mechanism : AttentionMechanismConfig
++profiler : ProfilerConfig
++wandb : WandbConfig
++torch_compile : TorchCompileConfig
 }
 class ScheduleConfig {
 +total_tokens
@@ -400,6 +425,8 @@ class ScheduleConfig {
 +total_num_steps
 +warmup_num_steps
 +logging_steps
++steps_per_saving
++steps_per_eval
 }
 class OptimizerConfig {
 +lr
@@ -409,6 +436,8 @@ class OptimizerConfig {
 +eps
 +max_grad_norm
 +gradient_accumulation_steps
++use_ema
++ema_decay
 }
 class FinetuneTrainConfig {
 +freeze
@@ -425,21 +454,60 @@ class AttentionMechanismConfig {
 +attention_implementation
 +conditional_switching
 }
+class ProfilerConfig {
++enabled
++wait_steps
++warmup_steps
++active_steps
++repeat
++record_shapes
++profile_memory
++with_stack
++with_flops
++with_modules
++export_chrome_trace
++export_stacks
++tensorboard
+}
+class WandbConfig {
++enabled
++api_key
++project
++entity
++name
++tags
++notes
++group
++job_type
++resume
++log_model
++log_freq
+}
+class TorchCompileConfig {
++enabled
++mode
++backend
++fullgraph
++dynamic
+}
 TrainingConfig --> ScheduleConfig
 TrainingConfig --> OptimizerConfig
 TrainingConfig --> FinetuneTrainConfig
 TrainingConfig --> AttentionMechanismConfig
+TrainingConfig --> ProfilerConfig
+TrainingConfig --> WandbConfig
+TrainingConfig --> TorchCompileConfig
 ```
 
 **Diagram sources**
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [base_configs.py:35-88](file://src/conf/base_configs.py#L35-L88)
 - [base_configs.py:107-129](file://src/conf/base_configs.py#L107-L129)
-- [base.yaml:24-78](file://configs/training/base.yaml#L24-L78)
+- [base.yaml:24-118](file://configs/training/base.yaml#L24-L118)
 
 **Section sources**
 - [base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
-- [base.yaml:24-78](file://configs/training/base.yaml#L24-L78)
+- [base.yaml:24-118](file://configs/training/base.yaml#L24-L118)
 
 ### DeepSpeed Integration and Configuration Updates
 - DeepSpeed configuration can be merged with optimizer and scheduler parameters from training configuration.
@@ -481,7 +549,7 @@ Fallback --> Continue
 - [pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
 
 ## Dependency Analysis
-The training system exhibits low coupling between pipeline and modes, with clear separation of concerns. Utilities depend on configuration and model interfaces, while modes depend on data loaders and collators. Streamlined attention processing components integrate seamlessly with existing architecture.
+The training system exhibits low coupling between pipeline and modes, with clear separation of concerns. Utilities depend on configuration and model interfaces, while modes depend on data loaders and collators. Streamlined attention processing components integrate seamlessly with existing architecture. The enhanced TrainingStats class provides centralized logging infrastructure with optimized synchronization handling.
 
 ```mermaid
 graph LR
@@ -503,6 +571,9 @@ TK3["core.py"] --> TU
 TK3 --> FAU["flex_attn_utils.py"]
 FAU --> MH["modeling_helpers.py"]
 AMU["attn_mask_utils.py"] --> MH
+SC["stats_configs.py"] --> LEDU["log_eval_dump_utils.py"]
+SC --> TU
+LEDU --> TU
 ```
 
 **Diagram sources**
@@ -520,6 +591,8 @@ AMU["attn_mask_utils.py"] --> MH
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
 - [attn_mask_utils.py:12-128](file://src/utils/attn_mask_utils.py#L12-L128)
+- [stats_configs.py:29-116](file://src/conf/stats_configs.py#L29-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
 
 **Section sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
@@ -536,6 +609,8 @@ AMU["attn_mask_utils.py"] --> MH
 - [flex_attn_utils.py:161-205](file://src/utils/flex_attn_utils.py#L161-L205)
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
 - [attn_mask_utils.py:12-128](file://src/utils/attn_mask_utils.py#L12-L128)
+- [stats_configs.py:29-116](file://src/conf/stats_configs.py#L29-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
 
 ## Performance Considerations
 - Mixed precision: Enable autocast and GradScaler to reduce memory footprint and improve throughput. Ensure gradient accumulation steps are set to 1 when using AMP to avoid scaling inconsistencies.
@@ -547,8 +622,10 @@ AMU["attn_mask_utils.py"] --> MH
 - Streamlined attention processing: Enhanced attention mechanism support reduces computational overhead from attention metadata handling while maintaining robustness.
 - Attention mask optimization: Sample lens processing and split-length handling improve memory efficiency for complex attention patterns.
 - Conditional attention switching: Flex_attention path provides superior performance for training with attention metadata, while SDPA fallback ensures compatibility when attention metadata is unavailable.
+- **Enhanced synchronization optimization**: The get_loss_values() method in TrainingStats dramatically reduces cudaDeviceSynchronize overhead by batching multiple .item() calls into a single synchronization point, significantly improving logging performance.
+- **GPU-CPU transfer reduction**: Optimized logging infrastructure minimizes unnecessary GPU-CPU transfers during training statistics collection and reporting.
 
-**Updated** Performance considerations now emphasize sample_lens-focused attention processing as the streamlined approach for attention mechanism optimization and conditional attention mode switching between flex_attention and SDPA paths.
+**Updated** Performance considerations now emphasize sample_lens-focused attention processing as the streamlined approach for attention mechanism optimization and conditional attention mode switching between flex_attention and SDPA paths. The TrainingStats.get_loss_values() method provides significant performance improvements by reducing synchronization overhead.
 
 ## Enhanced Error Handling and Defensive Programming
 
@@ -654,6 +731,56 @@ Model --> Output["Training Output"]
 - [modeling_helpers.py:110-124](file://src/models/graphgpt/modeling_helpers.py#L110-L124)
 - [core.py:244](file://src/data/tokenizer/core.py#L244)
 
+## Training Statistics and Logging Infrastructure
+
+### Enhanced TrainingStats Class
+The TrainingStats class has been significantly enhanced with optimized logging infrastructure that dramatically reduces GPU-CPU synchronization overhead:
+
+- **get_loss_values() Method**: Batches multiple .item() calls into a single synchronization point, dramatically reducing cudaDeviceSynchronize overhead.
+- **Optimized Speed Calculations**: Improved cal_speed() method provides more accurate performance measurements with reduced computational overhead.
+- **Centralized Logging Control**: Enhanced print_stats() method accepts pre-extracted loss values to avoid repeated synchronization points.
+- **Distributed Reduction Support**: Automatic distributed loss reduction with minimal synchronization overhead.
+- **Memory-Efficient Operations**: Reduced GPU-CPU transfers during training statistics collection and reporting.
+
+### Logging Infrastructure Improvements
+- **Reduced Synchronization Overhead**: All logging operations now use pre-extracted loss values to minimize GPU-CPU synchronization.
+- **Enhanced Speed Metrics**: Improved samples_per_second and tokens_per_second calculations with better accuracy.
+- **Distributed Training Support**: Automatic distributed reduction of loss values with minimal performance impact.
+- **TensorBoard Integration**: Optimized TensorBoard logging with pre-extracted values to avoid additional synchronization.
+- **WandB Integration**: Efficient Weights & Biases logging with reduced GPU-CPU transfers.
+
+### Implementation Details
+- **Single Synchronization Point**: The get_loss_values() method extracts all loss values (loss, aux_loss, main_loss) in a single cudaDeviceSynchronize call.
+- **Pre-extracted Value Reuse**: Logging functions accept pre-extracted values to avoid repeated .item() calls.
+- **Distributed Reduction Optimization**: Loss reduction operations are performed efficiently with minimal synchronization overhead.
+- **Memory Management**: Optimized memory usage during logging operations to reduce memory pressure.
+
+```mermaid
+flowchart TD
+Start(["Training Statistics Collection"]) --> LossCalc["Calculate Loss Tensors"]
+LossCalc --> StatsObj["Update TrainingStats"]
+StatsObj --> GetValues["get_loss_values()"]
+GetValues --> SingleSync["Single cudaDeviceSynchronize"]
+SingleSync --> ExtractAll["Extract loss, aux_loss, main_loss"]
+ExtractAll --> PreExtracted["Pre-extracted Values"]
+PreExtracted --> PrintStats["print_stats(loss_values)"]
+PrintStats --> SpeedCalc["cal_speed(batch_size)"]
+SpeedCalc --> DistReduce{"Distributed Training?"}
+DistReduce --> |Yes| ReduceLoss["Reduce Loss (minimal sync)"]
+DistReduce --> |No| DirectPrint["Direct Print"]
+ReduceLoss --> UpdateValues["Update with reduced values"]
+UpdateValues --> DirectPrint
+DirectPrint --> End(["Logging Complete"])
+```
+
+**Diagram sources**
+- [stats_configs.py:102-116](file://src/conf/stats_configs.py#L102-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
+
+**Section sources**
+- [stats_configs.py:29-116](file://src/conf/stats_configs.py#L29-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
+
 ## Troubleshooting Guide
 - Gradient accumulation with AMP: The training utilities assert gradient_accumulation_steps equals 1 when not using DeepSpeed. Adjust configuration to avoid assertion failures.
 - DeepSpeed vs non-DeepSpeed: Ensure DeepSpeed configuration is properly merged and that the pipeline recognizes use_deepspeed to route backward/step calls correctly.
@@ -667,8 +794,10 @@ Model --> Output["Training Output"]
 - **Memory optimization**: Monitor memory usage when using streamlined attention with large sample lens configurations and adjust batch sizes accordingly.
 - **Sample lens validation**: Ensure sample_lens parameters are correctly formatted and validated before attention processing to prevent runtime errors.
 - **Attention mode compatibility**: Verify that attention modes (causal, full, noise) are compatible with the chosen attention implementation path.
+- **Enhanced logging performance**: Monitor training performance with the new get_loss_values() method to ensure reduced synchronization overhead is achieved.
+- **GPU synchronization analysis**: Use the synchronization analysis tools to identify and resolve any remaining GPU-CPU synchronization bottlenecks.
 
-**Updated** Troubleshooting guide now emphasizes sample_lens-focused attention processing, conditional attention mode switching, and streamlined attention mechanisms.
+**Updated** Troubleshooting guide now emphasizes sample_lens-focused attention processing, conditional attention mode switching, streamlined attention mechanisms, and the new enhanced logging infrastructure with get_loss_values() method.
 
 **Section sources**
 - [training_utils.py:47-49](file://src/utils/training_utils.py#L47-L49)
@@ -677,11 +806,15 @@ Model --> Output["Training Output"]
 - [loader_utils.py:70-90](file://src/utils/loader_utils.py#L70-L90)
 - [opt_utils.py:30-34](file://src/utils/opt_utils.py#L30-L34)
 - [utils_graphgpt.py:574-581](file://src/models/graphgpt/utils_graphgpt.py#L574-L581)
+- [stats_configs.py:102-116](file://src/conf/stats_configs.py#L102-L116)
+- [log_eval_dump_utils.py:520-593](file://src/utils/log_eval_dump_utils.py#L520-L593)
 
 ## Conclusion
-The Graph-GPT training support utilities provide a robust, modular framework for both pretraining and supervised fine-tuning with streamlined attention mechanism support. The unified pipeline and mode strategy enable consistent workflows, while optimizer initialization, mixed precision training, gradient clipping, and distributed utilities deliver strong performance and reliability. The newly implemented streamlined attention processing capabilities significantly improve the system's ability to handle complex attention patterns with sample lens processing and comprehensive attention mode management. The conditional attention mode switching between flex_attention and SDPA paths ensures optimal performance across different training scenarios while maintaining backward compatibility. By leveraging advanced attention mechanisms with sample_lens focus and intelligent mode switching, practitioners can achieve better training efficiency and flexibility, with clear configuration pathways for hyperparameter tuning and training pipeline integration.
+The Graph-GPT training support utilities provide a robust, modular framework for both pretraining and supervised fine-tuning with streamlined attention mechanism support. The unified pipeline and mode strategy enable consistent workflows, while optimizer initialization, mixed precision training, gradient clipping, and distributed utilities deliver strong performance and reliability. The newly implemented streamlined attention processing capabilities significantly improve the system's ability to handle complex attention patterns with sample lens processing and comprehensive attention mode management. The conditional attention mode switching between flex_attention and SDPA paths ensures optimal performance across different training scenarios while maintaining backward compatibility.
 
-**Updated** Conclusion now reflects the streamlined attention system focusing on sample_lens parameter processing, conditional attention mode switching, and the removal of packed attention support.
+**Updated** The most significant enhancement is the dramatically improved logging infrastructure with the TrainingStats.get_loss_values() method, which batches multiple .item() calls into a single synchronization point, reducing cudaDeviceSynchronize overhead and significantly improving training performance. The enhanced logging system provides better speed calculations, reduced GPU-CPU transfers, and more efficient distributed training operations. These optimizations, combined with the streamlined attention mechanisms, make the training system much more efficient and scalable for large-scale graph neural network training.
+
+By leveraging advanced attention mechanisms with sample_lens focus and intelligent mode switching, practitioners can achieve better training efficiency and flexibility, with clear configuration pathways for hyperparameter tuning and training pipeline integration. The enhanced logging infrastructure ensures that performance monitoring and diagnostics don't become bottlenecks in the training process.
 
 ## Appendices
 
@@ -697,3 +830,6 @@ The Graph-GPT training support utilities provide a robust, modular framework for
 - **Error tolerance**: Set appropriate error handling levels for attention metadata processing based on data quality and computational constraints.
 - **Memory optimization**: Monitor memory usage with streamlined attention and adjust attention configurations for optimal performance across flex_attention and SDPA paths.
 - **Sample lens validation**: Ensure proper sample lens formatting and validation for consistent attention mechanism operation across different training scenarios.
+- **Enhanced logging optimization**: Configure steps_per_saving and logging_steps parameters for optimal logging frequency while minimizing performance impact.
+- **GPU synchronization analysis**: Use the provided analysis tools to identify and resolve synchronization bottlenecks in training workflows.
+- **Performance monitoring**: Leverage the improved speed calculations and reduced synchronization overhead for better training performance monitoring.

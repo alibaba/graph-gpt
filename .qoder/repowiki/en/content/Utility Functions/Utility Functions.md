@@ -17,6 +17,8 @@
 - [src/utils/visualize.py](file://src/utils/visualize.py)
 - [src/utils/spice2graph_full_utils.py](file://src/utils/spice2graph_full_utils.py)
 - [src/utils/control_flow.py](file://src/utils/control_flow.py)
+- [src/utils/profiler_utils.py](file://src/utils/profiler_utils.py)
+- [analyze_trace.py](file://analyze_trace.py)
 - [src/data/tokenizer/__init__.py](file://src/data/tokenizer/__init__.py)
 - [src/data/tokenizer/_legacy.py](file://src/data/tokenizer/_legacy.py)
 - [src/data/tokenizer/strategies/task_prep/__init__.py](file://src/data/tokenizer/strategies/task_prep/__init__.py)
@@ -24,10 +26,10 @@
 
 ## Update Summary
 **Changes Made**
-- Updated tokenizer utilities section to reflect migration from monolithic `src/utils/tokenizer_utils.py` to modular `src/data/tokenizer` package
-- Removed documentation for deprecated `prepare_inputs_for_task` and `get_inputs_preparation_func` utilities
-- Streamlined public API documentation to reflect simplified exports in `src/utils/__init__.py`
-- Added new section on tokenizer architecture migration and backward compatibility
+- Added comprehensive documentation for the new PyTorch Profiler Trace Analyzer tool (analyze_trace.py)
+- Updated profiler utilities section to highlight the complementary relationship between TrainingProfiler and analyze_trace.py
+- Enhanced performance analysis section to cover both in-training profiling and post-training trace analysis
+- Added new section on GPU performance analysis tools and their integration workflow
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -42,10 +44,10 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document provides a comprehensive guide to the Graph-GPT utility functions that power helper modules and specialized functionality across the framework. It explains how utilities are organized into domains such as attention mask utilities, configuration helpers, dataset utilities, generation tools, molecular graph processing, networkx utilities, OGB dataset integration, and visualization tools. The framework has undergone significant refactoring to streamline the tokenizer utilities, moving from a monolithic structure to a modular architecture while maintaining backward compatibility.
+This document provides a comprehensive guide to the Graph-GPT utility functions that power helper modules and specialized functionality across the framework. It explains how utilities are organized into domains such as attention mask utilities, configuration helpers, dataset utilities, generation tools, molecular graph processing, networkx utilities, OGB dataset integration, visualization tools, and performance analysis utilities. The framework has undergone significant refactoring to streamline the tokenizer utilities, moving from a monolithic structure to a modular architecture while maintaining backward compatibility. A new PyTorch Profiler Trace Analyzer tool has been added to provide standalone GPU performance analysis capabilities.
 
 ## Project Structure
-The utilities reside primarily under src/utils/, with submodules grouped by domain. The package initializer has been streamlined to remove deprecated tokenizer exports and focuses on core utility functions. The tokenizer utilities have been migrated to a new modular structure under src/data/tokenizer/.
+The utilities reside primarily under src/utils/, with submodules grouped by domain. The package initializer has been streamlined to remove deprecated tokenizer exports and focuses on core utility functions. The tokenizer utilities have been migrated to a new modular structure under src/data/tokenizer/. A new standalone analyzer tool (analyze_trace.py) complements the existing profiler utilities for GPU performance analysis.
 
 ```mermaid
 graph TB
@@ -64,12 +66,16 @@ U11["vis_utils.py"]
 U12["visualize.py"]
 U13["spice2graph_full_utils.py"]
 U14["control_flow.py"]
+U15["profiler_utils.py"]
+end
+subgraph "Standalone Tools"
+T1["analyze_trace.py"]
 end
 subgraph "src/data/tokenizer/"
-T1["core.py"]
-T2["masking.py"]
-T3["strategies/"]
-T4["_legacy.py"]
+T2["core.py"]
+T3["masking.py"]
+T4["strategies/"]
+T5["_legacy.py"]
 end
 INIT["__init__.py"] --> U1
 INIT --> U2
@@ -84,20 +90,24 @@ INIT --> U11
 INIT --> U12
 INIT --> U13
 INIT --> U14
-U8 --> T1
+INIT --> U15
 U8 --> T2
 U8 --> T3
 U8 --> T4
+U8 --> T5
+T1 --> U15
 ```
 
 **Diagram sources**
-- [src/utils/__init__.py:1-40](file://src/utils/__init__.py#L1-L40)
+- [src/utils/__init__.py:1-56](file://src/utils/__init__.py#L1-L56)
 - [src/utils/tokenizer_utils.py:1-26](file://src/utils/tokenizer_utils.py#L1-L26)
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 - [src/data/tokenizer/__init__.py:1-124](file://src/data/tokenizer/__init__.py#L1-L124)
 - [src/data/tokenizer/_legacy.py:1-41](file://src/data/tokenizer/_legacy.py#L1-L41)
 
 **Section sources**
-- [src/utils/__init__.py:1-40](file://src/utils/__init__.py#L1-L40)
+- [src/utils/__init__.py:1-56](file://src/utils/__init__.py#L1-L56)
 
 ## Core Components
 This section highlights the primary utility modules and their responsibilities:
@@ -113,8 +123,10 @@ This section highlights the primary utility modules and their responsibilities:
 - **Miscellaneous utilities**: Checkpointing, distributed setup, inference dumping, and token estimation.
 - **Visualization utilities**: Plotly-based graph visualization and helper for node text mapping.
 - **Spice2graph utilities**: Netlist parsing and SPICE circuit-to-graph conversion.
+- **Profiler utilities**: Comprehensive training-time GPU performance profiling with TrainingProfiler and memory monitoring.
+- **Trace analyzer**: Standalone GPU kernel analysis and bottleneck identification from Chrome trace files.
 
-**Updated** Removed deprecated tokenizer utilities and streamlined public API exports.
+**Updated** Added new PyTorch Profiler Trace Analyzer tool for standalone GPU performance analysis.
 
 **Section sources**
 - [src/utils/attn_mask_utils.py:1-156](file://src/utils/attn_mask_utils.py#L1-L156)
@@ -129,9 +141,11 @@ This section highlights the primary utility modules and their responsibilities:
 - [src/utils/vis_utils.py:1-31](file://src/utils/vis_utils.py#L1-L31)
 - [src/utils/visualize.py:1-233](file://src/utils/visualize.py#L1-L233)
 - [src/utils/spice2graph_full_utils.py:1-564](file://src/utils/spice2graph_full_utils.py#L1-L564)
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 ## Architecture Overview
-The utilities integrate with the broader framework via tokenization, data preparation, training orchestration, and evaluation. The control-flow register pattern centralizes dispatch for dynamic evaluation and input preparation. The tokenizer utilities have been refactored to use a strategy-based approach with backward compatibility maintained through the legacy shim.
+The utilities integrate with the broader framework via tokenization, data preparation, training orchestration, and evaluation. The control-flow register pattern centralizes dispatch for dynamic evaluation and input preparation. The tokenizer utilities have been refactored to use a strategy-based approach with backward compatibility maintained through the legacy shim. The new trace analyzer complements the existing profiler utilities by providing standalone analysis capabilities for GPU performance bottlenecks.
 
 ```mermaid
 graph TB
@@ -147,6 +161,7 @@ end
 subgraph "Training"
 TR["training_utils.batch_training<br/>ft_batch_training"]
 CU["conf_utils.parse_deepspeed_config<br/>init_log_conf"]
+PR["profiler_utils.TrainingProfiler<br/>profile_region"]
 end
 subgraph "Datasets"
 DU["dataset_utils.smiles2graph_*<br/>PygPCQM4Mv2*Datasets"]
@@ -160,17 +175,22 @@ subgraph "Visualization"
 VI["vis_utils.create_graph"]
 VL["visualize.GraphVisualization"]
 end
+subgraph "Performance Analysis"
+TA["analyze_trace.py<br/>GPU Trace Analyzer"]
+end
 CF --> TU
 TU --> T1
 TU --> T2
 TU --> T3
 TR --> TU
+TR --> PR
 CU --> TR
 DU --> TU
 OU --> TR
 GU --> TR
 AMU --> TR
 VI --> VL
+PR --> TA
 ```
 
 **Diagram sources**
@@ -186,6 +206,8 @@ VI --> VL
 - [src/utils/attn_mask_utils.py:1-156](file://src/utils/attn_mask_utils.py#L1-L156)
 - [src/utils/vis_utils.py:1-31](file://src/utils/vis_utils.py#L1-L31)
 - [src/utils/visualize.py:1-233](file://src/utils/visualize.py#L1-L233)
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 ## Detailed Component Analysis
 
@@ -309,6 +331,70 @@ Supported tasks:
 **Section sources**
 - [src/utils/ogb_utils.py:1-214](file://src/utils/ogb_utils.py#L1-L214)
 
+### Profiler Utilities
+Purpose:
+- Provide comprehensive GPU performance profiling during training with TrainingProfiler.
+- Monitor CUDA memory usage and identify performance bottlenecks in real-time.
+- Support both integrated profiling within training loops and standalone trace analysis.
+
+Key components:
+- **TrainingProfiler**: Context manager for profiling training loops with automatic step scheduling and TensorBoard integration.
+- **ProfilerConfig**: Configuration dataclass for profiler settings.
+- **profile_region**: Context manager for annotating code regions in profiler traces.
+- **Memory monitoring**: Functions for CUDA memory statistics and peak memory tracking.
+
+Key functions:
+- TrainingProfiler.step: Context manager for individual training steps.
+- TrainingProfiler.export_summary: Export profiling summary statistics.
+- profile_region: Annotate code regions for detailed trace analysis.
+- get_cuda_memory_stats: Retrieve current CUDA memory usage statistics.
+
+Integration points:
+- Training orchestrators use TrainingProfiler to monitor performance during training.
+- Memory monitoring functions help identify memory-related bottlenecks.
+
+**Updated** Enhanced to include integration with standalone trace analyzer for comprehensive performance analysis.
+
+**Section sources**
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+
+### PyTorch Profiler Trace Analyzer
+Purpose:
+- Provide standalone analysis of PyTorch Profiler Chrome trace files (.pt.trace.json).
+- Identify GPU kernel bottlenecks and synchronization overhead without requiring active training.
+- Generate detailed performance reports and recommendations for GPU optimization.
+
+Key capabilities:
+- **GPU Kernel Analysis**: Analyze CUDA kernel execution patterns and identify slow operations.
+- **Synchronization Detection**: Identify CPU-GPU synchronization points causing performance bottlenecks.
+- **Timeline Gap Analysis**: Detect idle periods in GPU execution timeline.
+- **Memory Event Analysis**: Track memory allocation patterns and identify memory-related issues.
+- **Call Stack Analysis**: Correlate synchronization events with Python call stacks for root cause analysis.
+
+Key functions:
+- load_trace: Load Chrome trace JSON files for analysis.
+- analyze_gpu_kernels: Extract and analyze GPU kernel execution statistics.
+- analyze_cpu_phases: Categorize CPU operations and calculate phase statistics.
+- analyze_call_stacks: Identify synchronization sources through call stack correlation.
+- analyze_timeline_gaps: Detect GPU idle periods between kernel executions.
+- analyze_memory_events: Track memory allocation patterns and usage.
+- print_summary: Generate comprehensive performance analysis report.
+
+Analysis features:
+- **Synchronization Analysis**: Critical for GPU efficiency - identifies excessive .item() calls, .cpu() transfers, and dist.reduce() operations.
+- **Bottleneck Diagnosis**: Automatically detects performance issues like small kernel sizes, excessive synchronization, and data transfer overhead.
+- **Recommendations**: Provides actionable optimization suggestions including batch processing, async data loading, and kernel fusion.
+
+Usage patterns:
+- Run during training to generate Chrome trace files.
+- Use standalone analyzer for post-mortem performance analysis.
+- Integrate with CI/CD pipelines for automated performance regression detection.
+
+**New Section** Added comprehensive documentation for the standalone GPU performance analysis tool.
+
+**Section sources**
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
+
 ### Tokenizer Utilities - Refactored Architecture
 **Updated** The tokenizer utilities have been completely refactored and moved to a modular architecture under `src/data/tokenizer/`.
 
@@ -422,6 +508,8 @@ Utilities leverage a small set of shared patterns and modules:
 - **Control-flow register**: Centralized decorator-based registry for evaluation and input preparation functions.
 - **Tokenization and generation**: Interact with training utilities and attention mask utilities.
 - **Datasets and OGB**: Feed tokenization and evaluation pipelines.
+- **Profiler utilities**: Integrated into training loops for real-time performance monitoring.
+- **Trace analyzer**: Complements profiler utilities by providing standalone analysis capabilities.
 - **Visualization**: Independent module used for debugging and presentation.
 - **Legacy Migration**: Tokenizer utilities now depend on the new modular structure while maintaining backward compatibility.
 
@@ -435,10 +523,12 @@ CF --> OU["ogb_utils"]
 TR["training_utils"] --> TU
 TR --> AMU["attn_mask_utils"]
 TR --> CU["conf_utils"]
+TR --> PR["profiler_utils"]
 DU["dataset_utils"] --> TU
 OU --> TR
 VI["vis_utils"] --> VL["visualize"]
 SU["spice2graph_full_utils"] --> DU
+PR --> TA["analyze_trace.py"]
 ```
 
 **Diagram sources**
@@ -453,10 +543,11 @@ SU["spice2graph_full_utils"] --> DU
 - [src/utils/conf_utils.py:1-232](file://src/utils/conf_utils.py#L1-L232)
 - [src/utils/vis_utils.py:1-31](file://src/utils/vis_utils.py#L1-L31)
 - [src/utils/visualize.py:1-233](file://src/utils/visualize.py#L1-L233)
-- [src/utils/spice2graph_full_utils.py:1-564](file://src/utils/spice2graph_full_utils.py#L1-L564)
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 **Section sources**
-- [src/utils/__init__.py:1-40](file://src/utils/__init__.py#L1-L40)
+- [src/utils/__init__.py:1-56](file://src/utils/__init__.py#L1-L56)
 
 ## Performance Considerations
 - **Attention masks**:
@@ -469,10 +560,17 @@ SU["spice2graph_full_utils"] --> DU
 - **Training**:
   - Enable gradient accumulation and AMP to improve throughput on GPU.
   - Clip gradients appropriately to stabilize training.
+  - Use TrainingProfiler to monitor GPU utilization and identify bottlenecks during training.
 - **Generation**:
   - Use top-k/top-p sampling efficiently; avoid repeated softmax computations by reusing logits where possible.
+- **Profiling Workflow**:
+  - **Integrated Profiling**: Use TrainingProfiler during training for real-time performance monitoring.
+  - **Post-Mortem Analysis**: Use analyze_trace.py for standalone analysis of Chrome trace files.
+  - **Complementary Analysis**: Combine both approaches for comprehensive performance understanding.
 - **Visualization**:
   - Limit node/edge counts for interactive plots; consider subsampling for large graphs.
+
+**Updated** Enhanced performance considerations to include the new profiling workflow combining integrated and standalone analysis.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -490,6 +588,16 @@ Common issues and resolutions:
 - **Migration Issues**:
   - If encountering import errors, verify that the new modular tokenizer structure is being used correctly.
   - Legacy imports should continue to work through the backward compatibility shim.
+- **Profiling Issues**:
+  - **TrainingProfiler**: Ensure proper context manager usage with profiler.step() blocks.
+  - **Trace Analysis**: Verify Chrome trace files are properly formatted and accessible.
+  - **Memory Monitoring**: Check CUDA availability and permissions for memory statistics.
+- **Trace Analyzer Errors**:
+  - **File Access**: Ensure trace files have proper read permissions.
+  - **JSON Format**: Verify trace files are valid JSON format generated by PyTorch Profiler.
+  - **Analysis Timeout**: Large trace files may take time to process; consider splitting analysis.
+
+**Updated** Added troubleshooting guidance for the new profiler utilities and trace analyzer.
 
 **Section sources**
 - [src/utils/conf_utils.py:1-232](file://src/utils/conf_utils.py#L1-L232)
@@ -497,9 +605,11 @@ Common issues and resolutions:
 - [src/utils/ogb_utils.py:1-214](file://src/utils/ogb_utils.py#L1-L214)
 - [src/utils/dataset_utils.py:1-1810](file://src/utils/dataset_utils.py#L1-L1810)
 - [src/utils/tokenizer_utils.py:1-26](file://src/utils/tokenizer_utils.py#L1-L26)
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 ## Conclusion
-The Graph-GPT utility suite provides robust, modular helpers spanning attention masking, configuration management, dataset processing, generation, molecular and graph transformations, evaluation, training orchestration, and visualization. The recent refactoring has streamlined the tokenizer utilities while maintaining backward compatibility, resulting in a cleaner, more maintainable architecture. By leveraging shared control-flow patterns and consistent integration points, these utilities enable scalable and maintainable extensions to the framework.
+The Graph-GPT utility suite provides robust, modular helpers spanning attention masking, configuration management, dataset processing, generation, molecular and graph transformations, evaluation, training orchestration, visualization, and comprehensive performance analysis. The recent refactoring has streamlined the tokenizer utilities while maintaining backward compatibility, resulting in a cleaner, more maintainable architecture. The addition of the PyTorch Profiler Trace Analyzer tool completes the performance analysis toolkit by providing standalone GPU kernel analysis capabilities that complement the existing integrated profiling approach. By leveraging shared control-flow patterns, consistent integration points, and the complementary profiling workflow, these utilities enable scalable and maintainable extensions to the framework.
 
 ## Appendices
 
@@ -517,6 +627,10 @@ The Graph-GPT utility suite provides robust, modular helpers spanning attention 
 - **Migration to New Tokenizer**:
   - Import from `src.data.tokenizer` instead of `src.utils.tokenizer_utils` for new code.
   - Legacy imports continue to work through the backward compatibility shim.
+- **Performance Profiling Workflow**:
+  - **Integrated Analysis**: Use TrainingProfiler during training for real-time monitoring.
+  - **Standalone Analysis**: Use analyze_trace.py for post-mortem performance analysis.
+  - **Combined Approach**: Use both tools for comprehensive performance understanding.
 
 ### Migration Guide for Deprecated Functions
 **Deprecated Functions Removed**:
@@ -535,6 +649,23 @@ strategy = get_task_strategy("pretrain")
 inputs = strategy.prepare(data, config)
 ```
 
+**New Performance Analysis Workflow**:
+```python
+# Integrated profiling during training
+from src.utils.profiler_utils import TrainingProfiler
+
+profiler = TrainingProfiler(active_steps=20)
+for step, batch in enumerate(train_loader):
+    with profiler.step(step):
+        # training code
+        pass
+
+# Standalone trace analysis
+# python analyze_trace.py path/to/trace.json
+```
+
 **Section sources**
 - [src/data/tokenizer/strategies/task_prep/__init__.py:29-33](file://src/data/tokenizer/strategies/task_prep/__init__.py#L29-L33)
 - [src/utils/tokenizer_utils.py:1-26](file://src/utils/tokenizer_utils.py#L1-L26)
+- [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
