@@ -525,16 +525,17 @@ class PretrainMode(TrainingMode):
                             ema_stats.update_ema(model, step=train_stats.j)
 
                     if train_stats.j % sched_cfg.logging_steps == 0:
-                        log_eval_dump_utils.log_pt_training_stats(
+                        # Log training stats - returns pre-extracted loss values
+                        loss_values = log_eval_dump_utils.log_pt_training_stats(
                             train_cfg,
                             train_stats,
                             opt_stats,
                             prof=self.prof,
                             tb_writer=tb_writer,
                         )
-                        # Log to wandb
+                        # Log to wandb - reuse loss_values to avoid extra cudaDeviceSynchronize
                         log_eval_dump_utils.log_to_wandb_pt(
-                            train_stats, opt_stats, train_cfg
+                            train_stats, opt_stats, train_cfg, loss_values
                         )
 
                     if (

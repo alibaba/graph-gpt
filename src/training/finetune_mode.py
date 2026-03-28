@@ -442,11 +442,14 @@ class FinetuneMode(TrainingMode):
                                 ema_stats.update_ema(model, step=train_stats.j, ft=True)
 
                         if train_stats.j % sched_cfg.logging_steps == 0:
-                            log_eval_dump_utils.log_ft_training_stats(
+                            # Log training stats - returns pre-extracted loss values
+                            loss_values = log_eval_dump_utils.log_ft_training_stats(
                                 train_cfg, train_stats, tb_writer
                             )
-                            # Log to wandb
-                            log_eval_dump_utils.log_to_wandb_ft(train_stats, train_cfg)
+                            # Log to wandb - reuse loss_values to avoid extra cudaDeviceSynchronize
+                            log_eval_dump_utils.log_to_wandb_ft(
+                                train_stats, train_cfg, loss_values
+                            )
                         train_stats.j += 1
                 else:
                     # eval_only mode: load from ckp and then eval

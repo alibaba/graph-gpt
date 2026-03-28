@@ -525,13 +525,19 @@ def log_pt_training_stats(
     tb_writer=None,
 ):
     train_stats.cal_speed(training.batch_size)
-    train_stats.print_stats()
+
+    # Extract all loss values in ONE synchronization point
+    # This minimizes cudaDeviceSynchronize overhead
+    loss_values = train_stats.get_loss_values()
+    train_stats.print_stats(loss_values)
 
     # Reduce SUM to get the loss from all the GPUs to RANK=0
     # refer: https://github.com/microsoft/DeepSpeed/discussions/2377#discussioncomment-3765282
     if training.distributed.world_size > 1:
         dist.reduce(train_stats.loss, 0)
         train_stats.loss = train_stats.loss / training.distributed.world_size
+        # Update loss_values with reduced value (requires another sync, but necessary)
+        loss_values["loss"] = train_stats.loss.item()
     curr_lr = (
         opt_stats.lr_scheduler.get_lr()
         if opt_stats.lr_scheduler is not None
@@ -546,36 +552,45 @@ def log_pt_training_stats(
     else:
         flops, macs = 0, 0
 
-    # logging
+    # logging - use pre-extracted values (no additional sync)
     train_stats.ls_log.append(
-        f"{train_stats.ckp},{curr_lr[0]},{train_stats.i},{train_stats.j},{train_stats.aux_loss},{train_stats.main_loss},{train_stats.loss},{flops},{macs}\n"
+        f"{train_stats.ckp},{curr_lr[0]},{train_stats.i},{train_stats.j},{loss_values.get('aux_loss')},{loss_values.get('main_loss')},{loss_values['loss']},{flops},{macs}\n"
     )
 
-    tb_writer.add_scalar(
-        "loss", train_stats.loss.item(), train_stats.j
-    ) if tb_writer is not None else None
+    # TensorBoard - use pre-extracted value (no additional sync)
+    if tb_writer is not None:
+        tb_writer.add_scalar("loss", loss_values["loss"], train_stats.j)
+
+    return loss_values  # Return for reuse by wandb logging
 
 
 def log_ft_training_stats(
     train_cfg: TrainingConfig, train_stats: TrainingStats, tb_writer=None
 ):
     train_stats.cal_speed(train_cfg.batch_size)
-    train_stats.print_stats()
+
+    # Extract all loss values in ONE synchronization point
+    loss_values = train_stats.get_loss_values()
+    train_stats.print_stats(loss_values)
 
     # Reduce SUM to get the loss from all the GPUs to RANK=0
     # refer: https://github.com/microsoft/DeepSpeed/discussions/2377#discussioncomment-3765282
     if train_cfg.distributed.world_size > 1:
         dist.reduce(train_stats.loss, 0)
         train_stats.loss = train_stats.loss / train_cfg.distributed.world_size
+        # Update loss_values with reduced value
+        loss_values["loss"] = train_stats.loss.item()
 
-    # logging
+    # logging - use pre-extracted values (no additional sync)
     train_stats.ls_loss.append(
-        f"{train_stats.epoch},{train_stats.i},{train_stats.j},{train_stats.aux_loss},{train_stats.main_loss},{train_stats.loss}\n"
+        f"{train_stats.epoch},{train_stats.i},{train_stats.j},{loss_values.get('aux_loss')},{loss_values.get('main_loss')},{loss_values['loss']}\n"
     )
 
-    tb_writer.add_scalar(
-        "loss", train_stats.loss.item(), train_stats.j
-    ) if tb_writer is not None else None
+    # TensorBoard - use pre-extracted value (no additional sync)
+    if tb_writer is not None:
+        tb_writer.add_scalar("loss", loss_values["loss"], train_stats.j)
+
+    return loss_values  # Return for reuse by wandb logging
 
 
 def log_dump_pt_training_stats(
@@ -1045,6 +1060,7 @@ def log_to_wandb_pt(
     train_stats: TrainingStats,
     opt_stats: OptimizingStats,
     training: TrainingConfig,
+    loss_values: dict = None,
 ):
     """Log pre-training metrics to wandb.
 
@@ -1052,6 +1068,8 @@ def log_to_wandb_pt(
         train_stats: Training statistics
         opt_stats: Optimizer statistics
         training: Training configuration
+        loss_values: Pre-extracted loss values from get_loss_values().
+                    If None, will call .item() (triggers cudaDeviceSynchronize).
     """
     if not WANDB_AVAILABLE or wandb.run is None:
         return
@@ -1062,18 +1080,22 @@ def log_to_wandb_pt(
         else [training.optimizer.lr]
     )
 
+    # Use pre-extracted values if available to avoid extra sync
+    if loss_values is None:
+        loss_values = train_stats.get_loss_values()
+
     metrics = {
-        "train/loss": train_stats.loss.item(),
+        "train/loss": loss_values["loss"],
         "train/learning_rate": curr_lr[0],
         "train/epoch": train_stats.ckp,
         "train/samples_per_second": train_stats.samples_per_second,
         "train/tokens_per_second": train_stats.tokens_per_second,
     }
 
-    if train_stats.main_loss is not None:
-        metrics["train/main_loss"] = train_stats.main_loss.item()
-    if train_stats.aux_loss is not None:
-        metrics["train/aux_loss"] = train_stats.aux_loss.item()
+    if loss_values.get("main_loss") is not None:
+        metrics["train/main_loss"] = loss_values["main_loss"]
+    if loss_values.get("aux_loss") is not None:
+        metrics["train/aux_loss"] = loss_values["aux_loss"]
 
     wandb_log(metrics, step=train_stats.j)
 
@@ -1081,27 +1103,34 @@ def log_to_wandb_pt(
 def log_to_wandb_ft(
     train_stats: TrainingStats,
     train_cfg: TrainingConfig,
+    loss_values: dict = None,
 ):
     """Log fine-tuning metrics to wandb.
 
     Args:
         train_stats: Training statistics
         train_cfg: Training configuration
+        loss_values: Pre-extracted loss values from get_loss_values().
+                    If None, will call .item() (triggers cudaDeviceSynchronize).
     """
     if not WANDB_AVAILABLE or wandb.run is None:
         return
 
+    # Use pre-extracted values if available to avoid extra sync
+    if loss_values is None:
+        loss_values = train_stats.get_loss_values()
+
     metrics = {
-        "train/loss": train_stats.loss.item(),
+        "train/loss": loss_values["loss"],
         "train/epoch": train_stats.epoch,
         "train/samples_per_second": train_stats.samples_per_second,
         "train/tokens_per_second": train_stats.tokens_per_second,
     }
 
-    if train_stats.main_loss is not None:
-        metrics["train/main_loss"] = train_stats.main_loss.item()
-    if train_stats.aux_loss is not None:
-        metrics["train/aux_loss"] = train_stats.aux_loss.item()
+    if loss_values.get("main_loss") is not None:
+        metrics["train/main_loss"] = loss_values["main_loss"]
+    if loss_values.get("aux_loss") is not None:
+        metrics["train/aux_loss"] = loss_values["aux_loss"]
 
     wandb_log(metrics, step=train_stats.j)
 

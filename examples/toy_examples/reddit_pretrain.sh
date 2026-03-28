@@ -1,19 +1,19 @@
 #!/bin/bash
 
+env="cpu"  # cpu | gpu
+
 # i. data config
 data_dir="TUDataset"
 dataset_source="reddit_threads"
-tokenizer_class="StackedGSTTokenizer"
+tokenizer_class="StackedGSTTokenizer"  # StackedGSTTokenizer  GSTTokenizer
 token_cfg_dir="graph_lvl/"
 token_cfg_file="reddit"
 
 # ii. model config
 model_type="graphgpt"
-model_name="tiny"
+model_name="tiny"  # tiny mini small medium base base24 base48 base64 large xlarge xxlarge
 stack_method="short"  # short|long
 stacked_feat_agg_method="sum"  # gated|sum
-hidden_act="gelu"  # llama -> `silu`
-tie_word_embeddings=0
 max_position_embeddings=256
 
 # ii.a model::dropout & lsi
@@ -25,8 +25,10 @@ layer_scale_init_val=0
 
 # iii. training config
 trial=1
-pack_tokens=0
 batch_size=128
+pack_tokens=1
+token_per_sample=20  # NOT sure
+max_length=${max_position_embeddings}
 
 # iii.a training::training machines
 workerCount=1
@@ -35,16 +37,17 @@ num_cpus=4
 # iii.b training::schedule
 total_tokens=1e8
 warmup_tokens=1e7
-samples_per_saving=1000000
+steps_per_saving=1000
 logging_steps=100
 
 # iii.c training::eval/infer settings
 valid_percent=0.1
 pt_eval_only=false
+do_infer=false
 
 # iii.d training::directories
 ds_prefix="reddit"
-mid_dir="202511/"
+mid_dir="202603/"
 pretrain_cpt=""  # pt_h768_l48_b4096_tk8e9_gelu_3.3m_denoise_2d3d19_smtp_line_512_lr3e-4_adp0.1_sum_short_wd0.1
 
 # iii.e training::optimization config
@@ -57,8 +60,8 @@ use_ema=0
 ## deep-speed config
 deepspeed_config="./examples/ds_config2_pt.json"
 
-# iii.f optimization objective
-task_type="pretrain-mlm"  # pretrain  pretrain-mlm  pretrain-cl pretrain-ltp  pretrain-euler
+# iii.f training::optimization objective
+task_type="pretrain-mlm"  # pretrain-cl
 dlm_wgt=false
 focal_gamma=0
 
@@ -69,7 +72,63 @@ tot_samples=100  # tot_samples sampled for evaluating average eulerian path leng
 do_generation=true
 gen_alg="maskgit_plus"  # origin maskgit_plus topk_margin entropy
 parallel_gen=false  # whether to parallel batch generation: slow when tested in spice-circuit dataset
-#===============================ABOVE section is task-specific==============================================
+#===================================== ABOVE section is task-specific ==================================
+
+#=================== BELOW FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
+model_name="tiny"
+batch_size=128
+workerCount=1
+num_cpus=4
+total_tokens=1e8
+warmup_tokens=1e7
+pretrain_cpt=""
+tot_samples=100
+
+if [ ${env} = "cpu" ]
+then
+  max_position_embeddings=128
+  pretrain_cpt=""
+  workerCount=1
+  model_name="tiny"
+  batch_size=4
+  num_cpus=2
+  deepspeed_config=""
+  use_ema=0
+  total_tokens=1e6
+  warmup_tokens=1e5
+#  valid_percent=0.001
+  pt_eval_only=false
+  tot_samples=100  # num of samples for estimating tokens-per-sample
+fi
+#=================== ABOVE FOR SINGLE GPU TESTING, COMMENT OUT IN NORMAL TRAINING ==============
+
+
+
+#=======================================================================================================================
+#=======================================================================================================================
+#=======================================================================================================================
+#===================================== PT:: BELOW TILL THE END ARE THE SAME FOR ALL DATASETS ===========================
+# Force batch_size=1 when pack_tokens is enabled (required for variable-length packed sequences)
+if (( pack_tokens != 0 ))
+then
+  max_length=$((batch_size * token_per_sample))
+  batch_size=1
+  echo "pack_tokens=${pack_tokens}: forcing batch_size=1"
+fi
+
+if [ "${dlm_wgt}" == "true" ]
+then
+  loss_obj="dlm"
+else
+  loss_obj="mlm"
+fi
+
+if [ "${task_type}" == "pretrain-cl" ]
+then
+  pt_obj="cl"
+else
+  pt_obj="gen"
+fi
 
 if [ ${attention_dropout} -eq 0 ]
 then adp=""
@@ -95,7 +154,7 @@ then lsi=""
 else lsi="_lsi${layer_scale_init_val}"
 fi
 
-suffix="_t${trial}_vp${valid_percent}_mlm_lr${lr}${adp}${pdp}${edp}${mdp}${lsi}_${stacked_feat_agg_method}_${stack_method}_wd${weight_decay}"
+suffix="_t${trial}_vp${valid_percent}_${pt_obj}_${loss_obj}_lr${lr}${adp}${pdp}${edp}${mdp}${lsi}_${stacked_feat_agg_method}_${stack_method}_wd${weight_decay}"
 
 # env config
 data_dir_prefix="./data"
@@ -210,6 +269,7 @@ raw_udf="
   --training.task_type='${task_type}'
   --training.batch_size=${batch_size}
   --training.pack_tokens=${pack_tokens}
+  --training.max_length=${max_length}
   --training.num_workers=${num_cpus}
   --training.optimizer.lr=${lr}
   --training.optimizer.weight_decay=${weight_decay}
@@ -219,16 +279,16 @@ raw_udf="
   --training.pretrain_mlm.dlm_wgt=${dlm_wgt}
   --training.schedule.total_tokens=${total_tokens}
   --training.schedule.warmup_tokens=${warmup_tokens}
-  --training.schedule.samples_per_saving=${samples_per_saving}
+  --training.schedule.steps_per_saving=${steps_per_saving}
   --training.schedule.logging_steps=${logging_steps}
   --training.valid_percent=${valid_percent}
   --training.do_generation=${do_generation}
   --training.pt_eval_only=${pt_eval_only}
+  --training.do_infer=${do_infer}
   --training.tot_samples=${tot_samples}
   --training.focal_gamma=${focal_gamma}
   --model.model_type='${model_type}'
   --model.max_position_embeddings=${max_position_embeddings}
-  --model.tie_word_embeddings=${tie_word_embeddings}
   --model.num_hidden_layers=${num_hidden_layers}
   --model.hidden_size=${hidden_size}
   --model.intermediate_size=${intermediate_size}
@@ -250,7 +310,12 @@ udf=${udf//--/}
 
 echo ${udf}
 
-deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+if [ ${env} = "cpu" ]
+then
+  python ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+else
+  deepspeed ./examples/train_pretrain.py tokenization=${token_cfg_dir}${token_cfg_file} ${udf}
+fi
 
 echo $raw_udf
 echo "Train and evaluation finished"

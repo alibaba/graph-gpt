@@ -75,14 +75,45 @@ class TrainingStats:
             (self.i - self.i_local) * batch_size * self.tokens_per_sample / t_interval
         )
 
-    def print_stats(self):
-        if self.aux_loss is not None:
-            loss_log = f"\n{' ' * 8}loss: {round(self.loss.item(), 6)}, aux_Loss {round(self.aux_loss.item(), 6)}, main/task_Loss {round(self.main_loss.item(), 6)}"
+    def print_stats(self, loss_values: dict = None):
+        """Print training statistics.
+
+        Args:
+            loss_values: Pre-extracted loss values dict with keys 'loss', 'aux_loss', 'main_loss'.
+                        If None, will call .item() directly (triggers cudaDeviceSynchronize).
+                        For best performance, pass pre-extracted values from get_loss_values().
+        """
+        if loss_values is None:
+            # Fallback: extract all values in one synchronization point
+            loss_values = self.get_loss_values()
+
+        loss_val = loss_values["loss"]
+        aux_val = loss_values.get("aux_loss")
+        main_val = loss_values.get("main_loss")
+
+        if aux_val is not None:
+            loss_log = f"\n{' ' * 8}loss: {round(loss_val, 6)}, aux_Loss {round(aux_val, 6)}, main/task_Loss {round(main_val, 6)}"
         else:
-            loss_log = f"loss: {round(self.loss.item(), 6)}"
+            loss_log = f"loss: {round(loss_val, 6)}"
         print(
             f"[{datetime.now()}][epoch {self.ckp}][local {self.epoch}: {self.i}][global {self.j}] {self.samples_per_second} samples / {self.tokens_per_second} tokens per sec; {loss_log}"
         )
+
+    def get_loss_values(self) -> dict:
+        """Extract all loss values in a single synchronization point.
+
+        This batches multiple .item() calls to minimize cudaDeviceSynchronize overhead.
+        Call this once and reuse the values for logging, wandb, tensorboard, etc.
+
+        Returns:
+            dict with 'loss', 'aux_loss' (optional), 'main_loss' (optional)
+        """
+        values = {"loss": self.loss.item()}
+        if self.aux_loss is not None:
+            values["aux_loss"] = self.aux_loss.item()
+        if self.main_loss is not None:
+            values["main_loss"] = self.main_loss.item()
+        return values
 
     def print_on_saving_ckp(self, batch_size, world_size):
         print(
