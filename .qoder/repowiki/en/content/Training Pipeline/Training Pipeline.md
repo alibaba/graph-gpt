@@ -6,6 +6,7 @@
 - [mode.py](file://src/training/mode.py)
 - [pretrain_mode.py](file://src/training/pretrain_mode.py)
 - [finetune_mode.py](file://src/training/finetune_mode.py)
+- [base_configs.py](file://src/conf/base_configs.py)
 - [train_pretrain.py](file://examples/train_pretrain.py)
 - [train_supervised.py](file://examples/train_supervised.py)
 - [base.yaml](file://configs/training/base.yaml)
@@ -23,11 +24,11 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced debugging support with comprehensive batch inspection capabilities
-- Improved configuration management with better tokenization result diagnostics
-- Added batch processing utilities for better data pipeline monitoring
-- Strengthened training utilities with enhanced debugging hooks
-- Expanded inspection capabilities for tokenization and data processing
+- Added comprehensive torch.compile optimization integration documentation
+- Documented new TorchCompileConfig configuration structure and parameters
+- Updated training pipeline architecture to include torch.compile application
+- Added torch.compile performance benefits and optimization strategies
+- Enhanced debugging and configuration management sections with torch.compile considerations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -36,27 +37,28 @@
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
 6. [Enhanced Debugging and Configuration Management](#enhanced-debugging-and-configuration-management)
-7. [Dependency Analysis](#dependency-analysis)
-8. [Performance Considerations](#performance-considerations)
-9. [Troubleshooting Guide](#troubleshooting-guide)
-10. [Conclusion](#conclusion)
-11. [Appendices](#appendices)
+7. [Torch Compile Optimization Integration](#torch-compile-optimization-integration)
+8. [Dependency Analysis](#dependency-analysis)
+9. [Performance Considerations](#performance-considerations)
+10. [Troubleshooting Guide](#troubleshooting-guide)
+11. [Conclusion](#conclusion)
+12. [Appendices](#appendices)
 
 ## Introduction
-This document explains the unified training orchestration system of Graph-GPT with a focus on the strategy pattern implementation. It covers how the TrainingPipeline coordinates shared setup phases and delegates mode-specific behavior to TrainingMode subclasses. It documents the pre-training pipeline with next-token prediction (NTP) and scheduled masked-token prediction (SMTP), and the fine-tuning pipeline for downstream tasks including graph-level, edge-level, and node-level predictions. The system now includes enhanced debugging capabilities, improved configuration management, and advanced batch processing utilities for better monitoring and troubleshooting.
+This document explains the unified training orchestration system of Graph-GPT with a focus on the strategy pattern implementation. It covers how the TrainingPipeline coordinates shared setup phases and delegates mode-specific behavior to TrainingMode subclasses. It documents the pre-training pipeline with next-token prediction (NTP) and scheduled masked-token prediction (SMTP), and the fine-tuning pipeline for downstream tasks including graph-level, edge-level, and node-level predictions. The system now includes enhanced debugging capabilities, improved configuration management, advanced batch processing utilities, and comprehensive torch.compile optimization support for kernel fusion and reduced launch overhead.
 
 ## Project Structure
-The training system is organized around a strategy pattern with enhanced debugging and configuration management:
-- A shared TrainingPipeline orchestrates common setup and lifecycle phases with comprehensive debugging hooks.
+The training system is organized around a strategy pattern with enhanced debugging, configuration management, and torch.compile optimization:
+- A shared TrainingPipeline orchestrates common setup and lifecycle phases with comprehensive debugging hooks and torch.compile integration.
 - Two TrainingMode subclasses implement pre-training and fine-tuning strategies with improved inspection capabilities.
 - Example entry points demonstrate how to launch pre-training and fine-tuning jobs with enhanced diagnostics.
-- Configuration files define training schedules, optimizer settings, and distributed parameters with debugging options.
+- Configuration files define training schedules, optimizer settings, distributed parameters, and torch.compile optimization options.
 - Model implementations encapsulate the specific objectives and heads for pre-training and fine-tuning with enhanced monitoring.
 
 ```mermaid
 graph TB
 subgraph "Training Orchestration"
-TP["TrainingPipeline<br/>run() + Debug Hooks"]
+TP["TrainingPipeline<br/>run() + Debug Hooks + torch.compile"]
 TM["TrainingMode (ABC)<br/>Enhanced Inspection"]
 PTM["PretrainMode<br/>Debug Batch Processing"]
 FTM["FinetuneMode<br/>Comprehensive Diagnostics"]
@@ -67,6 +69,7 @@ ES["examples/train_supervised.py"]
 end
 subgraph "Configs"
 CFG["configs/training/base.yaml<br/>Enhanced Debug Options"]
+TCC["TorchCompileConfig<br/>mode, backend, fullgraph, dynamic"]
 DS2["examples/ds_config2.json"]
 DS2BF16["examples/ds_config2_bf16.json"]
 end
@@ -86,6 +89,7 @@ TP --> TM
 TM --> PTM
 TM --> FTM
 TP --> CFG
+TP --> TCC
 TP --> DS2
 TP --> DS2BF16
 PTM --> MP
@@ -105,10 +109,11 @@ FTM --> TU
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [pretrain_mode.py:48-75](file://src/training/pretrain_mode.py#L48-L75)
 - [finetune_mode.py:43-70](file://src/training/finetune_mode.py#L43-L70)
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [train_supervised.py:12-14](file://examples/train_supervised.py#L12-L14)
-- [base.yaml:1-76](file://configs/training/base.yaml#L1-L76)
-- [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43)
+- [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
+- [ds_config2.json:1-43](file://examples/ds_config2.json#L1-43)
 - [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
 - [modeling_pretrain.py:57-118](file://src/models/graphgpt/modeling_pretrain.py#L57-L118)
 - [modeling_finetune.py:64-106](file://src/models/graphgpt/modeling_finetune.py#L64-L106)
@@ -122,17 +127,16 @@ FTM --> TU
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [pretrain_mode.py:48-75](file://src/training/pretrain_mode.py#L48-L75)
 - [finetune_mode.py:43-70](file://src/training/finetune_mode.py#L43-L70)
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [train_supervised.py:12-14](file://examples/train_supervised.py#L12-L14)
-- [base.yaml:1-76](file://configs/training/base.yaml#L1-L76)
-- [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43)
-- [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
+- [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
 
 ## Core Components
-- TrainingPipeline: Central orchestrator that extracts configs, sets up distributed environments, initializes tokenizers and models, manages checkpoints, and executes mode-specific phases. Now includes enhanced debugging hooks and comprehensive batch inspection capabilities.
+- TrainingPipeline: Central orchestrator that extracts configs, sets up distributed environments, initializes tokenizers and models, manages checkpoints, and executes mode-specific phases. Now includes enhanced debugging hooks, comprehensive batch inspection capabilities, and torch.compile optimization integration.
 - TrainingMode (ABC): Defines the strategy interface with abstract methods for mode-specific behavior: update_config, prepare_data, post_model_setup, setup_optimizer, setup_training, and run_training. Enhanced with improved inspection and debugging support.
-- PretrainMode: Implements pre-training specifics including dataset preparation, token packing, NTP/SMTP objectives, evaluation before training, and step-wise saving. Features comprehensive batch debugging and tokenization diagnostics.
-- FinetuneMode: Implements supervised fine-tuning specifics including separate train/valid/test loaders, optional layer freezing, epoch-level evaluation cadence, and optional inference dumping. Includes enhanced data processing inspection and training monitoring.
+- PretrainMode: Implements pre-training specifics including dataset preparation, token packing, NTP/SMTP objectives, evaluation before training, and step-wise saving. Features comprehensive batch debugging and tokenization diagnostics with torch.compile optimization.
+- FinetuneMode: Implements supervised fine-tuning specifics including separate train/valid/test loaders, optional layer freezing, epoch-level evaluation cadence, and optional inference dumping. Includes enhanced data processing inspection and training monitoring with torch.compile integration.
 
 Key shared capabilities:
 - Distributed training via environment setup and DeepSpeed initialization.
@@ -141,6 +145,7 @@ Key shared capabilities:
 - EMA model support for pre-training and fine-tuning.
 - Comprehensive logging and TensorBoard writer initialization.
 - Advanced debugging utilities for batch inspection and data diagnostics.
+- **New**: torch.compile optimization integration for kernel fusion and reduced launch overhead.
 
 **Section sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
@@ -149,7 +154,7 @@ Key shared capabilities:
 - [finetune_mode.py:43-70](file://src/training/finetune_mode.py#L43-L70)
 
 ## Architecture Overview
-The unified training pipeline follows a deterministic lifecycle with shared phases and mode-specific extensions, now enhanced with comprehensive debugging capabilities.
+The unified training pipeline follows a deterministic lifecycle with shared phases and mode-specific extensions, now enhanced with comprehensive debugging capabilities and torch.compile optimization.
 
 ```mermaid
 sequenceDiagram
@@ -158,6 +163,7 @@ participant TP as "TrainingPipeline"
 participant Mode as "TrainingMode"
 participant DS as "DeepSpeed/DDP"
 participant Model as "Model"
+participant TC as "torch.compile"
 participant Utils as "Utilities"
 participant Debug as "Debug Hooks"
 User->>TP : "run()"
@@ -180,6 +186,9 @@ Note over Debug : Enhanced Debugging
 Debug->>TP : "Batch Inspection"
 Debug->>Mode : "Data Diagnostics"
 Debug->>Utils : "Tokenization Results"
+Note over TC : torch.compile Optimization
+TC->>Model : "Kernel Fusion"
+TC->>Model : "Reduced Overhead"
 ```
 
 **Diagram sources**
@@ -188,17 +197,19 @@ Debug->>Utils : "Tokenization Results"
 - [finetune_mode.py:86-358](file://src/training/finetune_mode.py#L86-L358)
 - [inspection_utils.py:73-169](file://src/utils/inspection_utils.py#L73-L169)
 - [training_utils.py:470-500](file://src/utils/training_utils.py#L470-L500)
+- [pipeline.py:170-202](file://src/training/pipeline.py#L170-L202)
 
 ## Detailed Component Analysis
 
 ### Strategy Pattern: TrainingPipeline and TrainingMode
-- TrainingPipeline centralizes shared orchestration with enhanced debugging capabilities:
-  - Configuration decomposition into tokenization, model, training, data, schedule, and optimizer configs.
+- TrainingPipeline centralizes shared orchestration with enhanced debugging capabilities and torch.compile integration:
+  - Configuration decomposition into tokenization, model, training, data, schedule, optimizer, and torch_compile configs.
   - EMA configuration and stats initialization.
   - Distributed environment setup and DeepSpeed flag resolution.
   - Data config initialization and model creation with gradient checkpointing and cache disabling.
   - Checkpoint loading/resuming and final config dumping.
   - Comprehensive batch inspection hooks for debugging training loops.
+  - **New**: torch.compile optimization application with configurable modes and backends.
 - TrainingMode defines the contract for mode-specific behavior with enhanced inspection support:
   - dict_models: mapping of model_type to model classes.
   - Properties: skip_keys, allow_resume, allow_save_config, final_config_filename.
@@ -222,6 +233,7 @@ class TrainingPipeline {
 -_save_model_config()
 -_cleanup()
 +Enhanced Debugging Hooks
++torch.compile Integration
 }
 class TrainingMode {
 <<abstract>>
@@ -403,7 +415,7 @@ end
   - Entry point: [train_supervised.py:12-14](file://examples/train_supervised.py#L12-L14)
   - Uses TrainingPipeline with FinetuneMode and Hydra configuration.
 - Configuration:
-  - Base training config: [base.yaml:1-76](file://configs/training/base.yaml#L1-L76)
+  - Base training config: [base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
   - DeepSpeed configurations: [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43), [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
 
 Common configuration knobs:
@@ -413,12 +425,13 @@ Common configuration knobs:
 - distributed: world_size, rank.
 - finetune: freeze, use_aux, aux_ratio, task_ratio.
 - ft_eval: save_pred, save_hidden_states, infer_only, eval_only, epoch_per_eval.
+- **New**: torch_compile: enabled, mode, backend, fullgraph, dynamic for optimization.
 - Enhanced debugging: pack_tokens, num_workers, num_workers_eval for better diagnostics.
 
 **Section sources**
 - [train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [train_supervised.py:12-14](file://examples/train_supervised.py#L12-L14)
-- [base.yaml:1-76](file://configs/training/base.yaml#L1-L76)
+- [base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43)
 - [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
 
@@ -444,12 +457,12 @@ Common configuration knobs:
   - Single dataset with train/valid/test splits.
   - Token packing and schedule updates based on tokens_per_sample.
   - Evaluation before training and EMA-based best checkpoint tracking.
-  - Comprehensive batch debugging and tokenization diagnostics.
+  - Comprehensive batch debugging and tokenization diagnostics with torch.compile optimization.
 - FinetuneMode:
   - Separate train/valid/test datasets.
   - Optional layer freezing and auxiliary pre-training loss integration.
   - Epoch-level evaluation cadence and optional inference dumping.
-  - Advanced data processing inspection and training monitoring.
+  - Advanced data processing inspection and training monitoring with torch.compile integration.
 
 **Section sources**
 - [pretrain_mode.py:148-227](file://src/training/pretrain_mode.py#L148-L227)
@@ -544,10 +557,16 @@ Enhanced configuration management provides better control over training processe
 - Gradient checkpointing and cache disabling automation
 - Embedding dimension synchronization
 
+**New**: Torch Compile Configuration:
+- TorchCompileConfig with enabled, mode, backend, fullgraph, and dynamic parameters
+- Integration with TrainingConfig for seamless optimization
+- Automatic torch.compile application during model creation
+
 **Section sources**
 - [pretrain_mode.py:82-241](file://src/training/pretrain_mode.py#L82-L241)
 - [finetune_mode.py:86-206](file://src/training/finetune_mode.py#L86-L206)
 - [pipeline.py:149-165](file://src/training/pipeline.py#L149-L165)
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 
 ### Batch Processing Capabilities
 Enhanced batch processing utilities provide better data pipeline monitoring:
@@ -575,12 +594,62 @@ Enhanced batch processing utilities provide better data pipeline monitoring:
 - [training_utils.py:111-200](file://src/utils/training_utils.py#L111-L200)
 - [pretrain_mode.py:473-499](file://src/training/pretrain_mode.py#L473-L499)
 
+## Torch Compile Optimization Integration
+
+### Configuration Structure and Parameters
+The torch.compile optimization system introduces a comprehensive configuration framework:
+
+**TorchCompileConfig Class:**
+- enabled: Boolean flag to enable/disable torch.compile optimization
+- mode: Compilation mode selection ('default', 'reduce-overhead', 'max-autotune')
+- backend: Compilation backend ('inductor' recommended, 'cudagraphs', etc.)
+- fullgraph: Full graph compilation requirement for complex models
+- dynamic: Dynamic shapes support for variable sequence lengths
+
+**Integration Points:**
+- Applied automatically during model creation in TrainingPipeline
+- Configurable through training/base.yaml under torch_compile section
+- Automatic fallback for unsupported PyTorch versions
+
+### Performance Benefits and Optimization Strategies
+**Kernel Fusion and Reduced Overhead:**
+- Eliminates kernel launch overhead through graph fusion
+- Reduces memory fragmentation and improves GPU utilization
+- Optimizes computational graph for better memory access patterns
+
+**Compilation Modes:**
+- reduce-overhead: Optimal for reducing kernel launch overhead (recommended)
+- max-autotune: Maximum performance with slower compilation time
+- default: Balanced option for general use cases
+
+**Backend Selection:**
+- inductor: Default backend optimized for PyTorch models
+- cudagraphs: CUDA graph backend for static computation graphs
+- Custom backends: Support for specialized hardware optimizations
+
+### Implementation Details and Error Handling
+**Automatic Application:**
+- Integrated into _create_model() method during training pipeline setup
+- Automatic detection of PyTorch version compatibility
+- Graceful fallback with informative warnings for unsupported versions
+
+**Error Handling:**
+- Try-catch block around torch.compile application
+- Informative error messages for compilation failures
+- Automatic fallback to unoptimized model execution
+
+**Section sources**
+- [pipeline.py:170-202](file://src/training/pipeline.py#L170-L202)
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
+- [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
+
 ## Dependency Analysis
-The training system exhibits clear separation of concerns with enhanced debugging capabilities:
-- TrainingPipeline depends on TrainingMode implementations and utilities for data, models, logging, and debugging.
-- PretrainMode and FinetuneMode depend on model classes, dataset utilities, and comprehensive debugging tools.
+The training system exhibits clear separation of concerns with enhanced debugging capabilities and torch.compile optimization:
+- TrainingPipeline depends on TrainingMode implementations and utilities for data, models, logging, debugging, and torch.compile optimization.
+- PretrainMode and FinetuneMode depend on model classes, dataset utilities, and comprehensive debugging tools with torch.compile integration.
 - Example scripts depend on TrainingPipeline and the respective mode with enhanced diagnostic capabilities.
 - Debug utilities provide comprehensive inspection capabilities across the entire training pipeline.
+- **New**: TorchCompileConfig provides centralized configuration for optimization settings.
 
 ```mermaid
 graph TB
@@ -590,6 +659,7 @@ TM --> FTM["FinetuneMode"]
 PTM --> MP["GraphGPTPretrainBase"]
 FTM --> MF["GraphGPTTaskModel"]
 TP --> CFG["Training Configs"]
+TP --> TCC["TorchCompileConfig"]
 TP --> DS["DeepSpeed/BF16 Configs"]
 TP --> U["Utilities (opt, log, loader, training_utils)"]
 TP --> DU["Debug Utilities (inspection, loader_utils, log_eval_dump_utils)"]
@@ -608,9 +678,10 @@ FTM --> TU
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [pretrain_mode.py:48-75](file://src/training/pretrain_mode.py#L48-L75)
 - [finetune_mode.py:43-70](file://src/training/finetune_mode.py#L43-L70)
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [modeling_pretrain.py:57-118](file://src/models/graphgpt/modeling_pretrain.py#L57-L118)
 - [modeling_finetune.py:64-106](file://src/models/graphgpt/modeling_finetune.py#L64-L106)
-- [base.yaml:1-76](file://configs/training/base.yaml#L1-L76)
+- [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
 - [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43)
 - [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
 - [inspection_utils.py:73-169](file://src/utils/inspection_utils.py#L73-L169)
@@ -623,6 +694,7 @@ FTM --> TU
 - [mode.py:5-90](file://src/training/mode.py#L5-L90)
 - [pretrain_mode.py:48-75](file://src/training/pretrain_mode.py#L48-L75)
 - [finetune_mode.py:43-70](file://src/training/finetune_mode.py#L43-L70)
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 
 ## Performance Considerations
 - Mixed precision:
@@ -635,6 +707,12 @@ FTM --> TU
   - Tune micro-batch sizes per GPU in DeepSpeed configs; enable overlap_comm for latency hiding.
 - Activation checkpointing:
   - Enable partitioned activation checkpointing to reduce memory footprint during pre-training and fine-tuning.
+- **New**: torch.compile optimization:
+  - Enable torch_compile.enabled for kernel fusion and reduced launch overhead.
+  - Use 'reduce-overhead' mode for optimal performance with variable sequence lengths.
+  - Configure 'inductor' backend for PyTorch-optimized compilation.
+  - Set dynamic=True for flexible handling of variable-length sequences.
+  - Monitor compilation time vs. runtime performance trade-offs.
 - Enhanced debugging:
   - Use pack_tokens and num_workers configuration for better diagnostics without impacting performance.
   - Leverage first batch inspection for quick debugging without full training overhead.
@@ -659,15 +737,22 @@ Common issues and resolutions with enhanced debugging support:
   - Utilize comprehensive data point inspection for train/validation/test sets.
   - Verify embedding dimensions and sequence lengths for graph inputs.
   - Check flex attention metadata for attention mode compatibility.
+- **New**: torch.compile issues:
+  - Verify PyTorch version >= 2.0 for torch.compile availability.
+  - Check compilation errors in _apply_torch_compile() method.
+  - Disable torch_compile.enabled if compilation fails or causes instability.
+  - Adjust mode parameter based on performance requirements (reduce-overhead vs. max-autotune).
+  - Ensure model compatibility with torch.compile (avoid complex control flow).
 
 **Section sources**
 - [pipeline.py:179-202](file://src/training/pipeline.py#L179-L202)
 - [finetune_mode.py:433-444](file://src/training/finetune_mode.py#L433-L444)
 - [pretrain_mode.py:473-499](file://src/training/pretrain_mode.py#L473-L499)
 - [inspection_utils.py:73-169](file://src/utils/inspection_utils.py#L73-L169)
+- [pipeline.py:170-202](file://src/training/pipeline.py#L170-L202)
 
 ## Conclusion
-The Graph-GPT training system leverages a robust strategy pattern to unify orchestration across pre-training and fine-tuning with significantly enhanced debugging and configuration management capabilities. The shared phases handle distributed setup, model creation, checkpointing, and logging, while mode-specific implementations tailor data pipelines, objectives, and evaluation cadences. The enhanced debugging system provides comprehensive batch inspection, tokenization diagnostics, and data processing validation. With DeepSpeed integration, mixed precision, advanced batch processing utilities, and comprehensive debugging support, the system enables efficient and scalable training for diverse graph-level, edge-level, and node-level tasks with superior monitoring and troubleshooting capabilities.
+The Graph-GPT training system leverages a robust strategy pattern to unify orchestration across pre-training and fine-tuning with significantly enhanced debugging, configuration management, and torch.compile optimization capabilities. The shared phases handle distributed setup, model creation, checkpointing, and logging, while mode-specific implementations tailor data pipelines, objectives, and evaluation cadences. The enhanced debugging system provides comprehensive batch inspection, tokenization diagnostics, and data processing validation. With DeepSpeed integration, mixed precision, advanced batch processing utilities, comprehensive debugging support, and torch.compile optimization for kernel fusion and reduced launch overhead, the system enables efficient and scalable training for diverse graph-level, edge-level, and node-level tasks with superior monitoring, troubleshooting capabilities, and performance optimization.
 
 ## Appendices
 
@@ -702,3 +787,18 @@ The Graph-GPT training system leverages a robust strategy pattern to unify orche
 - [inspection_utils.py:73-169](file://src/utils/inspection_utils.py#L73-L169)
 - [training_utils.py:7-103](file://src/utils/training_utils.py#L7-L103)
 - [pretrain_mode.py:473-499](file://src/training/pretrain_mode.py#L473-L499)
+
+### Appendix D: Torch Compile Configuration Reference
+- TorchCompileConfig parameters:
+  - enabled: Enable/disable optimization
+  - mode: 'default', 'reduce-overhead', 'max-autotune'
+  - backend: 'inductor', 'cudagraphs', custom
+  - fullgraph: Require full graph compilation
+  - dynamic: Support dynamic shapes
+- Integration location: TrainingPipeline._apply_torch_compile()
+- Configuration file: configs/training/base.yaml under torch_compile section
+
+**Section sources**
+- [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
+- [pipeline.py:170-202](file://src/training/pipeline.py#L170-L202)
+- [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)

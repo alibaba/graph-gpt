@@ -20,6 +20,7 @@
 - [src/data/collator.py](file://src/data/collator.py)
 - [src/data/tokenizer/padding.py](file://src/data/tokenizer/padding.py)
 - [src/training/pipeline.py](file://src/training/pipeline.py)
+- [src/models/graphgpt/modeling_helpers.py](file://src/models/graphgpt/modeling_helpers.py)
 - [tests/test_forward_simple.py](file://tests/test_forward_simple.py)
 - [tests/test_model_forward_inputs.py](file://tests/test_model_forward_inputs.py)
 - [tests/test_forward_minimal.py](file://tests/test_forward_minimal.py)
@@ -35,6 +36,8 @@
 - Added comprehensive coverage of the enhanced parameter synchronization logic in `base_configs.py`
 - Updated practical examples to demonstrate the broader application of sequence length constraints across all training modes
 - Enhanced test configuration management documentation with OmegaConf integration improvements
+- **New** Added documentation for the torch.compile configuration system including TorchCompileConfig dataclass, compilation modes, backend selection, and dynamic shape support
+- **New** Documented the integration of torch.compile in the training pipeline and model-level optimizations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -43,16 +46,17 @@
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
 6. [Enhanced Test Configuration Management](#enhanced-test-configuration-management)
-7. [Dependency Analysis](#dependency-analysis)
-8. [Performance Considerations](#performance-considerations)
-9. [Troubleshooting Guide](#troubleshooting-guide)
-10. [Conclusion](#conclusion)
-11. [Appendices](#appendices)
+7. [Torch Compile Configuration](#torch-compile-configuration)
+8. [Dependency Analysis](#dependency-analysis)
+9. [Performance Considerations](#performance-considerations)
+10. [Troubleshooting Guide](#troubleshooting-guide)
+11. [Conclusion](#conclusion)
+12. [Appendices](#appendices)
 
 ## Introduction
 This document explains the Graph-GPT configuration system built on Hydra and OmegaConf. It covers the hierarchical configuration structure, modular sub-configurations for model, training, tokenization, and generation parameters, base configuration files and their relationships, how YAML integrates with dataclass-based validation, configuration loading and precedence, runtime updates, practical examples for datasets and tasks, validation and error handling, extension patterns for custom datasets and experiments, and best practices for parameter tuning.
 
-**Updated** The configuration system now features enhanced parameter synchronization through the `sync_config()` function, which establishes `max_length` as a fundamental training parameter applicable across all training modes, not just finetuning contexts. This enhancement improves consistency and simplifies configuration management across different task types.
+**Updated** The configuration system now features enhanced parameter synchronization through the `sync_config()` function, which establishes `max_length` as a fundamental training parameter applicable across all training modes, not just finetuning contexts. This enhancement improves consistency and simplifies configuration management across different task types. Additionally, the system now includes comprehensive torch.compile configuration support for GPU kernel optimization and performance improvements.
 
 ## Project Structure
 The configuration system is organized into:
@@ -61,14 +65,15 @@ The configuration system is organized into:
 - Dataclass-backed configuration modules that define typed, validated configuration objects.
 - Example scripts that bootstrap the configuration via Hydra.
 - Enhanced test infrastructure using OmegaConf for structured configuration management.
+- **Updated** Torch compile configuration for GPU kernel optimization and performance improvements.
 
 ```mermaid
 graph TB
 A["configs/config.yaml<br/>Defaults and overrides"] --> B["configs/tokenization/base.yaml"]
 A --> C["configs/model/base.yaml"]
-A --> D["configs/training/base.yaml"]
+A --> D["configs/training/base.yaml<br/>+ torch_compile config"]
 A --> E["configs/generation/base.yaml"]
-F["src/conf/__init__.py<br/>Exports Config and sub-configs"] --> G["src/conf/base_configs.py<br/>Config, TrainingConfig, ScheduleConfig, helpers"]
+F["src/conf/__init__.py<br/>Exports Config and sub-configs"] --> G["src/conf/base_configs.py<br/>Config, TrainingConfig, ScheduleConfig, TorchCompileConfig, helpers"]
 H["src/conf/tokenization/token_configs.py<br/>TokenizationConfig, DataConfig, SemanticsConfig, StructureConfig"] --> G
 I["src/conf/model/model_configs.py<br/>GraphGPTModelConfig, sub-configs"] --> G
 J["src/conf/generation/generation_configs.py<br/>GenerationConfig"] --> G
@@ -76,16 +81,18 @@ K["examples/train_pretrain.py<br/>@hydra.main(config_path, config_name)"] --> A
 L["tests/test_forward_simple.py<br/>OmegaConf structured config"] --> G
 M["tests/test_model_forward_inputs.py<br/>Compose + OmegaConf.to_object"] --> A
 N["tests/test_forward_minimal.py<br/>Nested structure examples"] --> G
-O["src/training/pipeline.py<br/>_init_data_configs() calls sync_config()"] --> G
+O["src/training/pipeline.py<br/>_init_data_configs() calls sync_config()<br/>_apply_torch_compile()"] --> G
+P["src/models/graphgpt/modeling_helpers.py<br/>torch.compile for flex_attention"] --> G
 ```
 
 **Diagram sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [configs/tokenization/base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
 - [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
-- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
+- [configs/training/base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
-- [src/conf/__init__.py:1-13](file://src/conf/__init__.py#L1-L13)
+- [src/conf/__init__.py:1-20](file://src/conf/__init__.py#L1-L20)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
@@ -95,11 +102,12 @@ O["src/training/pipeline.py<br/>_init_data_configs() calls sync_config()"] --> G
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)
 - [src/training/pipeline.py:147-148](file://src/training/pipeline.py#L147-L148)
+- [src/models/graphgpt/modeling_helpers.py:122-125](file://src/models/graphgpt/modeling_helpers.py#L122-L125)
 
 **Section sources**
 - [configs/README.md:1-18](file://configs/README.md#L1-L18)
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
-- [src/conf/__init__.py:1-13](file://src/conf/__init__.py#L1-L13)
+- [src/conf/__init__.py:1-20](file://src/conf/__init__.py#L1-L20)
 
 ## Core Components
 - Central orchestrator: A single YAML file defines defaults for tokenization, model, training, and generation sub-configs, plus Hydra runtime settings.
@@ -107,7 +115,8 @@ O["src/training/pipeline.py<br/>_init_data_configs() calls sync_config()"] --> G
 - Dataclass-backed configuration: Typed configuration classes define validation and default values, enabling structured, safe configuration objects.
 - Example entry point: A script demonstrates how Hydra loads the configuration and passes it to the training pipeline.
 - Enhanced test configuration: OmegaConf integration for robust nested structure handling in test scenarios.
-- **Updated** Parameter synchronization: The `sync_config()` function establishes consistency across training parameters, particularly `max_length` and `task_type`.
+- **Updated** Parameter synchronization: The `sync_config()` function establishes `max_length` as a fundamental training parameter applicable across all training modes, not just finetuning contexts.
+- **New** Torch compile configuration: Comprehensive configuration for GPU kernel optimization through torch.compile with support for different compilation modes, backends, and dynamic shape handling.
 
 Key relationships:
 - The central orchestrator references sub-config names to merge into a unified configuration object.
@@ -115,9 +124,11 @@ Key relationships:
 - The training entry point uses Hydra to instantiate the unified configuration object.
 - Test scripts utilize OmegaConf for structured configuration creation and manipulation.
 - **Updated** The `sync_config()` function ensures `max_length` cascades from training configuration to model configuration when not explicitly set, and synchronizes task types across components.
+- **New** The training pipeline applies torch.compile optimization when enabled, with configurable compilation modes and backend selection.
 
 **Section sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
@@ -131,6 +142,7 @@ The configuration architecture follows a layered pattern:
 - Runtime helpers synchronize and validate configuration across domains.
 - Enhanced test infrastructure uses OmegaConf for structured configuration management.
 - **Updated** The synchronization logic now establishes `max_length` as a fundamental training parameter that cascades from training configuration to downstream components, ensuring consistent sequence length constraints across all training modes.
+- **New** Torch compile configuration provides GPU kernel optimization through configurable compilation modes and backend selection.
 
 ```mermaid
 sequenceDiagram
@@ -140,6 +152,7 @@ participant Orchestrator as "configs/config.yaml"
 participant Merge as "OmegaConf merge"
 participant Dataclass as "src/conf/base_configs.py : Config"
 participant Sync as "sync_config()"
+participant Compile as "torch.compile"
 participant Pipeline as "examples/train_pretrain.py"
 participant Test as "tests/test_*"
 User->>Hydra : Run training script
@@ -149,6 +162,8 @@ Merge-->>Hydra : Structured config object
 Hydra->>Dataclass : Instantiate Config (and sub-configs)
 Dataclass->>Sync : Call sync_config()
 Sync-->>Dataclass : Set max_length from model or training
+Dataclass->>Compile : Apply torch.compile if enabled
+Compile-->>Dataclass : Optimized model with reduced kernel fragmentation
 Dataclass-->>Hydra : Validated configuration
 Hydra->>Pipeline : Pass cfg to training function
 Test->>Merge : Create structured config with OmegaConf
@@ -160,8 +175,10 @@ Dataclass-->>Test : Validated configuration for testing
 **Diagram sources**
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 
@@ -186,6 +203,14 @@ class TrainingConfig {
 +optimizer : OptimizerConfig
 +schedule : ScheduleConfig
 +distributed : DistConfig
++torch_compile : TorchCompileConfig
+}
+class TorchCompileConfig {
++enabled : bool
++mode : string
++backend : string
++fullgraph : bool
++dynamic : bool
 }
 class ScheduleConfig {
 +total_tokens : float
@@ -227,6 +252,7 @@ Config --> TrainingConfig
 Config --> GenerationConfig
 TrainingConfig --> ScheduleConfig
 TrainingConfig --> OptimizerConfig
+TrainingConfig --> TorchCompileConfig
 TokenizationConfig --> DataConfig
 GraphGPTModelConfig --> PretrainingHeadConfig
 GraphGPTModelConfig --> FinetuningHeadConfig
@@ -235,6 +261,7 @@ GraphGPTModelConfig --> DropoutConfig
 ```
 
 **Diagram sources**
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
 - [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [src/conf/base_configs.py:35-51](file://src/conf/base_configs.py#L35-L51)
@@ -244,8 +271,9 @@ GraphGPTModelConfig --> DropoutConfig
 - [src/conf/generation/generation_configs.py:26-97](file://src/conf/generation/generation_configs.py#L26-L97)
 
 **Section sources**
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
-- [src/conf/__init__.py:1-13](file://src/conf/__init__.py#L1-L13)
+- [src/conf/__init__.py:1-20](file://src/conf/__init__.py#L1-L20)
 
 ### Tokenization Configuration
 Defines dataset selection, semantics, structure, and tokenizer class. Includes nested sub-configs for semantics and structure, and supports ODPS integration.
@@ -356,7 +384,7 @@ GraphGPTModelConfig --> DropoutConfig
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
 
 ### Training Configuration
-Defines training schedule, optimizer, distributed settings, and fine-tuning controls. **Updated** Now recognizes `max_length` as a fundamental training parameter that applies broadly across all training modes, with enhanced synchronization logic.
+Defines training schedule, optimizer, distributed settings, fine-tuning controls, and **New** torch.compile optimization settings. **Updated** Now recognizes `max_length` as a fundamental training parameter that applies broadly across all training modes, with enhanced synchronization logic.
 
 ```mermaid
 flowchart TD
@@ -367,6 +395,7 @@ Start --> FineTune["FinetuneTrainConfig<br/>freeze, seed, ratios"]
 Start --> FineEval["FinetuneEvalConfig<br/>save_pred, eval_only"]
 Start --> MaxLen["MaxLengthConfig<br/>max_length (general training parameter)"]
 Start --> PadMult["PadToMultipleOf<br/>pad_to_multiple_of"]
+Start --> TorchCompile["TorchCompileConfig<br/>enabled, mode, backend, fullgraph, dynamic"]
 Schedule --> Merge["Merge into TrainingConfig"]
 Optim --> Merge
 Dist --> Merge
@@ -374,17 +403,20 @@ FineTune --> Merge
 FineEval --> Merge
 MaxLen --> Merge
 PadMult --> Merge
+TorchCompile --> Merge
 Merge --> End(["Unified TrainingConfig"])
 ```
 
 **Diagram sources**
-- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
+- [configs/training/base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 - [src/conf/base_configs.py:28-51](file://src/conf/base_configs.py#L28-L51)
 - [src/conf/base_configs.py:107-130](file://src/conf/base_configs.py#L107-L130)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 
 **Section sources**
-- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
+- [configs/training/base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
 
 ### Generation Configuration
@@ -418,6 +450,7 @@ class GenerationConfig {
 - Command-line overrides: Values can be changed at runtime via command-line arguments.
 - Instantiation: Hydra constructs the unified configuration object from the merged YAML and dataclass definitions.
 - **Updated** Synchronization: The `sync_config()` function establishes `max_length` as a fundamental training parameter by cascading from training configuration to model configuration when not explicitly set, and synchronizes task types across components.
+- **New** Torch compile application: The training pipeline applies torch.compile optimization when enabled in the configuration, with configurable compilation modes and backend selection.
 - Test configuration: OmegaConf integration enables structured configuration creation and manipulation.
 
 ```mermaid
@@ -429,6 +462,7 @@ participant DS as "Dataset YAML"
 participant Merge as "OmegaConf merge"
 participant DC as "Config dataclass"
 participant Sync as "sync_config()"
+participant Compile as "torch.compile"
 participant Test as "Test Scripts"
 CLI->>Hydra : Launch with --config-path and --config-name
 Hydra->>Base : Load defaults
@@ -438,6 +472,8 @@ Merge-->>Hydra : Structured config
 Hydra->>DC : Instantiate Config and sub-configs
 DC->>Sync : Call sync_config()
 Sync-->>DC : Set max_length from model or training
+DC->>Compile : Apply torch.compile if enabled
+Compile-->>DC : Optimized model with reduced kernel fragmentation
 DC-->>Hydra : Validated config
 Hydra-->>CLI : Ready-to-use configuration
 Test->>Merge : Create structured config with OmegaConf
@@ -449,15 +485,19 @@ DC-->>Test : Validated configuration for testing
 **Diagram sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 
 **Section sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:125-136](file://tests/test_model_forward_inputs.py#L125-L136)
 
@@ -480,6 +520,13 @@ DC-->>Test : Validated configuration for testing
   - Set special token IDs from the tokenizer.
   - **Updated** Generation configuration maintains its own `max_length` parameter for generation-specific sequence length control, independent of training constraints.
 
+- **New** Enable torch.compile optimization:
+  - Set `training.torch_compile.enabled: true` to enable GPU kernel optimization.
+  - Choose compilation mode: `"reduce-overhead"` (recommended for reducing kernel launch overhead), `"max-autotune"` (best performance but slower compilation), or `"default"` (balanced option).
+  - Select backend: `"inductor"` (default, recommended) or other supported backends.
+  - Configure `fullgraph` for full graph compilation requirements.
+  - Set `dynamic: true` for variable sequence lengths support.
+
 - Enhanced test configuration management:
   - Use OmegaConf structured configuration for complex nested structures.
   - Leverage CLI overrides for runtime parameter modification.
@@ -488,7 +535,7 @@ DC-->>Test : Validated configuration for testing
 
 **Section sources**
 - [configs/tokenization/graph_lvl/reddit.yaml:1-121](file://configs/tokenization/graph_lvl/reddit.yaml#L1-L121)
-- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
+- [configs/training/base.yaml:106-118](file://configs/training/base.yaml#L106-L118)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 - [tests/test_model_forward_inputs.py:164-165](file://tests/test_model_forward_inputs.py#L164-L165)
@@ -498,6 +545,7 @@ DC-->>Test : Validated configuration for testing
 - Dataclass-level validation: Generation configuration validates algorithm choices and parameter bounds.
 - Runtime synchronization: Helpers adjust derived parameters and ensure consistency across tokenization, model, and training settings.
 - **Updated** The `sync_config()` function establishes `max_length` as a fundamental training parameter by setting it to the model's `max_position_embeddings` when not explicitly configured, ensuring consistent sequence length constraints across all training modes.
+- **New** Torch compile validation: The training pipeline checks for torch.compile availability and handles compilation errors gracefully, continuing without optimization if compilation fails.
 - Legacy conversion: Utilities translate the unified configuration into legacy-style tokenization configuration for compatibility.
 - Test configuration validation: OmegaConf integration ensures structured configuration validation in test scenarios.
 
@@ -512,17 +560,25 @@ G["Test configuration setup"] --> H["OmegaConf structured config"]
 H --> I["convert_to_legacy_tokenization_config()"]
 I --> J["Validate configuration structure"]
 K["sync_config() called"] --> L["Set max_length from model or training"]
+M["torch.compile enabled?"] --> N{"Available?"}
+N --> |Yes| O["Apply torch.compile with selected mode/backend"]
+N --> |No| P["Skip compilation with warning"]
+Q["Compilation success?"] --> R{"Success?"}
+R --> |Yes| S["Continue with optimized model"]
+R --> |No| T["Continue without compilation"]
 ```
 
 **Diagram sources**
 - [src/conf/generation/generation_configs.py:74-97](file://src/conf/generation/generation_configs.py#L74-L97)
 - [src/utils/conf_utils.py:30-46](file://src/utils/conf_utils.py#L30-L46)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 
 **Section sources**
 - [src/conf/generation/generation_configs.py:74-97](file://src/conf/generation/generation_configs.py#L74-L97)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
 - [src/utils/conf_utils.py:30-46](file://src/utils/conf_utils.py#L30-L46)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 
 ### Extending Configurations for Custom Datasets and Experiments
 - Add a new dataset YAML under the appropriate tokenization subfolder and reference it from the central orchestrator.
@@ -531,12 +587,14 @@ K["sync_config() called"] --> L["Set max_length from model or training"]
 - Use command-line overrides to quickly experiment with hyperparameters without editing YAML files.
 - Keep validation logic close to the relevant dataclass to surface errors early.
 - Leverage OmegaConf integration for enhanced test configuration management.
+- **New** Configure torch.compile settings for GPU optimization when needed, choosing appropriate compilation modes and backends based on performance requirements.
 
 **Section sources**
 - [configs/README.md:1-18](file://configs/README.md#L1-L18)
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
+- [configs/training/base.yaml:106-118](file://configs/training/base.yaml#L106-L118)
 
 ### Enhanced Parameter Synchronization
 **Updated** The `sync_config()` function in `base_configs.py` provides comprehensive parameter synchronization across the configuration system:
@@ -664,6 +722,95 @@ conf_updated = OmegaConf.merge(conf, OmegaConf.from_cli(cli_overrides))
 - [tests/README_FORWARD_TEST.md:1-211](file://tests/README_FORWARD_TEST.md#L1-L211)
 - [tests/QUICK_START.md:1-290](file://tests/QUICK_START.md#L1-L290)
 
+## Torch Compile Configuration
+
+**New** The Graph-GPT configuration system now includes comprehensive torch.compile support for GPU kernel optimization and performance improvements.
+
+### TorchCompileConfig Dataclass
+The `TorchCompileConfig` dataclass provides fine-grained control over torch.compile optimization:
+
+```mermaid
+classDiagram
+class TorchCompileConfig {
++enabled : bool
++mode : string
++backend : string
++fullgraph : bool
++dynamic : bool
+}
+```
+
+**Diagram sources**
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
+
+### Configuration Parameters
+- `enabled`: Whether to enable torch.compile optimization (default: False)
+- `mode`: Compilation mode selection:
+  - `"reduce-overhead"`: Best for reducing kernel launch overhead (recommended)
+  - `"max-autotune"`: Best performance but slower compilation time
+  - `"default"`: Balanced option
+- `backend`: Compilation backend selection (default: "inductor")
+- `fullgraph`: Whether to require full graph compilation (default: False)
+- `dynamic`: Whether to use dynamic shapes (default: True for variable sequence lengths)
+
+### Training Pipeline Integration
+The training pipeline applies torch.compile optimization during model initialization:
+
+```mermaid
+sequenceDiagram
+participant Pipeline as "TrainingPipeline"
+participant TrainCfg as "TrainingConfig"
+participant TorchCompile as "TorchCompileConfig"
+participant Model as "Model"
+Pipeline->>TrainCfg : Get torch_compile configuration
+TrainCfg->>TorchCompile : Access compile settings
+TorchCompile->>Pipeline : Return enabled flag and settings
+Pipeline->>Pipeline : Check torch.compile availability
+Pipeline->>Model : Apply torch.compile with selected mode/backend
+Model-->>Pipeline : Return optimized model
+```
+
+**Diagram sources**
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
+
+### Model-Level Optimizations
+The system also includes model-level torch.compile optimizations for specific components:
+
+- Flex attention optimization: torch.compile is applied to raw flex_attention functions with `dynamic=False` to avoid symbolic batch-dimension mismatches
+- Cache size limits: Dynamo configuration is adjusted to optimize compilation caching
+
+### Configuration Examples
+Enable torch.compile in training configuration:
+
+```yaml
+training:
+  torch_compile:
+    enabled: true
+    mode: "reduce-overhead"
+    backend: "inductor"
+    fullgraph: false
+    dynamic: true
+```
+
+### Performance Considerations
+- **Kernel fusion**: Reduces kernel launch overhead and improves GPU utilization
+- **Compilation time**: `"max-autotune"` mode provides best performance but requires longer compilation
+- **Memory usage**: torch.compile may increase memory usage during compilation phase
+- **Compatibility**: Requires PyTorch 2.0+ for torch.compile availability
+
+### Error Handling
+The system includes robust error handling for torch.compile:
+- Checks for torch.compile availability before attempting compilation
+- Gracefully continues without optimization if compilation fails
+- Provides informative warnings about compilation errors
+
+**Section sources**
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
+- [src/models/graphgpt/modeling_helpers.py:122-125](file://src/models/graphgpt/modeling_helpers.py#L122-L125)
+- [configs/training/base.yaml:106-118](file://configs/training/base.yaml#L106-L118)
+
 ## Dependency Analysis
 The configuration system exhibits clear separation of concerns:
 - YAML files define structure and defaults.
@@ -671,12 +818,13 @@ The configuration system exhibits clear separation of concerns:
 - Utilities bridge configuration to runtime components (e.g., tokenizer conversion, DeepSpeed parsing).
 - Test infrastructure leverages OmegaConf for enhanced configuration management.
 - **Updated** The synchronization logic ensures `max_length` parameter consistency across all training modes through the `sync_config()` function.
+- **New** Torch compile configuration integrates with the training pipeline for GPU optimization.
 
 ```mermaid
 graph TB
 Y1["configs/tokenization/base.yaml"] --> DC1["src/conf/tokenization/token_configs.py"]
 Y2["configs/model/base.yaml"] --> DC2["src/conf/model/model_configs.py"]
-Y3["configs/training/base.yaml"] --> DC3["src/conf/base_configs.py"]
+Y3["configs/training/base.yaml<br/>+ torch_compile"] --> DC3["src/conf/base_configs.py"]
 Y4["configs/generation/base.yaml"] --> DC4["src/conf/generation/generation_configs.py"]
 DC1 --> U["src/utils/conf_utils.py"]
 DC2 --> U
@@ -691,28 +839,31 @@ T2["tests/test_model_forward_inputs.py"] --> OC
 T3["tests/test_forward_minimal.py"] --> OC
 OC --> DC3
 Sync["sync_config()"] --> DC3
+Compile["torch.compile"] --> DC3
 Pipeline["_init_data_configs()"] --> Sync
+Pipeline --> Compile
 ```
 
 **Diagram sources**
 - [configs/tokenization/base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
 - [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
-- [configs/training/base.yaml:1-107](file://configs/training/base.yaml#L1-L107)
+- [configs/training/base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
-- [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/generation/generation_configs.py:26-97](file://src/conf/generation/generation_configs.py#L26-L97)
 - [src/utils/conf_utils.py:30-46](file://src/utils/conf_utils.py#L30-L46)
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [tests/test_forward_simple.py:17](file://tests/test_forward_simple.py#L17)
 - [tests/test_model_forward_inputs.py:29](file://tests/test_model_forward_inputs.py#L29)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
-- [src/training/pipeline.py:147-148](file://src/training/pipeline.py#L147-L148)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 
 **Section sources**
+- [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
-- [src/conf/__init__.py:1-13](file://src/conf/__init__.py#L1-L13)
+- [src/conf/__init__.py:1-20](file://src/conf/__init__.py#L1-L20)
 - [tests/test_forward_simple.py:17](file://tests/test_forward_simple.py#L17)
 - [tests/test_model_forward_inputs.py:29](file://tests/test_model_forward_inputs.py#L29)
 
@@ -724,6 +875,7 @@ Pipeline["_init_data_configs()"] --> Sync
 - Limit unnecessary preprocessing workers and disable expensive features during experimentation.
 - **Updated** OmegaConf integration reduces configuration overhead in test scenarios through efficient structured configuration creation and validation.
 - **Updated** The `pad_to_multiple_of` parameter ensures optimal memory alignment for attention computations, improving performance in GPU environments.
+- **New** Torch compile optimization can significantly improve GPU kernel performance by reducing kernel launch overhead and enabling kernel fusion, but may increase compilation time and memory usage during the initial compilation phase.
 
 ## Troubleshooting Guide
 - Unknown generation algorithm or invalid numeric bounds: Generation configuration raises warnings or errors during validation.
@@ -732,16 +884,19 @@ Pipeline["_init_data_configs()"] --> Sync
 - **Updated** Sequence length issues: If encountering sequence length problems, verify that `max_length` is properly set in training configuration or will cascade from `max_position_embeddings` via `sync_config()`. Check both training and model configuration for consistency.
 - **Updated** Test configuration issues: OmegaConf structured configuration errors can be debugged using OmegaConf.to_yaml() for inspection and proper nested structure validation.
 - **Updated** Parameter synchronization problems: If `max_length` appears inconsistent across components, verify that `sync_config()` is being called during pipeline initialization and that there are no conflicting explicit settings.
+- **New** Torch compile issues: If torch.compile fails, check PyTorch version compatibility (requires 2.0+), verify backend availability, and review compilation warnings. The system will continue without optimization if compilation fails.
+- **New** Performance regression: If torch.compile causes performance issues, disable it or adjust compilation mode/backends. Some models may benefit more from certain compilation settings than others.
 
 **Section sources**
 - [src/conf/generation/generation_configs.py:81-97](file://src/conf/generation/generation_configs.py#L81-L97)
 - [src/conf/base_configs.py:316-330](file://src/conf/base_configs.py#L316-L330)
 - [src/utils/conf_utils.py:150-232](file://src/utils/conf_utils.py#L150-L232)
 - [src/conf/base_configs.py:306-314](file://src/conf/base_configs.py#L306-L314)
+- [src/training/pipeline.py:167-201](file://src/training/pipeline.py#L167-L201)
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 
 ## Conclusion
-Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, and utilizing OmegaConf for structured configuration management—you can efficiently tune and extend configurations for diverse graph learning scenarios.
+Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. **New** The addition of torch.compile configuration support provides powerful GPU optimization capabilities through configurable compilation modes, backend selection, and dynamic shape support. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, utilizing OmegaConf for structured configuration management, and configuring torch.compile optimization—you can efficiently tune and extend configurations for diverse graph learning scenarios.
 
 ## Appendices
 
@@ -757,6 +912,8 @@ Graph-GPT's configuration system combines the flexibility of YAML with the safet
   - Implement proper configuration validation for nested structures.
   - **Updated** Set `max_length` in training configuration for consistent sequence length control across all training modes, with automatic fallback to model settings.
   - **Updated** Utilize the `pad_to_multiple_of` parameter to optimize memory alignment and performance.
+  - **New** Enable torch.compile optimization for GPU performance improvements, starting with `"reduce-overhead"` mode and adjusting based on performance requirements.
+  - **New** Monitor compilation time and memory usage when enabling torch.compile, especially with `"max-autotune"` mode.
 
 - Common pitfalls:
   - Forgetting to set special token IDs for generation.
@@ -769,6 +926,9 @@ Graph-GPT's configuration system combines the flexibility of YAML with the safet
   - Missing OmegaConf validation in test configuration setup.
   - **Updated** Conflicting `max_length` settings between training and model configurations.
   - **Updated** Forgetting to call `sync_config()` during pipeline initialization.
+  - **New** Ignoring torch.compile compatibility requirements (PyTorch 2.0+).
+  - **New** Expecting immediate performance improvements from torch.compile without considering compilation overhead.
+  - **New** Using incompatible compilation modes/backends for specific model architectures.
 
 ### OmegaConf Configuration Patterns
 
@@ -792,6 +952,7 @@ cfg = OmegaConf.merge(cfg, cli_overrides)
 # Access nested values safely
 pooling_method = OmegaConf.select(cfg, "model.ft_head.pooling_method")
 max_length = OmegaConf.select(cfg, "training.max_length")  # Now works as general parameter
+torch_compile_enabled = OmegaConf.select(cfg, "training.torch_compile.enabled")
 ```
 
 **Section sources**
