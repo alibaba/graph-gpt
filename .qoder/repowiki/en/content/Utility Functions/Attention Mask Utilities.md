@@ -14,6 +14,8 @@
 
 ## Update Summary
 **Changes Made**
+- Fixed compatibility issue with PyTorch's torch.compile in build_flex_block_mask function
+- Corrected _compile parameter from True to False to avoid nested closure compilation issues
 - Enhanced attention mechanism optimization with conditional SDPA/flex_attention override for training/validation phases
 - Improved AtomTaskHead initialization with proper attention configuration
 - Implemented attention interface registration system for seamless attention implementation switching
@@ -58,7 +60,7 @@ CF3["Grouped Query Attention Support<br/>KV head expansion"]
 end
 subgraph "Core Utilities"
 U1["src/utils/attn_mask_utils.py<br/>Enhanced mask utilities with explicit dtype specification<br/>PyTorch version compatibility checking"]
-U2["src/utils/flex_attn_utils.py<br/>Consolidated create_sparse_mask<br/>build_flex_block_mask"]
+U2["src/utils/flex_attn_utils.py<br/>Consolidated create_sparse_mask<br/>build_flex_block_mask<br/>_compile=False fix"]
 U3["src/models/graphgpt/utils_graphgpt.py<br/>Unified Attention Support<br/>sample_lens integration"]
 end
 subgraph "Training Integration"
@@ -632,7 +634,7 @@ CFG --> M2["modeling_finetune.py"]
 M1 --> H["modeling_helpers.py<br/>_update_causal_mask"]
 M2 --> H
 H --> U1["attn_mask_utils.py<br/>_prepare_4d_*_attention_mask<br/>PyTorch version compatibility"]
-H --> U2["flex_attn_utils.py<br/>build_*_from_splits, build_flex_block_mask"]
+H --> U2["flex_attn_utils.py<br/>build_*_from_splits, build_flex_block_mask<br/>_compile=False fix"]
 H --> CF["Custom Flex Attention<br/>graphgpt_flex_attention_forward"]
 T["tokenizer.py"] --> C["collator.py"]
 C --> H
@@ -735,6 +737,12 @@ TU --> M2
   - Proper attention configuration minimizes memory usage for molecular dynamics applications
   - Integrated dropout provides regularization without performance penalty
 
+- **Critical PyTorch Compatibility Fix**
+  - **Fixed Bug**: The _compile parameter in build_flex_block_mask was corrected from True to False to avoid nested closure compilation issues with and_masks/or_masks functions
+  - **Impact**: Resolves torch._dynamo compilation errors when using flex_attention with complex mask combinations
+  - **Benefit**: Ensures stable operation of unified attention patterns with nested mask functions
+  - **Compatibility**: Maintains backward compatibility while fixing critical compilation issues
+
 ## Troubleshooting Guide
 **Updated** Troubleshooting guide now includes custom flex attention specific issues and sample_lens parameter problems:
 
@@ -807,6 +815,12 @@ TU --> M2
   - Attention configuration: Ensure AtomTaskHead is properly initialized with correct attention settings
   - Memory usage: Check that AtomTaskHead doesn't consume excessive memory for force prediction tasks
 
+- **Critical PyTorch Compatibility Issues**
+  - **Fixed Bug**: Nested closure compilation errors: The _compile parameter in build_flex_block_mask was corrected from True to False to resolve torch._dynamo issues with nested closures from and_masks/or_masks functions
+  - **Symptoms**: torch._dynamo compilation failures when using complex mask combinations in flex_attention
+  - **Solution**: Ensure _compile=False is used in create_block_mask calls for unified attention patterns
+  - **Verification**: Test flex_attention with complex mask_mod functions to confirm compilation stability
+
 **Section sources**
 - [attn_mask_utils.py:36-38](file://src/utils/attn_mask_utils.py#L36-L38)
 - [modeling_helpers.py:46-48](file://src/models/graphgpt/modeling_helpers.py#L46-L48)
@@ -823,6 +837,6 @@ The new sample_lens parameter system enables sophisticated attention mechanisms 
 
 The recent enhancements to tensor construction patterns and type safety improvements address critical API usage errors and provide better device compatibility across different hardware configurations. These improvements ensure reliable operation in production environments with mixed precision training and multi-device setups, while maintaining the performance benefits of the unified attention system for large-scale graph processing applications. The fixed flex attention conditional logic bug ensures proper operation in both training and evaluation modes, while the PyTorch version compatibility checking provides robust support across different PyTorch versions and installations. The corrected parameter signatures in attention mask utilities ensure proper function invocation and prevent runtime errors in various operational scenarios.
 
-The new attention interface registration system provides seamless switching between SDPA and flex_attention implementations, automatically selecting the appropriate attention mechanism based on training phase. This enhancement improves the user experience by reducing manual configuration overhead while ensuring optimal performance for both training and evaluation scenarios. The enhanced AtomTaskHead initialization provides specialized attention capabilities for molecular force prediction tasks, demonstrating the versatility of the attention system for diverse graph processing applications.
-
 The recent updates to the attention mechanism optimization with conditional SDPA/flex_attention override for training/validation phases, improved AtomTaskHead initialization, and attention interface registration system represent significant advances in attention mechanism design and implementation. These improvements collectively enhance the system's flexibility, performance, and ease of use while maintaining backward compatibility and extending support for advanced attention patterns in graph processing applications.
+
+**Critical Update**: The recent fix to the build_flex_block_mask function addresses a critical compatibility issue with PyTorch's torch.compile by correcting the _compile parameter from True to False. This change resolves nested closure compilation issues with and_masks/or_masks functions, ensuring stable operation of unified attention patterns with complex mask combinations. The fix maintains backward compatibility while preventing torch._dynamo compilation errors that could occur with complex mask_mod functions in flex_attention implementations.

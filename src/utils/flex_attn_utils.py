@@ -122,6 +122,6 @@ def build_flex_block_mask(
         KV_LEN=seq_len,
         device=device,
         BLOCK_SIZE=128,
-        _compile=False,  # Avoid torch._dynamo issues with nested closures from and_masks/or_masks
+        _compile=True,
     )
     return block_mask

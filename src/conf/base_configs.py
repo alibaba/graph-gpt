@@ -283,13 +283,9 @@ class Config:
 
     # Additional parameters not categorized; historical params for experimental ONLY, NOT used ANYMORE
     with_prob: int = 0  # sample graphs for training proportional to their number of eulerian paths/num_nodes
-    ignored_off: int = 0
     attr_mask_ratio: int = 0
-    logit_adjust: int = 0  # https://spaces.ac.cn/archives/7615
     do_test: int = 0
-    eulerian_position: int = 0  # use eulerian position encoding/ntk
     tot_samples: int = 10000  # num of samples for estimating tokens-per-sample
-    rope_scaling_factor: int = 0  # finetuning
 
 
 def init_stacked_feat(cfg: Config):

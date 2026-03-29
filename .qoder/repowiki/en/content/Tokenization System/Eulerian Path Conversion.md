@@ -273,7 +273,6 @@ Tok-->>Tok : Final token sequence + labels
   - Attribute shuffling and semantic decoration: [core.py:472-488](file://src/data/tokenizer/core.py#L472-L488)
 - **Training flags**:
   - Sampling proportionally to number of Eulerian paths: [with_prob:194-196](file://src/conf/base_configs.py#L194-L196)
-  - Eulerian position encoding flag: [eulerian_position:199-200](file://src/conf/base_configs.py#L199-L200)
 
 **Section sources**
 - [structure.yaml:77-121](file://configs/tokenization/graph_lvl/structure.yaml#L77-L121)
