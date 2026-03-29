@@ -16,6 +16,7 @@
 - [opt_utils.py](file://src/utils/opt_utils.py)
 - [modeling_pretrain.py](file://src/models/graphgpt/modeling_pretrain.py)
 - [modeling_finetune.py](file://src/models/graphgpt/modeling_finetune.py)
+- [modeling_helpers.py](file://src/models/graphgpt/modeling_helpers.py)
 - [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
 - [inspection_utils.py](file://src/utils/inspection_utils.py)
 - [loader_utils.py](file://src/utils/loader_utils.py)
@@ -24,11 +25,11 @@
 
 ## Update Summary
 **Changes Made**
-- Added comprehensive torch.compile optimization integration documentation
-- Documented new TorchCompileConfig configuration structure and parameters
-- Updated training pipeline architecture to include torch.compile application
-- Added torch.compile performance benefits and optimization strategies
-- Enhanced debugging and configuration management sections with torch.compile considerations
+- Added comprehensive documentation for dynamic shapes configuration in torch.compile optimization
+- Documented new inductor configuration logic to skip CUDAGraphs for dynamic shapes
+- Updated torch.compile integration section with sequence packing compatibility
+- Enhanced troubleshooting guide with dynamic shapes and CUDAGraphs considerations
+- Added detailed explanation of torch.compile configuration parameters and their effects
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -38,14 +39,15 @@
 5. [Detailed Component Analysis](#detailed-component-analysis)
 6. [Enhanced Debugging and Configuration Management](#enhanced-debugging-and-configuration-management)
 7. [Torch Compile Optimization Integration](#torch-compile-optimization-integration)
-8. [Dependency Analysis](#dependency-analysis)
-9. [Performance Considerations](#performance-considerations)
-10. [Troubleshooting Guide](#troubleshooting-guide)
-11. [Conclusion](#conclusion)
-12. [Appendices](#appendices)
+8. [Dynamic Shapes and Sequence Packing Compatibility](#dynamic-shapes-and-sequence-packing-compatibility)
+9. [Dependency Analysis](#dependency-analysis)
+10. [Performance Considerations](#performance-considerations)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+12. [Conclusion](#conclusion)
+13. [Appendices](#appendices)
 
 ## Introduction
-This document explains the unified training orchestration system of Graph-GPT with a focus on the strategy pattern implementation. It covers how the TrainingPipeline coordinates shared setup phases and delegates mode-specific behavior to TrainingMode subclasses. It documents the pre-training pipeline with next-token prediction (NTP) and scheduled masked-token prediction (SMTP), and the fine-tuning pipeline for downstream tasks including graph-level, edge-level, and node-level predictions. The system now includes enhanced debugging capabilities, improved configuration management, advanced batch processing utilities, and comprehensive torch.compile optimization support for kernel fusion and reduced launch overhead.
+This document explains the unified training orchestration system of Graph-GPT with a focus on the strategy pattern implementation. It covers how the TrainingPipeline coordinates shared setup phases and delegates mode-specific behavior to TrainingMode subclasses. It documents the pre-training pipeline with next-token prediction (NTP) and scheduled masked-token prediction (SMTP), and the fine-tuning pipeline for downstream tasks including graph-level, edge-level, and node-level predictions. The system now includes enhanced debugging capabilities, improved configuration management, advanced batch processing utilities, and comprehensive torch.compile optimization support for kernel fusion and reduced launch overhead, with special attention to dynamic shapes and sequence packing compatibility.
 
 ## Project Structure
 The training system is organized around a strategy pattern with enhanced debugging, configuration management, and torch.compile optimization:
@@ -76,6 +78,7 @@ end
 subgraph "Models"
 MP["modeling_pretrain.py"]
 MF["modeling_finetune.py"]
+MH["modeling_helpers.py<br/>torch.compile compatibility"]
 end
 subgraph "Debug Utilities"
 IU["inspection_utils.py<br/>Tokenization Diagnostics"]
@@ -102,6 +105,7 @@ PTM --> LEDU
 FTM --> LEDU
 PTM --> TU
 FTM --> TU
+MH --> TP
 ```
 
 **Diagram sources**
@@ -117,6 +121,7 @@ FTM --> TU
 - [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
 - [modeling_pretrain.py:57-118](file://src/models/graphgpt/modeling_pretrain.py#L57-L118)
 - [modeling_finetune.py:64-106](file://src/models/graphgpt/modeling_finetune.py#L64-L106)
+- [modeling_helpers.py:120-125](file://src/models/graphgpt/modeling_helpers.py#L120-L125)
 - [inspection_utils.py:73-169](file://src/utils/inspection_utils.py#L73-L169)
 - [loader_utils.py:680-752](file://src/utils/loader_utils.py#L680-L752)
 - [log_eval_dump_utils.py:1-200](file://src/utils/log_eval_dump_utils.py#L1-L200)
@@ -133,7 +138,7 @@ FTM --> TU
 - [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
 
 ## Core Components
-- TrainingPipeline: Central orchestrator that extracts configs, sets up distributed environments, initializes tokenizers and models, manages checkpoints, and executes mode-specific phases. Now includes enhanced debugging hooks, comprehensive batch inspection capabilities, and torch.compile optimization integration.
+- TrainingPipeline: Central orchestrator that extracts configs, sets up distributed environments, initializes tokenizers and models, manages checkpoints, and executes mode-specific phases. Now includes enhanced debugging hooks, comprehensive batch inspection capabilities, and torch.compile optimization integration with dynamic shapes support.
 - TrainingMode (ABC): Defines the strategy interface with abstract methods for mode-specific behavior: update_config, prepare_data, post_model_setup, setup_optimizer, setup_training, and run_training. Enhanced with improved inspection and debugging support.
 - PretrainMode: Implements pre-training specifics including dataset preparation, token packing, NTP/SMTP objectives, evaluation before training, and step-wise saving. Features comprehensive batch debugging and tokenization diagnostics with torch.compile optimization.
 - FinetuneMode: Implements supervised fine-tuning specifics including separate train/valid/test loaders, optional layer freezing, epoch-level evaluation cadence, and optional inference dumping. Includes enhanced data processing inspection and training monitoring with torch.compile integration.
@@ -145,7 +150,7 @@ Key shared capabilities:
 - EMA model support for pre-training and fine-tuning.
 - Comprehensive logging and TensorBoard writer initialization.
 - Advanced debugging utilities for batch inspection and data diagnostics.
-- **New**: torch.compile optimization integration for kernel fusion and reduced launch overhead.
+- **New**: torch.compile optimization integration for kernel fusion and reduced launch overhead with dynamic shapes support for sequence packing.
 
 **Section sources**
 - [pipeline.py:15-96](file://src/training/pipeline.py#L15-L96)
@@ -154,7 +159,7 @@ Key shared capabilities:
 - [finetune_mode.py:43-70](file://src/training/finetune_mode.py#L43-L70)
 
 ## Architecture Overview
-The unified training pipeline follows a deterministic lifecycle with shared phases and mode-specific extensions, now enhanced with comprehensive debugging capabilities and torch.compile optimization.
+The unified training pipeline follows a deterministic lifecycle with shared phases and mode-specific extensions, now enhanced with comprehensive debugging capabilities and torch.compile optimization with dynamic shapes support.
 
 ```mermaid
 sequenceDiagram
@@ -164,6 +169,7 @@ participant Mode as "TrainingMode"
 participant DS as "DeepSpeed/DDP"
 participant Model as "Model"
 participant TC as "torch.compile"
+participant Inductor as "Inductor Config"
 participant Utils as "Utilities"
 participant Debug as "Debug Hooks"
 User->>TP : "run()"
@@ -187,6 +193,8 @@ Debug->>TP : "Batch Inspection"
 Debug->>Mode : "Data Diagnostics"
 Debug->>Utils : "Tokenization Results"
 Note over TC : torch.compile Optimization
+TC->>Inductor : "Configure Dynamic Shapes"
+Inductor->>Model : "Skip CUDAGraphs for Dynamic"
 TC->>Model : "Kernel Fusion"
 TC->>Model : "Reduced Overhead"
 ```
@@ -209,7 +217,7 @@ TC->>Model : "Reduced Overhead"
   - Data config initialization and model creation with gradient checkpointing and cache disabling.
   - Checkpoint loading/resuming and final config dumping.
   - Comprehensive batch inspection hooks for debugging training loops.
-  - **New**: torch.compile optimization application with configurable modes and backends.
+  - **New**: torch.compile optimization application with configurable modes, backends, and dynamic shapes support.
 - TrainingMode defines the contract for mode-specific behavior with enhanced inspection support:
   - dict_models: mapping of model_type to model classes.
   - Properties: skip_keys, allow_resume, allow_save_config, final_config_filename.
@@ -234,6 +242,7 @@ class TrainingPipeline {
 -_cleanup()
 +Enhanced Debugging Hooks
 +torch.compile Integration
++Dynamic Shapes Support
 }
 class TrainingMode {
 <<abstract>>
@@ -425,7 +434,7 @@ Common configuration knobs:
 - distributed: world_size, rank.
 - finetune: freeze, use_aux, aux_ratio, task_ratio.
 - ft_eval: save_pred, save_hidden_states, infer_only, eval_only, epoch_per_eval.
-- **New**: torch_compile: enabled, mode, backend, fullgraph, dynamic for optimization.
+- **New**: torch_compile: enabled, mode, backend, fullgraph, dynamic, disable_on_deepspeed for optimization.
 - Enhanced debugging: pack_tokens, num_workers, num_workers_eval for better diagnostics.
 
 **Section sources**
@@ -558,9 +567,10 @@ Enhanced configuration management provides better control over training processe
 - Embedding dimension synchronization
 
 **New**: Torch Compile Configuration:
-- TorchCompileConfig with enabled, mode, backend, fullgraph, and dynamic parameters
+- TorchCompileConfig with enabled, mode, backend, fullgraph, dynamic, and disable_on_deepspeed parameters
 - Integration with TrainingConfig for seamless optimization
 - Automatic torch.compile application during model creation
+- Dynamic shapes support for sequence packing compatibility
 
 **Section sources**
 - [pretrain_mode.py:82-241](file://src/training/pretrain_mode.py#L82-L241)
@@ -605,6 +615,7 @@ The torch.compile optimization system introduces a comprehensive configuration f
 - backend: Compilation backend ('inductor' recommended, 'cudagraphs', etc.)
 - fullgraph: Full graph compilation requirement for complex models
 - dynamic: Dynamic shapes support for variable sequence lengths
+- disable_on_deepspeed: Compatibility toggle for DeepSpeed integration
 
 **Integration Points:**
 - Applied automatically during model creation in TrainingPipeline
@@ -643,13 +654,71 @@ The torch.compile optimization system introduces a comprehensive configuration f
 - [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
 
+## Dynamic Shapes and Sequence Packing Compatibility
+
+### In-Detector Configuration Logic
+The torch.compile system includes sophisticated configuration logic to handle dynamic shapes, particularly important for sequence packing techniques:
+
+**Dynamic Shapes Detection:**
+- Automatic detection of dynamic shapes in sequence packing scenarios
+- Conditional configuration of inductor settings based on compilation mode
+- Special handling for reduce-overhead mode to avoid CUDAGraph limitations
+
+**Inductor Configuration:**
+- cudagraph_skip_dynamic_graphs: Enabled to skip CUDAGraphs for dynamic shapes
+- cudagraph_dynamic_shape_warn_limit: Set to None for unlimited dynamic shape warnings
+- Graceful fallback for older PyTorch versions without these configurations
+
+**Sequence Packing Compatibility:**
+- Dynamic shapes enabled by default for variable-length sequences
+- Reduced-overhead mode automatically configured to skip CUDAGraphs
+- TensorFloat32 optimization for Ampere+ GPUs
+
+```mermaid
+flowchart TD
+DynamicShapes["Dynamic Shapes Detection"] --> ModeCheck{"Mode == reduce-overhead?"}
+ModeCheck --> |Yes| InductorConfig["Configure In-Detector"]
+ModeCheck --> |No| DirectCompile["Direct torch.compile"]
+InductorConfig --> SkipCG["Enable cudagraph_skip_dynamic_graphs"]
+SkipCG --> WarnLimit["Set warn_limit to None"]
+WarnLimit --> PrintMsg["Print Dynamic Shapes Message"]
+DirectCompile --> ApplyCompile["Apply torch.compile"]
+PrintMsg --> ApplyCompile
+ApplyCompile --> Success["Compilation Success"]
+```
+
+**Diagram sources**
+- [pipeline.py:190-200](file://src/training/pipeline.py#L190-L200)
+
+### Configuration Parameters and Their Effects
+**torch_compile.dynamic Parameter:**
+- Controls dynamic shapes support in torch.compile
+- Recommended as True for sequence packing and variable-length sequences
+- Enables flexibility for different batch sizes and sequence lengths
+
+**torch_compile.mode Parameter:**
+- default: Balanced option that works well with dynamic shapes
+- reduce-overhead: Uses CUDAGraphs but requires careful dynamic shapes handling
+- max-autotune: Best performance but slower compilation time
+
+**torch_compile.disable_on_deepspeed Parameter:**
+- Compatibility toggle for DeepSpeed integration
+- Set to True by default for safety
+- Can be overridden if DeepSpeed compatibility issues are resolved
+
+**Section sources**
+- [base.yaml:112-118](file://configs/training/base.yaml#L112-L118)
+- [base_configs.py:180-185](file://src/conf/base_configs.py#L180-L185)
+- [pipeline.py:190-200](file://src/training/pipeline.py#L190-L200)
+
 ## Dependency Analysis
 The training system exhibits clear separation of concerns with enhanced debugging capabilities and torch.compile optimization:
 - TrainingPipeline depends on TrainingMode implementations and utilities for data, models, logging, debugging, and torch.compile optimization.
 - PretrainMode and FinetuneMode depend on model classes, dataset utilities, and comprehensive debugging tools with torch.compile integration.
 - Example scripts depend on TrainingPipeline and the respective mode with enhanced diagnostic capabilities.
 - Debug utilities provide comprehensive inspection capabilities across the entire training pipeline.
-- **New**: TorchCompileConfig provides centralized configuration for optimization settings.
+- **New**: TorchCompileConfig provides centralized configuration for optimization settings with dynamic shapes support.
+- **New**: Model helpers include torch.compile compatibility measures for flex attention and loss functions.
 
 ```mermaid
 graph TB
@@ -671,6 +740,9 @@ PTM --> LEDU["log_eval_dump_utils.py"]
 FTM --> LEDU
 PTM --> TU["training_utils.py"]
 FTM --> TU
+MH["modeling_helpers.py"] --> TP
+MH --> MP
+MH --> MF
 ```
 
 **Diagram sources**
@@ -681,6 +753,7 @@ FTM --> TU
 - [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [modeling_pretrain.py:57-118](file://src/models/graphgpt/modeling_pretrain.py#L57-L118)
 - [modeling_finetune.py:64-106](file://src/models/graphgpt/modeling_finetune.py#L64-L106)
+- [modeling_helpers.py:120-125](file://src/models/graphgpt/modeling_helpers.py#L120-L125)
 - [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
 - [ds_config2.json:1-43](file://examples/ds_config2.json#L1-L43)
 - [ds_config2_bf16.json:1-38](file://examples/ds_config2_bf16.json#L1-L38)
@@ -713,6 +786,7 @@ FTM --> TU
   - Configure 'inductor' backend for PyTorch-optimized compilation.
   - Set dynamic=True for flexible handling of variable-length sequences.
   - Monitor compilation time vs. runtime performance trade-offs.
+  - Configure cudagraph_skip_dynamic_graphs automatically for reduce-overhead mode.
 - Enhanced debugging:
   - Use pack_tokens and num_workers configuration for better diagnostics without impacting performance.
   - Leverage first batch inspection for quick debugging without full training overhead.
@@ -743,6 +817,9 @@ Common issues and resolutions with enhanced debugging support:
   - Disable torch_compile.enabled if compilation fails or causes instability.
   - Adjust mode parameter based on performance requirements (reduce-overhead vs. max-autotune).
   - Ensure model compatibility with torch.compile (avoid complex control flow).
+  - **New**: For sequence packing issues, verify dynamic shapes configuration is enabled.
+  - **New**: If experiencing CUDAGraph problems with reduce-overhead mode, check inductor configuration.
+  - **New**: Monitor cudagraph_skip_dynamic_graphs setting for dynamic shapes compatibility.
 
 **Section sources**
 - [pipeline.py:179-202](file://src/training/pipeline.py#L179-L202)
@@ -752,7 +829,7 @@ Common issues and resolutions with enhanced debugging support:
 - [pipeline.py:170-202](file://src/training/pipeline.py#L170-L202)
 
 ## Conclusion
-The Graph-GPT training system leverages a robust strategy pattern to unify orchestration across pre-training and fine-tuning with significantly enhanced debugging, configuration management, and torch.compile optimization capabilities. The shared phases handle distributed setup, model creation, checkpointing, and logging, while mode-specific implementations tailor data pipelines, objectives, and evaluation cadences. The enhanced debugging system provides comprehensive batch inspection, tokenization diagnostics, and data processing validation. With DeepSpeed integration, mixed precision, advanced batch processing utilities, comprehensive debugging support, and torch.compile optimization for kernel fusion and reduced launch overhead, the system enables efficient and scalable training for diverse graph-level, edge-level, and node-level tasks with superior monitoring, troubleshooting capabilities, and performance optimization.
+The Graph-GPT training system leverages a robust strategy pattern to unify orchestration across pre-training and fine-tuning with significantly enhanced debugging, configuration management, and torch.compile optimization capabilities. The shared phases handle distributed setup, model creation, checkpointing, and logging, while mode-specific implementations tailor data pipelines, objectives, and evaluation cadences. The enhanced debugging system provides comprehensive batch inspection, tokenization diagnostics, and data processing validation. With DeepSpeed integration, mixed precision, advanced batch processing utilities, comprehensive debugging support, and torch.compile optimization for kernel fusion and reduced launch overhead, the system enables efficient and scalable training for diverse graph-level, edge-level, and node-level tasks with superior monitoring, troubleshooting capabilities, and performance optimization. The new dynamic shapes configuration ensures compatibility with sequence packing techniques and variable-length sequences, making the system robust for modern graph neural network training scenarios.
 
 ## Appendices
 
@@ -794,11 +871,26 @@ The Graph-GPT training system leverages a robust strategy pattern to unify orche
   - mode: 'default', 'reduce-overhead', 'max-autotune'
   - backend: 'inductor', 'cudagraphs', custom
   - fullgraph: Require full graph compilation
-  - dynamic: Support dynamic shapes
+  - dynamic: Support dynamic shapes for sequence packing
+  - disable_on_deepspeed: Compatibility toggle for DeepSpeed
 - Integration location: TrainingPipeline._apply_torch_compile()
 - Configuration file: configs/training/base.yaml under torch_compile section
+- **New**: Dynamic shapes support for variable-length sequences and sequence packing
+- **New**: Automatic inductor configuration for CUDAGraph compatibility
 
 **Section sources**
 - [base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [pipeline.py:170-202](file://src/training/pipeline.py#L170-L202)
 - [base.yaml:107-118](file://configs/training/base.yaml#L107-L118)
+
+### Appendix E: Dynamic Shapes and Sequence Packing Compatibility
+- **New**: cudagraph_skip_dynamic_graphs configuration for inductor
+- **New**: cudagraph_dynamic_shape_warn_limit setting for dynamic shape warnings
+- **New**: Automatic configuration for reduce-overhead mode with dynamic shapes
+- **New**: Dynamic shapes enabled by default for sequence packing compatibility
+- **New**: Graceful fallback for older PyTorch versions without advanced inductor configs
+
+**Section sources**
+- [pipeline.py:190-200](file://src/training/pipeline.py#L190-L200)
+- [base.yaml:112-118](file://configs/training/base.yaml#L112-L118)
+- [modeling_helpers.py:120-125](file://src/models/graphgpt/modeling_helpers.py#L120-L125)

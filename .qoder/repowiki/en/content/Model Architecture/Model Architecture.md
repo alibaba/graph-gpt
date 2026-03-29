@@ -17,16 +17,17 @@
 - [finetune_mode.py](file://src/training/finetune_mode.py)
 - [pipeline.py](file://src/training/pipeline.py)
 - [training_utils.py](file://src/utils/training_utils.py)
+- [model_configs.py](file://src/conf/model/model_configs.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Updated PackedAttention implementation documentation to reflect corrected batched sequence handling and proper tensor dimension handling in attention output reshaping
+- Updated attention mechanism documentation to reflect simplified architecture with removal of bi-causal functionality
 - Enhanced packed attention system documentation with comprehensive SDPA and flex_attention implementations
 - Added dynamic cache disabling mechanism for flex_attention compatibility
 - Integrated gradient checkpointing for memory optimization in packed sequences
 - Updated performance considerations to reflect computational efficiency improvements
-- Added new section on packed attention architecture and memory optimization strategies
+- Added new section on simplified attention architecture and memory optimization strategies
 - **Updated** Enhanced defensive programming logic for position_ids=None handling in SPDA path within LlamaModel class, improving model robustness during inference
 
 ## Table of Contents
@@ -35,7 +36,7 @@
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Packed Attention System](#packed-attention-system)
+6. [Simplified Attention System](#simplified-attention-system)
 7. [Dependency Analysis](#dependency-analysis)
 8. [Performance Considerations](#performance-considerations)
 9. [Troubleshooting Guide](#troubleshooting-guide)
@@ -45,7 +46,7 @@
 ## Introduction
 This document describes the Graph-GPT model framework's dual-head architecture and modular design. It focuses on the pre-training and fine-tuning components, including GraphGPTPretrainBase, GraphGPTPosPred, GraphGPTTaskModel, and GraphGPTDenoisingRegressionDoubleHeadsModel. The document explains how the transformer backbone is adapted for graph data, how attention masking and positional encoding are handled, and how the shared infrastructure enables seamless transitions from pre-training to fine-tuning. It also documents configuration parameters, input/output specifications, and memory optimization strategies, along with extensibility mechanisms and cross-cutting concerns such as gradient flow optimization.
 
-**Updated** Enhanced with comprehensive packed attention system that processes multiple graphs within a single sequence while maintaining computational efficiency through SDPA and flex_attention implementations. Improved defensive programming logic for position_ids=None handling in SPDA path, enhancing model robustness during inference scenarios.
+**Updated** Enhanced with comprehensive packed attention system that processes multiple graphs within a single sequence while maintaining computational efficiency through SDPA and flex_attention implementations. Improved defensive programming logic for position_ids=None handling in SPDA path, enhancing model robustness during inference scenarios. Simplified attention mechanisms throughout the model architecture, removing complex bidirectional attention patterns in favor of straightforward causal attention processing.
 
 ## Project Structure
 The Graph-GPT codebase is organized around a modular model package and a training pipeline that supports both pre-training and fine-tuning modes. The model package exposes a unified re-export shim that routes to specialized implementations for pre-training and fine-tuning. Configuration is split into model, tokenization, and training YAML files, enabling flexible experimentation across datasets and tasks.
@@ -65,11 +66,12 @@ end
 subgraph "Configs"
 I["configs/model/base.yaml"]
 J["configs/tokenization/base.yaml"]
+K["src/conf/model/model_configs.py<br/>causal_attention flag"]
 end
 subgraph "Training Pipeline"
-K["pretrain_mode.py<br/>PretrainMode"]
-L["finetune_mode.py<br/>FinetuneMode"]
-M["pipeline.py<br/>TrainingPipeline orchestration"]
+L["pretrain_mode.py<br/>PretrainMode"]
+M["finetune_mode.py<br/>FinetuneMode"]
+N["pipeline.py<br/>TrainingPipeline orchestration"]
 end
 A --> B
 A --> C
@@ -80,12 +82,13 @@ C --> E
 D --> F
 F --> G
 F --> H
-K --> A
 L --> A
-M --> K
-M --> L
-I --> M
-J --> M
+M --> A
+N --> L
+N --> M
+I --> N
+J --> N
+K --> N
 ```
 
 **Diagram sources**
@@ -102,6 +105,7 @@ J --> M
 - [pipeline.py:1-258](file://src/training/pipeline.py#L1-L258)
 - [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
 - [base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
+- [model_configs.py:270-290](file://src/conf/model/model_configs.py#L270-L290)
 
 **Section sources**
 - [modeling_graphgpt.py:1-30](file://src/models/graphgpt/modeling_graphgpt.py#L1-L30)
@@ -121,8 +125,9 @@ Key shared infrastructure:
 - Custom Llama components: Dropout-enabled MLP and decoder layers, AtomTaskHead for coordinate denoising, and rotary embeddings tailored for graph data.
 - **PackedAttention**: Enhanced attention system that processes multiple graphs within a single sequence using SDPA and flex_attention backends with corrected batched sequence handling.
 - **LlamaModel**: Packed-sequence LlamaModel that packs valid tokens before layers and unpacks after, enabling efficient multi-graph processing with robust position_ids handling.
+- **Simplified Attention**: Streamlined attention mechanisms with removal of bi-causal functionality, focusing on straightforward causal attention processing throughout the architecture.
 
-**Updated** Added PackedAttention and LlamaModel components for handling packed sequences efficiently with corrected tensor dimension handling and enhanced defensive programming logic for position_ids=None scenarios.
+**Updated** Added PackedAttention and LlamaModel components for handling packed sequences efficiently with corrected tensor dimension handling and enhanced defensive programming logic for position_ids=None scenarios. Attention mechanisms now use simplified causal processing without complex bidirectional patterns.
 
 **Section sources**
 - [modeling_pretrain.py:57-267](file://src/models/graphgpt/modeling_pretrain.py#L57-L267)
@@ -143,6 +148,7 @@ The Graph-GPT framework adapts the Llama transformer backbone for graph-structur
 - Supporting dual-head objectives: generative (language modeling) and discriminative (contrastive learning).
 - Extending to position pre-training with SMTP tokenization and optional denoising heads.
 - Enabling downstream regression/classification with configurable pooling and optional MLP heads.
+- **Simplified attention processing**: Streamlined attention mechanisms using straightforward causal processing throughout the architecture, removing complex bidirectional patterns.
 - **Packed attention processing**: Efficiently handling multiple graphs within a single sequence using SDPA and flex_attention backends with corrected batched sequence handling.
 - **Robust position handling**: Defensive programming logic ensures proper position_ids handling in both SPDA and flex_attention paths, improving model reliability during inference.
 
@@ -151,6 +157,7 @@ classDiagram
 class GraphGPTPretrainBase {
 +forward(...)
 +prepare_inputs_embeds(...)
++causal_attention_flag
 }
 class GraphGPTPosPred {
 +forward(...)
@@ -161,6 +168,7 @@ class GraphGPTPosPred {
 class GraphGPTTaskModel {
 +forward(...)
 +calculate_task_loss(...)
++causal_attention_flag
 }
 class GraphGPTDenoisingRegressionDoubleHeadsModel {
 +forward(...)
@@ -194,6 +202,10 @@ class PackedAttention {
 class LlamaDecoderLayer {
 +forward(...)
 }
+class AttentionMaskUtils {
++_update_causal_mask()
++_prepare_4d_attention_mask()
+}
 GraphGPTPretrainBase --> DoubleHeadsModelOutput : "returns"
 GraphGPTPosPred --> DoubleHeadsModelOutput : "returns"
 GraphGPTTaskModel --> DoubleHeadsModelOutput : "returns"
@@ -208,6 +220,8 @@ LlamaModel --> LlamaMLP : "uses"
 LlamaModel --> PackedAttention : "uses"
 LlamaDecoderLayer --> PackedAttention : "uses"
 GraphGPTDenoisingRegressionDoubleHeadsModel --> AtomTaskHead : "uses"
+GraphGPTPretrainBase --> AttentionMaskUtils : "uses"
+GraphGPTTaskModel --> AttentionMaskUtils : "uses"
 ```
 
 **Diagram sources**
@@ -220,13 +234,15 @@ GraphGPTDenoisingRegressionDoubleHeadsModel --> AtomTaskHead : "uses"
 - [utils_graphgpt.py:90-289](file://src/models/graphgpt/utils_graphgpt.py#L90-L289)
 - [utils_graphgpt.py:204-292](file://src/models/graphgpt/utils_graphgpt.py#L204-L292)
 - [utils_graphgpt.py:369-435](file://src/models/graphgpt/utils_graphgpt.py#L369-L435)
+- [modeling_helpers.py:131-154](file://src/models/graphgpt/modeling_helpers.py#L131-L154)
+- [attn_mask_utils.py:11-33](file://src/utils/attn_mask_utils.py#L11-L33)
 
 ## Detailed Component Analysis
 
 ### Dual-Head Design and Transformer Adaptation
 - Generative head: Predicts next tokens using a language modeling head on top of the transformer backbone. Supports multi-token prediction via a projection head.
 - Discriminative head: Computes contrastive loss over pooled representations for unsupervised pre-training objectives.
-- Transformer adaptation: Dropout-enabled MLP and decoder layers, optional path-drop and layer-scale initialization, and bi-causal attention support for specific tasks.
+- Transformer adaptation: Dropout-enabled MLP and decoder layers, optional path-drop and layer-scale initialization, and simplified attention support for specific tasks.
 
 ```mermaid
 sequenceDiagram
@@ -350,13 +366,14 @@ Regress --> End(["Return DoubleHeadsModelOutput"])
 - [utils_graphgpt.py:369-435](file://src/models/graphgpt/utils_graphgpt.py#L369-L435)
 - [modeling_helpers.py:526-637](file://src/models/graphgpt/modeling_helpers.py#L526-L637)
 
-## Packed Attention System
+## Simplified Attention System
 
-**New Section** The Graph-GPT framework now features a sophisticated packed attention system that enables efficient processing of multiple graphs within a single sequence while maintaining computational efficiency.
+**New Section** The Graph-GPT framework now features a streamlined attention system that emphasizes simplicity and efficiency by removing complex bidirectional attention patterns in favor of straightforward causal processing.
 
-### Packed Attention Architecture
-The packed attention system consists of several key components:
+### Simplified Attention Architecture
+The simplified attention system consists of several key components:
 
+- **Streamlined Attention Processing**: All attention mechanisms now use straightforward causal processing, eliminating complex bidirectional patterns that previously existed in certain configurations.
 - **PackedAttention**: A custom attention implementation that processes multiple graphs within a single sequence using either SDPA or flex_attention backends with corrected batched sequence handling and proper tensor dimension handling.
 - **LlamaModel**: A packed-sequence variant of the Llama model that packs valid tokens before layers and unpacks after, enabling efficient multi-graph processing with robust position_ids handling.
 - **LlamaDecoderLayer**: Modified decoder layer that works with packed sequences, handling attention computation and MLP operations.
@@ -364,7 +381,7 @@ The packed attention system consists of several key components:
 - **Attention Mask Utilities**: Helper functions for preparing 4D attention masks and handling different attention implementations.
 
 ### SDPA vs Flex Attention Paths
-The system supports two attention backends:
+The system supports two attention backends with simplified processing:
 
 **SDPA Path (Default)**:
 - Uses per-sample 2D attention masks for each graph in the batch
@@ -378,6 +395,22 @@ The system supports two attention backends:
 - Requires dynamic=False compilation to avoid cache issues
 - Provides superior performance for large-scale multi-graph processing
 - Automatically disables caching to prevent symbolic batch-dimension mismatches
+
+### Simplified Attention Mask Construction
+The system provides flexible attention mask construction through split_lens and attn_modes:
+
+- **split_lens**: List of split lengths for each sample, enabling complex attention patterns
+- **attn_modes**: Corresponding attention modes ('causal', 'full', 'noise') for each split
+- **Per-sample Processing**: Each sample maintains its own attention structure
+- **Padding Handling**: Automatic padding extension for sequences shorter than maximum length
+
+### Removed Bi-Causal Functionality
+**Updated** The attention system has been simplified by removing bi-causal functionality:
+
+- **Bi-causal attention**: Previously supported complex bidirectional attention patterns for specific tasks
+- **Removal rationale**: Streamlined architecture favors straightforward causal processing throughout
+- **Impact**: Simplified attention computation, reduced complexity, improved performance
+- **Compatibility**: Maintains backward compatibility for existing models while enabling cleaner architecture
 
 ### Corrected Batched Sequence Handling
 The PackedAttention implementation has been updated to properly handle batched sequences:
@@ -428,20 +461,13 @@ The packed attention system seamlessly integrates with gradient checkpointing fo
 - **Memory Efficiency**: Reduces memory usage by recomputing activations during backward pass
 - **Computational Trade-off**: Balances memory savings against increased computation time
 
-### Attention Mask Construction
-The system provides flexible attention mask construction through split_lens and attn_modes:
-
-- **split_lens**: List of split lengths for each sample, enabling complex attention patterns
-- **attn_modes**: Corresponding attention modes ('causal', 'full', 'noise') for each split
-- **Per-sample Processing**: Each sample maintains its own attention structure
-- **Padding Handling**: Automatic padding extension for sequences shorter than maximum length
-
 **Section sources**
 - [utils_graphgpt.py:90-289](file://src/models/graphgpt/utils_graphgpt.py#L90-L289)
 - [utils_graphgpt.py:204-292](file://src/models/graphgpt/utils_graphgpt.py#L204-L292)
 - [flex_attn_utils.py:161-289](file://src/utils/flex_attn_utils.py#L161-L289)
 - [modeling_helpers.py:156-169](file://src/models/graphgpt/modeling_helpers.py#L156-L169)
 - [attn_mask_utils.py:10-42](file://src/utils/attn_mask_utils.py#L10-L42)
+- [modeling_helpers.py:131-154](file://src/models/graphgpt/modeling_helpers.py#L131-L154)
 
 ## Dependency Analysis
 The model components share a common configuration and helper utilities, while the training pipeline orchestrates model creation and execution across pre-training and fine-tuning modes.
@@ -501,7 +527,7 @@ TP --> FM
 
 ## Performance Considerations
 - Dropout and regularization: MLP and attention dropout, path dropout, and layer-scale initialization are controlled via configuration to balance capacity and stability.
-- Bi-causal attention: Enables non-causal attention for specific tasks, improving modeling flexibility.
+- **Simplified attention**: Streamlined attention mechanisms eliminate complex bidirectional processing, improving computational efficiency and reducing memory overhead.
 - Memory optimization: Gradient checkpointing is enabled; cache is disabled to reduce memory footprint; optional DeepSpeed integration for large-scale training.
 - Attention masking: Flexible mask utilities support causal, bi-causal, and 3D attention masks; attention mask expansion for packed sequences.
 - Positional encoding: Custom rotary embeddings and 3D rotary embeddings adapt RoPE to graph contexts; resonance RoPE variants for long-range dependencies.
@@ -510,7 +536,7 @@ TP --> FM
 - **Tensor dimension handling**: Corrected attention output reshaping maintains proper tensor dimensions throughout the packed attention computation.
 - **Defensive programming**: Enhanced position_ids handling ensures robust inference scenarios with improved model reliability.
 
-**Updated** Enhanced with packed attention system performance characteristics and memory optimization strategies, including corrected batched sequence handling, proper tensor dimension management, and robust defensive programming logic for position_ids=None scenarios.
+**Updated** Enhanced with packed attention system performance characteristics and memory optimization strategies, including corrected batched sequence handling, proper tensor dimension management, and robust defensive programming logic for position_ids=None scenarios. Simplified attention mechanisms improve computational efficiency by removing complex bidirectional processing patterns.
 
 **Section sources**
 - [modeling_common.py:148-204](file://src/models/graphgpt/modeling_common.py#L148-L204)
@@ -531,8 +557,9 @@ TP --> FM
 - **Memory optimization**: Monitor memory usage with gradient checkpointing enabled; adjust batch sizes accordingly for optimal performance.
 - **Tensor dimension errors**: Ensure proper handling of batched sequences with corrected tensor dimension handling in attention output reshaping.
 - **Position IDs handling**: Verify defensive programming logic works correctly for both SPDA and flex_attention paths; ensure robust inference scenarios.
+- **Attention simplification**: If experiencing issues with attention patterns, verify that causal_attention flag is properly configured for the desired processing mode.
 
-**Updated** Added troubleshooting guidance for packed attention system and cache management, including corrected batched sequence handling, tensor dimension management, and enhanced position_ids handling robustness.
+**Updated** Added troubleshooting guidance for packed attention system and cache management, including corrected batched sequence handling, tensor dimension management, and enhanced position_ids handling robustness. Attention system troubleshooting now includes guidance for simplified causal processing patterns.
 
 **Section sources**
 - [modeling_helpers.py:35-65](file://src/models/graphgpt/modeling_helpers.py#L35-L65)
@@ -543,7 +570,7 @@ TP --> FM
 ## Conclusion
 Graph-GPT's dual-head architecture and modular design enable seamless pre-training and fine-tuning across diverse graph tasks. By adapting the Llama backbone for graph data, integrating SMTP-based position prediction, and providing flexible configuration for attention masking and positional encodings, the framework supports both generative and discriminative objectives. The shared infrastructure and training pipeline facilitate efficient experimentation and deployment across datasets and tasks.
 
-**Enhanced** The packed attention system significantly improves computational efficiency by processing multiple graphs within a single sequence, while maintaining compatibility with both SDPA and flex_attention backends. The dynamic cache management and gradient checkpointing integration provide robust memory optimization strategies for large-scale graph processing scenarios. The corrected batched sequence handling and proper tensor dimension management ensure reliable operation across different attention backends. **The enhanced defensive programming logic for position_ids=None handling further improves model robustness during inference scenarios, making the framework more reliable for production deployments.**
+**Enhanced** The packed attention system significantly improves computational efficiency by processing multiple graphs within a single sequence, while maintaining compatibility with both SDPA and flex_attention backends. The dynamic cache management and gradient checkpointing integration provide robust memory optimization strategies for large-scale graph processing scenarios. The corrected batched sequence handling and proper tensor dimension management ensure reliable operation across different attention backends. **The enhanced defensive programming logic for position_ids=None handling further improves model robustness during inference scenarios, making the framework more reliable for production deployments.** **The simplified attention mechanisms streamline the architecture by removing complex bidirectional processing patterns, resulting in improved computational efficiency and reduced memory overhead while maintaining model effectiveness.**
 
 ## Appendices
 
@@ -554,15 +581,17 @@ Graph-GPT's dual-head architecture and modular design enable seamless pre-traini
 - Geometric input: pos_agg_method, pos_bins.
 - Pretraining head: next_n_token, use_generative, use_discriminative, focal_gamma, smtp_inside.
 - Position pretraining head: smtp_power, pt_problem_type, smtp_3d_power, smtp_3d_noise_scale, coord_lvl_mask, pt_num_bins, pt_num_bins_line, pt_num_bins_cube, apply_denoise, label_smoothing, pt_pos_agg_method, use_pos_proj, loss_agg, pt_pos_range, pt_smtp_2d_rate, smtp_2d_replace_rate, sep_2d3d_inputs, global_2d_mask, pt_use_discriminative.
-- Denoising regression head: noise_scale, denoise_wgt, denoise_schedule_pow, bi_causal, r_2d, r_3d, r_both, add_pos_type, inputs_transform, num_bins_line, num_bins_cube, dn_pos_range, dn_use_pos_proj, smtp_3d, smtp_wgt, smtp_3d_scheduler_power, smtp_denoise, smtp_vocab, dn_smtp_2d_rate, smtp_2d_scheduler_power.
+- Denoising regression head: noise_scale, denoise_wgt, denoise_schedule_pow, r_2d, r_3d, r_both, add_pos_type, inputs_transform, num_bins_line, num_bins_cube, dn_pos_range, dn_use_pos_proj, smtp_3d, smtp_wgt, smtp_3d_scheduler_power, smtp_denoise, smtp_vocab, dn_smtp_2d_rate, smtp_2d_scheduler_power.
 - Finetuning head: pooling_method, mlp, dropout, loss_type, num_neg, num_labels, problem_type.
 - **Packed attention parameters**: attn_implementation (sdpa|flex_attention), gradient_checkpointing, use_cache (automatically managed).
+- **Attention simplification**: causal_attention flag controls simplified attention processing mode.
 
-**Updated** Added packed attention configuration parameters for attention backend selection and memory optimization, including enhanced position_ids handling robustness.
+**Updated** Added packed attention configuration parameters for attention backend selection and memory optimization, including enhanced position_ids handling robustness and causal_attention flag for simplified attention processing.
 
 **Section sources**
 - [configuration_graphgpt.py:26-206](file://src/models/graphgpt/configuration_graphgpt.py#L26-L206)
 - [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
+- [model_configs.py:270-290](file://src/conf/model/model_configs.py#L270-L290)
 
 ### Input/Output Specifications
 - Inputs:
@@ -578,8 +607,9 @@ Graph-GPT's dual-head architecture and modular design enable seamless pre-traini
   - DoubleHeadsModelOutput with head1_loss/head1_logits and head2_loss/head2_logits for dual-head models.
   - Task-specific outputs for downstream classification/regression.
   - **Packed attention outputs**: Efficient processing of multiple graphs within single sequence with corrected batched sequence handling and robust position_ids handling.
+  - **Simplified attention outputs**: Streamlined processing with straightforward causal attention patterns.
 
-**Updated** Added packed attention input parameters for multi-graph sequence processing, corrected tensor dimension handling, and enhanced defensive programming logic for position_ids=None scenarios.
+**Updated** Added packed attention input parameters for multi-graph sequence processing, corrected tensor dimension handling, and enhanced defensive programming logic for position_ids=None scenarios. Attention system now supports simplified causal processing mode.
 
 **Section sources**
 - [modeling_common.py:54-100](file://src/models/graphgpt/modeling_common.py#L54-L100)

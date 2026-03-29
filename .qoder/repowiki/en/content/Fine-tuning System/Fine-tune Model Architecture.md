@@ -16,9 +16,11 @@
 ## Update Summary
 **Changes Made**
 - Updated GraphGPTTaskModel forward method documentation to include explicit caching disablement for flex_attention implementations
-- Added performance considerations section covering torch.compile compatibility with flex_attention
-- Updated troubleshooting guide to address flex_attention caching issues
-- Enhanced architectural diagrams to show caching behavior differences
+- Removed references to bi-causal attention mechanism and binary cross-entropy loss with weighted labels
+- Updated GraphGPTDenoisingRegressionDoubleHeadsModel to reflect causal attention-only implementation
+- Simplified model architecture documentation to reflect the removal of bidirectional processing capabilities
+- Updated loss function documentation to reflect L1 loss usage instead of binary cross-entropy
+- Enhanced architectural diagrams to show simplified attention mechanisms
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -33,12 +35,14 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document explains the fine-tune model architecture implemented in the GraphGPT codebase, focusing on the dual-head design for supervised tasks and denoising regression. It covers:
+This document explains the fine-tune model architecture implemented in the GraphGPT codebase, focusing on the dual-head design for supervised tasks and denoising regression. The architecture has been simplified to use causal attention only, eliminating bidirectional processing capabilities and associated binary cross-entropy loss with weighted labels in favor of L1 loss for regression tasks.
+
+Key components covered:
 - GraphGPTTaskModel: a task-specific head for classification/regression with automatic caching compatibility for flex_attention.
 - GraphGPTDoubleHeadsModel: adds a pre-training (language modeling) head alongside the task head.
-- GraphGPTDenoisingRegressionDoubleHeadsModel: adds a denoising head for 3D coordinates and optional auxiliary 3D-SMTP classification.
+- GraphGPTDenoisingRegressionDoubleHeadsModel: adds a denoising head for 3D coordinates and optional auxiliary 3D-SMTP classification using causal attention only.
 
-It documents initialization, parameter handling, adapter-like layer adaptations, and configuration parameters that govern the dual-head structure, denoising components, and positional encoding strategies. **Updated** to include explicit caching disablement for flex_attention implementations to prevent symbolic batch-dimension mismatches during torch.compile.
+The documentation covers initialization, parameter handling, adapter-like layer adaptations, and configuration parameters that govern the dual-head structure, denoising components, and positional encoding strategies.
 
 ## Project Structure
 The fine-tune models live under the GraphGPT module, with shared components for initialization, helpers, and utilities. Configuration is split into a legacy-style config class and a modern modular config.
@@ -72,49 +76,49 @@ H --> F
 ```
 
 **Diagram sources**
-- [modeling_finetune.py:1-948](file://src/models/graphgpt/modeling_finetune.py#L1-L948)
+- [modeling_finetune.py:1-887](file://src/models/graphgpt/modeling_finetune.py#L1-L887)
 - [modeling_pretrain.py:1-717](file://src/models/graphgpt/modeling_pretrain.py#L1-L717)
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
-- [modeling_helpers.py:1-1011](file://src/models/graphgpt/modeling_helpers.py#L1-L1011)
-- [utils_graphgpt.py:1-582](file://src/models/graphgpt/utils_graphgpt.py#L1-L582)
-- [configuration_graphgpt.py:1-346](file://src/models/graphgpt/configuration_graphgpt.py#L1-L346)
-- [model_configs.py:1-353](file://src/conf/model/model_configs.py#L1-L353)
-- [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
+- [modeling_helpers.py:1-1104](file://src/models/graphgpt/modeling_helpers.py#L1-L1104)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
+- [configuration_graphgpt.py:1-343](file://src/models/graphgpt/configuration_graphgpt.py#L1-L343)
+- [model_configs.py:1-354](file://src/conf/model/model_configs.py#L1-L354)
+- [base.yaml:1-220](file://configs/model/base.yaml#L1-L220)
 
 **Section sources**
-- [modeling_finetune.py:1-948](file://src/models/graphgpt/modeling_finetune.py#L1-L948)
+- [modeling_finetune.py:1-887](file://src/models/graphgpt/modeling_finetune.py#L1-L887)
 - [modeling_pretrain.py:1-717](file://src/models/graphgpt/modeling_pretrain.py#L1-L717)
-- [configuration_graphgpt.py:1-346](file://src/models/graphgpt/configuration_graphgpt.py#L1-L346)
+- [configuration_graphgpt.py:1-343](file://src/models/graphgpt/configuration_graphgpt.py#L1-L343)
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
-- [modeling_helpers.py:1-1011](file://src/models/graphgpt/modeling_helpers.py#L1-L1011)
-- [utils_graphgpt.py:1-582](file://src/models/graphgpt/utils_graphgpt.py#L1-L582)
-- [model_configs.py:1-353](file://src/conf/model/model_configs.py#L1-L353)
-- [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
+- [modeling_helpers.py:1-1104](file://src/models/graphgpt/modeling_helpers.py#L1-L1104)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
+- [model_configs.py:1-354](file://src/conf/model/model_configs.py#L1-L354)
+- [base.yaml:1-220](file://configs/model/base.yaml#L1-L220)
 
 ## Core Components
 - GraphGPTTaskModel: Implements a task head for classification or regression on top of a Llama backbone. Supports optional MLP head and pooling strategies. **Updated** with automatic caching compatibility for flex_attention during torch.compile.
 - GraphGPTDoubleHeadsModel: Extends the task model with a pre-training head (auxiliary LM head) for multi-task training.
-- GraphGPTDenoisingRegressionDoubleHeadsModel: Adds a denoising head for 3D coordinates and optional auxiliary 3D-SMTP classification. Includes positional tokenization strategies and scheduling.
+- GraphGPTDenoisingRegressionDoubleHeadsModel: Adds a denoising head for 3D coordinates and optional auxiliary 3D-SMTP classification. **Updated** to use causal attention only, eliminating bidirectional processing capabilities.
 
 Key initialization steps:
 - Backbone selection with dropout support.
 - Stacked feature aggregation for graph tokens.
 - Task head initialization (linear or MLP).
-- Denoising head initialization with attention-based force prediction.
+- Denoising head initialization with attention-based force prediction using causal attention.
 
 **Section sources**
-- [modeling_finetune.py:64-326](file://src/models/graphgpt/modeling_finetune.py#L64-L326)
-- [modeling_finetune.py:329-423](file://src/models/graphgpt/modeling_finetune.py#L329-L423)
-- [modeling_finetune.py:426-948](file://src/models/graphgpt/modeling_finetune.py#L426-L948)
+- [modeling_finetune.py:62-104](file://src/models/graphgpt/modeling_finetune.py#L62-L104)
+- [modeling_finetune.py:346-445](file://src/models/graphgpt/modeling_finetune.py#L346-L445)
+- [modeling_finetune.py:448-517](file://src/models/graphgpt/modeling_finetune.py#L448-L517)
 - [modeling_common.py:160-204](file://src/models/graphgpt/modeling_common.py#L160-L204)
 
 ## Architecture Overview
 The fine-tune architecture composes a shared Llama backbone with task-specific heads. The dual-head models share the same backbone while branching into:
-- Task head: sequence-level classification/regression.
+- Task head: sequence-level classification/regression using L1 loss.
 - Optional pre-training head: language modeling.
-- Optional denoising head: 3D coordinate prediction with attention-weighted aggregation.
+- Optional denoising head: 3D coordinate prediction with attention-weighted aggregation using causal attention only.
 
-**Updated** to include automatic caching compatibility for flex_attention implementations during torch.compile.
+**Updated** to reflect the simplified architecture with causal attention only and L1 loss for regression tasks.
 
 ```mermaid
 classDiagram
@@ -138,6 +142,8 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel {
 +embed_pos_type
 +smtp_3d
 +forward(...)
+++Causal attention only
+++L1 loss for regression
 ++Automatic caching compatibility for flex_attention
 }
 class StackedFeatAggregation {
@@ -145,6 +151,7 @@ class StackedFeatAggregation {
 }
 class AtomTaskHead {
 +forward(hidden_states, delta_pos)
+++Causal attention only
 }
 GraphGPTDoubleHeadsModel --|> GraphGPTTaskModel
 GraphGPTDenoisingRegressionDoubleHeadsModel --|> GraphGPTTaskModel
@@ -153,9 +160,9 @@ GraphGPTDenoisingRegressionDoubleHeadsModel --> AtomTaskHead : "uses"
 ```
 
 **Diagram sources**
-- [modeling_finetune.py:64-948](file://src/models/graphgpt/modeling_finetune.py#L64-L948)
+- [modeling_finetune.py:62-887](file://src/models/graphgpt/modeling_finetune.py#L62-L887)
 - [modeling_common.py:105-143](file://src/models/graphgpt/modeling_common.py#L105-L143)
-- [utils_graphgpt.py:271-338](file://src/models/graphgpt/utils_graphgpt.py#L271-L338)
+- [utils_graphgpt.py:369-435](file://src/models/graphgpt/utils_graphgpt.py#L369-L435)
 
 ## Detailed Component Analysis
 
@@ -172,7 +179,7 @@ GraphGPTDenoisingRegressionDoubleHeadsModel --> AtomTaskHead : "uses"
   - Run backbone to obtain hidden states.
   - **Automatic caching compatibility**: When attention implementation is set to 'flex_attention', caching is automatically disabled to prevent symbolic batch-dimension mismatches during torch.compile.
   - Compute task logits and pooled logits for evaluation.
-  - Compute task loss based on problem type and loss type.
+  - Compute task loss based on problem type and loss type using L1 loss for regression.
 
 ```mermaid
 sequenceDiagram
@@ -192,13 +199,13 @@ M-->>M : DoubleHeadsModelOutput(task_loss, task_logits)
 ```
 
 **Diagram sources**
-- [modeling_finetune.py:236-326](file://src/models/graphgpt/modeling_finetune.py#L236-L326)
-- [modeling_helpers.py:89-114](file://src/models/graphgpt/modeling_helpers.py#L89-L114)
+- [modeling_finetune.py:235-343](file://src/models/graphgpt/modeling_finetune.py#L235-L343)
+- [modeling_helpers.py:117-130](file://src/models/graphgpt/modeling_helpers.py#L117-L130)
 - [modeling_common.py:160-169](file://src/models/graphgpt/modeling_common.py#L160-L169)
 
 **Section sources**
-- [modeling_finetune.py:64-106](file://src/models/graphgpt/modeling_finetune.py#L64-L106)
-- [modeling_finetune.py:236-326](file://src/models/graphgpt/modeling_finetune.py#L236-L326)
+- [modeling_finetune.py:62-104](file://src/models/graphgpt/modeling_finetune.py#L62-L104)
+- [modeling_finetune.py:235-343](file://src/models/graphgpt/modeling_finetune.py#L235-L343)
 - [modeling_common.py:160-169](file://src/models/graphgpt/modeling_common.py#L160-L169)
 
 ### GraphGPTDoubleHeadsModel
@@ -225,30 +232,29 @@ M-->>M : DoubleHeadsModelOutput(pretrain_loss, task_loss, pretrain_logits, task_
 ```
 
 **Diagram sources**
-- [modeling_finetune.py:329-423](file://src/models/graphgpt/modeling_finetune.py#L329-L423)
+- [modeling_finetune.py:346-445](file://src/models/graphgpt/modeling_finetune.py#L346-L445)
 
 **Section sources**
-- [modeling_finetune.py:329-423](file://src/models/graphgpt/modeling_finetune.py#L329-L423)
+- [modeling_finetune.py:346-445](file://src/models/graphgpt/modeling_finetune.py#L346-L445)
 
 ### GraphGPTDenoisingRegressionDoubleHeadsModel
 - Purpose: Adds a denoising head for 3D coordinates and optional auxiliary 3D-SMTP classification.
-- Denoising head:
-  - AtomTaskHead: attention-based force prediction using pairwise delta_pos.
-  - Loss: cosine distance between predicted and noisy displacements.
+- **Updated** Architecture simplification:
+  - Uses causal attention only, eliminating bidirectional processing capabilities.
+  - Denoising head: AtomTaskHead with causal attention-based force prediction using pairwise delta_pos.
+  - Loss: L1 loss for regression tasks instead of binary cross-entropy with weighted labels.
 - Positional tokenization:
   - Line token, cube token, or mixed tokenization for 3D positions.
   - Optional positional type embedding and raw position projection.
 - Scheduling and ratios:
   - Mask ratios derived from r_2d, r_3d, r_both.
   - Optional polynomial schedule for 3D-SMTP masking.
-- Bi-causal option:
-  - Alternative regression target for molecular energy using binary labels.
 - **Updated** Forward flow with automatic caching compatibility:
   - Process 3D positions and noise masks.
   - Transform 3D positions to tokens (line/cube/mix).
   - **Automatic caching compatibility**: When attention implementation is set to 'flex_attention', caching is automatically disabled to prevent symbolic batch-dimension mismatches during torch.compile.
-  - Compute denoise loss via AtomTaskHead.
-  - Compute task loss and optional SMTP auxiliary loss.
+  - Compute denoise loss via AtomTaskHead with causal attention.
+  - Compute task loss using L1 loss and optional SMTP auxiliary loss.
 
 ```mermaid
 flowchart TD
@@ -260,8 +266,8 @@ CheckCache --> FlexCheck{"Is flex_attention?"}
 FlexCheck --> |Yes| DisableCache["Disable caching<br/>for torch.compile compatibility"]
 FlexCheck --> |No| RunBackbone["Run backbone"]
 DisableCache --> RunBackbone
-RunBackbone --> Denoise["Compute denoise loss<br/>via AtomTaskHead"]
-RunBackbone --> Task["Compute task loss<br/>(classification/regression)"]
+RunBackbone --> Denoise["Compute denoise loss<br/>via AtomTaskHead (causal)"]
+RunBackbone --> Task["Compute task loss<br/>L1 loss for regression"]
 RunBackbone --> SMTP["Optional 3D-SMTP aux loss"]
 Denoise --> Merge["Merge losses"]
 Task --> Merge
@@ -270,15 +276,15 @@ Merge --> End(["Return DoubleHeadsModelOutput"])
 ```
 
 **Diagram sources**
-- [modeling_finetune.py:678-948](file://src/models/graphgpt/modeling_finetune.py#L678-L948)
-- [utils_graphgpt.py:271-338](file://src/models/graphgpt/utils_graphgpt.py#L271-L338)
-- [modeling_helpers.py:526-636](file://src/models/graphgpt/modeling_helpers.py#L526-L636)
+- [modeling_finetune.py:679-887](file://src/models/graphgpt/modeling_finetune.py#L679-L887)
+- [utils_graphgpt.py:369-435](file://src/models/graphgpt/utils_graphgpt.py#L369-L435)
+- [modeling_helpers.py:574-636](file://src/models/graphgpt/modeling_helpers.py#L574-L636)
 
 **Section sources**
-- [modeling_finetune.py:426-520](file://src/models/graphgpt/modeling_finetune.py#L426-L520)
-- [modeling_finetune.py:678-948](file://src/models/graphgpt/modeling_finetune.py#L678-L948)
-- [utils_graphgpt.py:271-338](file://src/models/graphgpt/utils_graphgpt.py#L271-L338)
-- [modeling_helpers.py:526-636](file://src/models/graphgpt/modeling_helpers.py#L526-L636)
+- [modeling_finetune.py:448-517](file://src/models/graphgpt/modeling_finetune.py#L448-L517)
+- [modeling_finetune.py:679-887](file://src/models/graphgpt/modeling_finetune.py#L679-L887)
+- [utils_graphgpt.py:369-435](file://src/models/graphgpt/utils_graphgpt.py#L369-L435)
+- [modeling_helpers.py:574-636](file://src/models/graphgpt/modeling_helpers.py#L574-L636)
 
 ## Dependency Analysis
 - Model initialization depends on:
@@ -305,55 +311,57 @@ MPRE --> OUT2["PretrainModelOutput"]
 ```
 
 **Diagram sources**
-- [configuration_graphgpt.py:1-346](file://src/models/graphgpt/configuration_graphgpt.py#L1-L346)
-- [modeling_finetune.py:1-948](file://src/models/graphgpt/modeling_finetune.py#L1-L948)
+- [configuration_graphgpt.py:1-343](file://src/models/graphgpt/configuration_graphgpt.py#L1-L343)
+- [modeling_finetune.py:1-887](file://src/models/graphgpt/modeling_finetune.py#L1-L887)
 - [modeling_pretrain.py:1-717](file://src/models/graphgpt/modeling_pretrain.py#L1-L717)
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
-- [modeling_helpers.py:1-1011](file://src/models/graphgpt/modeling_helpers.py#L1-L1011)
-- [utils_graphgpt.py:1-582](file://src/models/graphgpt/utils_graphgpt.py#L1-L582)
+- [modeling_helpers.py:1-1104](file://src/models/graphgpt/modeling_helpers.py#L1-L1104)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
 
 **Section sources**
-- [modeling_finetune.py:1-948](file://src/models/graphgpt/modeling_finetune.py#L1-L948)
+- [modeling_finetune.py:1-887](file://src/models/graphgpt/modeling_finetune.py#L1-L887)
 - [modeling_pretrain.py:1-717](file://src/models/graphgpt/modeling_pretrain.py#L1-L717)
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
-- [modeling_helpers.py:1-1011](file://src/models/graphgpt/modeling_helpers.py#L1-L1011)
-- [utils_graphgpt.py:1-582](file://src/models/graphgpt/utils_graphgpt.py#L1-L582)
+- [modeling_helpers.py:1-1104](file://src/models/graphgpt/modeling_helpers.py#L1-L1104)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
 
 ## Performance Considerations
 - **Updated** Torch.compile compatibility: The models now automatically disable caching when using flex_attention implementations to prevent symbolic batch-dimension mismatches during torch.compile. This ensures stable compilation and inference with dynamic attention patterns.
+- **Updated** Simplified attention mechanisms: The removal of bi-causal attention reduces computational complexity and memory usage while maintaining performance.
 - Dropout-enabled backbone: The LlamaModel is replaced with a dropout-aware variant when any of the dropout settings are active, enabling stochastic depth and regularization.
 - Attention scheduling: 3D-SMTP masking can be scheduled with a polynomial power to reduce computational cost during early epochs.
 - Position tokenization trade-offs: Line tokenization aggregates per-coordinate embeddings; cube tokenization uses a 3D histogram; mixed tokenization combines both. Choose based on memory and accuracy needs.
 - Auxiliary losses: SMTP auxiliary loss adds compute; tune smtp_wgt and scheduler power to balance training stability.
 
 **Section sources**
-- [modeling_finetune.py:275-279](file://src/models/graphgpt/modeling_finetune.py#L275-L279)
-- [modeling_finetune.py:852-856](file://src/models/graphgpt/modeling_finetune.py#L852-L856)
+- [modeling_finetune.py:265-282](file://src/models/graphgpt/modeling_finetune.py#L265-L282)
+- [modeling_finetune.py:840-845](file://src/models/graphgpt/modeling_finetune.py#L840-L845)
 - [modeling_pretrain.py:205-209](file://src/models/graphgpt/modeling_pretrain.py#L205-L209)
 
 ## Troubleshooting Guide
 - **Updated** Flex_attention caching issues: When using flex_attention with torch.compile, caching is automatically disabled to prevent symbolic batch-dimension mismatches. This prevents flex_decoding assertion failures where Bq == Bkv conditions fail.
+- **Updated** Attention mechanism changes: The switch to causal attention only eliminates bidirectional processing. Ensure attention_mask shapes are handled by helper functions designed for causal attention.
 - Pooling assertion failures: The task model asserts pooling_method equals "last"; ensure configuration aligns with this requirement.
-- Attention mask issues: Non-causal attention requires proper mask expansion; ensure attention_mask shapes are handled by helper functions.
 - Position tokenization mismatches: Verify num_bins_line/num_bins_cube and pos_agg_method match the chosen inputs_transform.
 - Denoising loss NaNs: Ensure noise_mask and noise are correctly computed and that tgt_count avoids division by zero.
+- **Updated** Loss function changes: For regression tasks, L1 loss is now used instead of MSE or binary cross-entropy with weighted labels. This provides better robustness to outliers.
 
 **Section sources**
-- [modeling_finetune.py:275-279](file://src/models/graphgpt/modeling_finetune.py#L275-L279)
-- [modeling_finetune.py:852-856](file://src/models/graphgpt/modeling_finetune.py#L852-L856)
+- [modeling_finetune.py:265-282](file://src/models/graphgpt/modeling_finetune.py#L265-L282)
+- [modeling_finetune.py:840-845](file://src/models/graphgpt/modeling_finetune.py#L840-L845)
 - [modeling_pretrain.py:205-209](file://src/models/graphgpt/modeling_pretrain.py#L205-L209)
 - [modeling_finetune.py:288-289](file://src/models/graphgpt/modeling_finetune.py#L288-L289)
 - [modeling_helpers.py:38-64](file://src/models/graphgpt/modeling_helpers.py#L38-L64)
-- [modeling_helpers.py:526-636](file://src/models/graphgpt/modeling_helpers.py#L526-L636)
-- [utils_graphgpt.py:249-268](file://src/models/graphgpt/utils_graphgpt.py#L249-L268)
+- [modeling_helpers.py:574-636](file://src/models/graphgpt/modeling_helpers.py#L574-L636)
+- [utils_graphgpt.py:347-366](file://src/models/graphgpt/utils_graphgpt.py#L347-L366)
 
 ## Conclusion
-The GraphGPT fine-tune models provide a flexible dual-head framework with enhanced compatibility:
+The GraphGPT fine-tune models provide a simplified yet robust dual-head framework with enhanced compatibility:
 - GraphGPTTaskModel offers a robust task head for classification/regression with automatic caching compatibility for flex_attention during torch.compile.
 - GraphGPTDoubleHeadsModel enables multi-task training with a pre-training head.
-- GraphGPTDenoisingRegressionDoubleHeadsModel integrates 3D denoising and optional auxiliary 3D-SMTP classification with configurable positional tokenization and scheduling.
+- GraphGPTDenoisingRegressionDoubleHeadsModel integrates 3D denoising and optional auxiliary 3D-SMTP classification using causal attention only, with L1 loss for regression tasks.
 
-Initialization, configuration, and helper utilities ensure consistent behavior across tasks and efficient training with modern attention implementations.
+The simplified architecture maintains performance while reducing complexity and computational overhead through the elimination of bi-causal attention mechanisms and associated binary cross-entropy losses with weighted labels.
 
 ## Appendices
 
@@ -362,12 +370,13 @@ Initialization, configuration, and helper utilities ensure consistent behavior a
 - GraphGPT-specific:
   - Stacked feature aggregation: stacked_feat, stacked_feat_agg_method, embed_dim.
   - Pooling and task head: pooling_method, mlp, dropout, loss_type, num_labels.
-  - Denoising head: noise_scale, denoise_wgt, denoise_schedule_pow, bi_causal, r_2d, r_3d, r_both, add_pos_type, inputs_transform, num_bins_line, num_bins_cube, dn_pos_range, dn_use_pos_proj, smtp_3d, smtp_wgt, smtp_3d_scheduler_power, smtp_denoise, smtp_vocab, dn_smtp_2d_rate, smtp_2d_scheduler_power.
+  - Denoising head: noise_scale, denoise_wgt, denoise_schedule_pow, r_2d, r_3d, r_both, add_pos_type, inputs_transform, num_bins_line, num_bins_cube, dn_pos_range, dn_use_pos_proj, smtp_3d, smtp_wgt, smtp_3d_scheduler_power, smtp_denoise, smtp_vocab, dn_smtp_2d_rate, smtp_2d_scheduler_power.
+  - **Updated** Attention configuration: causal_attention (now defaults to True for simplified architecture).
 
 **Section sources**
-- [configuration_graphgpt.py:26-200](file://src/models/graphgpt/configuration_graphgpt.py#L26-L200)
-- [model_configs.py:174-236](file://src/conf/model/model_configs.py#L174-L236)
-- [base.yaml:128-168](file://configs/model/base.yaml#L128-L168)
+- [configuration_graphgpt.py:26-179](file://src/models/graphgpt/configuration_graphgpt.py#L26-L179)
+- [model_configs.py:174-354](file://src/conf/model/model_configs.py#L174-L354)
+- [base.yaml:128-220](file://configs/model/base.yaml#L128-L220)
 
 ### Embedding Dimensions and Output Heads
 - Embedding dropout and raw embedding projection:
@@ -375,15 +384,15 @@ Initialization, configuration, and helper utilities ensure consistent behavior a
 - Task head:
   - Linear or MLP head projecting to num_labels.
 - Denoising head:
-  - AtomTaskHead predicts per-node forces using attention-weighted delta_pos.
+  - AtomTaskHead predicts per-node forces using attention-weighted delta_pos with causal attention.
 - Optional auxiliary heads:
   - Pre-training LM head (lm_head).
   - SMTP classification head (smtp_head) when smtp_3d is enabled.
 
 **Section sources**
-- [modeling_finetune.py:76-99](file://src/models/graphgpt/modeling_finetune.py#L76-L99)
-- [modeling_finetune.py:437-519](file://src/models/graphgpt/modeling_finetune.py#L437-L519)
-- [utils_graphgpt.py:271-338](file://src/models/graphgpt/utils_graphgpt.py#L271-L338)
+- [modeling_finetune.py:74-104](file://src/models/graphgpt/modeling_finetune.py#L74-L104)
+- [modeling_finetune.py:456-517](file://src/models/graphgpt/modeling_finetune.py#L456-L517)
+- [utils_graphgpt.py:369-435](file://src/models/graphgpt/utils_graphgpt.py#L369-L435)
 
 ### Layer Adaptation Strategies
 - Dropout-enabled LlamaModel: Uses LlamaDecoderLayer with path dropout and layer-scale initialization when dropout settings are active.
@@ -401,5 +410,5 @@ Initialization, configuration, and helper utilities ensure consistent behavior a
 
 **Section sources**
 - [train_supervised.py:12-19](file://examples/train_supervised.py#L12-L19)
-- [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
-- [model_configs.py:246-353](file://src/conf/model/model_configs.py#L246-L353)
+- [base.yaml:1-220](file://configs/model/base.yaml#L1-L220)
+- [model_configs.py:246-354](file://src/conf/model/model_configs.py#L246-L354)

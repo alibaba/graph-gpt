@@ -14,6 +14,13 @@
 - [base.yaml](file://configs/training/base.yaml)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated regression loss computation methodology section to reflect simplified approach
+- Revised fine-tuning task losses documentation to emphasize standard L1/MSE usage
+- Updated practical guidance section with new loss selection recommendations
+- Enhanced troubleshooting guide with simplified loss computation considerations
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -33,6 +40,8 @@ This document explains the loss computation and metrics utilities used by Graph-
 - Specialized metrics for graph tasks
 - Regularization and optimization strategies
 - Practical guidance for selecting losses, interpreting metrics, and monitoring training dynamics
+
+**Updated** The loss computation methodology has been simplified to use standard L1 loss for regression tasks instead of specialized binary cross-entropy approaches with weighted labels for bi-causal processing.
 
 ## Project Structure
 The loss and metrics ecosystem spans several modules:
@@ -255,10 +264,12 @@ Mean --> AEnd(["Return loss"])
 - [loss_utils.py:25-53](file://src/utils/loss_utils.py#L25-L53)
 
 ### Fine-Tuning Task Losses
-- Regression: L1 or MSELoss on pooled representations
+- **Updated** Regression: Now uses standard L1 or MSELoss on pooled representations with simplified computation
 - Single-label classification: CE or weighted CE; optionally AUC loss
 - Multi-label classification: BCEWithLogitsLoss with optional positive weights
 - Token-level tasks: intra-instance contrastive logits with temperature scaling
+
+**Updated** The regression loss computation has been simplified to use standard L1Loss or MSELoss directly on pooled representations, removing the need for specialized bi-causal processing with weighted labels.
 
 ```mermaid
 classDiagram
@@ -285,7 +296,7 @@ GraphGPTDenoisingRegressionDoubleHeadsModel --> GraphGPTTaskModel : "inherits"
 ### Metrics Utilities
 - Single-label classification: AUROC and Accuracy (binary or multiclass)
 - Multi-label classification: per-task AUROC vector and mean AUROC
-- Regression: MSE and MAE
+- **Updated** Regression: MSE and MAE with simplified computation
 - Graph clustering: Accuracy, per-graph precision/recall, and derived F1-like EMA F1
 
 ```mermaid
@@ -423,8 +434,10 @@ CFGT --> FM
 - Learning-rate scheduling:
   - Layer-wise LR groups reduce overfitting and stabilize training
   - Scheduler registration enables flexible LR schedules
-
-[No sources needed since this section provides general guidance]
+- **Updated** Simplified regression loss:
+  - Standard L1Loss provides robust performance with less computational overhead
+  - MSELoss offers quadratic penalty for outliers when needed
+  - Both work efficiently with pooled representations
 
 ## Troubleshooting Guide
 Common issues and remedies:
@@ -442,6 +455,10 @@ Common issues and remedies:
 - Contrastive loss saturation:
   - Adjust temperature and ensure proper normalization
   - Verify distributed gathering is enabled when world_size > 1
+- **Updated** Regression loss issues:
+  - For L1 loss, check for outliers that might skew predictions
+  - For MSE loss, verify that target scales are reasonable
+  - Ensure pooled_logits and labels have compatible shapes for regression tasks
 
 **Section sources**
 - [modeling_helpers.py:164-177](file://src/models/graphgpt/modeling_helpers.py#L164-L177)
@@ -451,9 +468,7 @@ Common issues and remedies:
 - [loss_utils.py:107-167](file://src/utils/loss_utils.py#L107-L167)
 
 ## Conclusion
-Graph-GPT’s loss and metrics toolkit combines robust CE variants, focal loss, contrastive learning, and AUC-based objectives with comprehensive evaluation metrics. Proper configuration of numerical stability, mixed precision, and scheduling yields reliable training dynamics across pre-training and fine-tuning scenarios.
-
-[No sources needed since this section summarizes without analyzing specific files]
+Graph-GPT's loss and metrics toolkit combines robust CE variants, focal loss, contrastive learning, and AUC-based objectives with comprehensive evaluation metrics. The recent simplification of regression loss computation to standard L1/MSE approaches maintains reliability while reducing complexity. Proper configuration of numerical stability, mixed precision, and scheduling yields reliable training dynamics across pre-training and fine-tuning scenarios.
 
 ## Appendices
 
@@ -464,12 +479,12 @@ Graph-GPT’s loss and metrics toolkit combines robust CE variants, focal loss, 
 - Pre-training (discriminative):
   - Use contrastive loss to learn invariant representations
 - Fine-tuning:
-  - Regression: L1 or MSE depending on outlier sensitivity
+  - **Updated** Regression: Use L1 loss for robust performance or MSE for sensitive outlier detection
   - Single-label classification: CE or AUC loss for imbalanced data
   - Multi-label classification: BCEWithLogitsLoss with positive weights
 - Metrics interpretation:
   - AUROC and Accuracy for binary/multiclass classification
-  - MSE/MAE for regression
+  - **Updated** MSE/MAE for regression with simplified computation
   - Precision/Recall and EMA F1 for clustering tasks
 
 **Section sources**

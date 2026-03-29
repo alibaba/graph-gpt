@@ -16,7 +16,16 @@
 - [metrics_utils.py](file://src/utils/metrics_utils.py)
 - [ogbg_molhiv.yaml](file://configs/tokenization/graph_lvl/ogbg_molhiv.yaml)
 - [ogbl_ppa.yaml](file://configs/tokenization/edge_lvl/ogbl_ppa.yaml)
+- [pipeline.py](file://src/training/pipeline.py)
+- [base_configs.py](file://src/conf/base_configs.py)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added documentation for torch.compile compatibility improvements
+- Updated performance considerations section with numerical stability enhancements
+- Enhanced troubleshooting guide with torch.compile specific guidance
+- Added new section on torch.compile configuration and best practices
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -33,6 +42,8 @@
 ## Introduction
 This document explains the GraphGPT fine-tuning model implementations with a focus on task-specific heads and downstream adaptation. It covers the GraphGPTTaskModel architecture, auxiliary head integration, and multi-level task support across graph, edge, and node scopes. It documents the supervised fine-tuning pipeline, including classification and regression heads, auxiliary task combinations, configuration parameters, pooling methods, and output transformations. It also clarifies the relationship between pre-trained weights and task-specific adaptations, along with best practices for learning rate scheduling and evaluation metrics.
 
+**Updated** Enhanced with recent improvements in torch.compile compatibility and numerical stability during training with dynamic shapes.
+
 ## Project Structure
 The fine-tuning implementation centers around three primary areas:
 - Model definitions and heads: GraphGPTTaskModel, GraphGPTDoubleHeadsModel, and GraphGPTDenoisingRegressionDoubleHeadsModel
@@ -46,11 +57,13 @@ CFG["configs/config.yaml"]
 MB["configs/model/base.yaml"]
 T1["configs/tokenization/graph_lvl/ogbg_molhiv.yaml"]
 T2["configs/tokenization/edge_lvl/ogbl_ppa.yaml"]
+TC["src/conf/base_configs.py"]
 end
 subgraph "Training"
 FM["src/training/finetune_mode.py"]
 TU["src/utils/training_utils.py"]
 TS["examples/train_supervised.py"]
+PIPE["src/training/pipeline.py"]
 end
 subgraph "Models"
 MF["src/models/graphgpt/modeling_finetune.py"]
@@ -68,6 +81,7 @@ CFG --> T1
 CFG --> T2
 MB --> CG
 MCfg --> CG
+TC --> PIPE
 TS --> FM
 FM --> MF
 FM --> TU
@@ -76,6 +90,7 @@ MF --> MU
 MF --> CG
 FM --> MMU
 FM --> MET
+PIPE --> MF
 ```
 
 **Diagram sources**
@@ -83,6 +98,7 @@ FM --> MET
 - [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
 - [ogbg_molhiv.yaml:1-116](file://configs/tokenization/graph_lvl/ogbg_molhiv.yaml#L1-L116)
 - [ogbl_ppa.yaml:1-123](file://configs/tokenization/edge_lvl/ogbl_ppa.yaml#L1-L123)
+- [base_configs.py:165-186](file://src/conf/base_configs.py#L165-L186)
 - [finetune_mode.py:1-459](file://src/training/finetune_mode.py#L1-L459)
 - [training_utils.py:1-200](file://src/utils/training_utils.py#L1-L200)
 - [train_supervised.py:1-19](file://examples/train_supervised.py#L1-L19)
@@ -93,12 +109,14 @@ FM --> MET
 - [model_configs.py:1-353](file://src/conf/model/model_configs.py#L1-L353)
 - [modules_utils.py:1-93](file://src/utils/modules_utils.py#L1-L93)
 - [metrics_utils.py:1-349](file://src/utils/metrics_utils.py#L1-L349)
+- [pipeline.py:167-228](file://src/training/pipeline.py#L167-L228)
 
 **Section sources**
 - [config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
 - [finetune_mode.py:1-459](file://src/training/finetune_mode.py#L1-L459)
 - [modeling_finetune.py:1-904](file://src/models/graphgpt/modeling_finetune.py#L1-L904)
+- [pipeline.py:167-228](file://src/training/pipeline.py#L167-L228)
 
 ## Core Components
 - GraphGPTTaskModel: A sequence classification/regression head built atop a Llama backbone. Supports configurable pooling, MLP heads, and multiple loss strategies.
@@ -111,6 +129,7 @@ Key capabilities:
 - Losses: MSE/L1, CE, BCEWithLogits, AUC loss, token-level CE variants
 - Pooling: last, sum, mean (last is enforced for task heads)
 - Auxiliary heads: pre-training (optional), denoising regression, 3D-SMTP
+- **Enhanced**: Automatic tensor cloning for torch.compile compatibility to prevent CUDAGraph tensor overwrites
 
 **Section sources**
 - [modeling_finetune.py:64-327](file://src/models/graphgpt/modeling_finetune.py#L64-L327)
@@ -155,6 +174,7 @@ Trainer->>Trainer : backward + optimizer step
 - Pooling: enforced to "last" for sequence-level pooling
 - Loss computation: automatic problem_type detection and appropriate loss selection
 - Token-level special tasks: optional token CE variants with intra-class logits
+- **Enhanced**: Automatic tensor cloning in loss calculation to prevent CUDAGraph tensor overwrites during torch.compile execution
 
 ```mermaid
 classDiagram
@@ -242,6 +262,7 @@ Losses --> End(["Return outputs"])
 - Finetuning head: pooling_method, mlp, dropout, loss_type, num_labels, problem_type
 - Position pretraining/denoising: smtp_* parameters, denoise_* parameters, inputs_transform, pos_bins
 - Tokenizer integration: vocab_size, bos/eos/pad/cls token ids
+- **Enhanced**: torch.compile configuration with automatic tensor cloning for numerical stability
 
 ```mermaid
 graph LR
@@ -249,6 +270,7 @@ MB["configs/model/base.yaml"] --> CG["configuration_graphgpt.py"]
 MCfg["conf/model/model_configs.py"] --> CG
 CG --> MF["modeling_finetune.py"]
 CG --> MU["utils_graphgpt.py"]
+TC["base_configs.py"] --> PIPE["pipeline.py"]
 ```
 
 **Diagram sources**
@@ -257,16 +279,19 @@ CG --> MU["utils_graphgpt.py"]
 - [configuration_graphgpt.py:1-346](file://src/models/graphgpt/configuration_graphgpt.py#L1-L346)
 - [modeling_finetune.py:1-904](file://src/models/graphgpt/modeling_finetune.py#L1-L904)
 - [utils_graphgpt.py:1-582](file://src/models/graphgpt/utils_graphgpt.py#L1-L582)
+- [base_configs.py:165-186](file://src/conf/base_configs.py#L165-L186)
+- [pipeline.py:167-228](file://src/training/pipeline.py#L167-L228)
 
 **Section sources**
 - [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
 - [model_configs.py:78-109](file://src/conf/model/model_configs.py#L78-L109)
 - [configuration_graphgpt.py:26-206](file://src/models/graphgpt/configuration_graphgpt.py#L26-L206)
+- [base_configs.py:165-186](file://src/conf/base_configs.py#L165-L186)
 
 ### Multi-level Task Support (Graph, Edge, Node)
 - Tokenization configs define task scope and label fields per level (graph, edge, node)
 - FinetuneMode selects task-specific labels (e.g., graph_labels, edge_labels, node_labels) and passes them to the model
-- The model’s forward expects task_labels and optional cls_idx for token-level CE variants
+- The model's forward expects task_labels and optional cls_idx for token-level CE variants
 
 ```mermaid
 sequenceDiagram
@@ -293,7 +318,7 @@ Model-->>FT : task_loss, task_logits
 ### Fine-tuning Pipeline, Loss Computation, and Evaluation
 - Pipeline: FinetuneMode prepares data loaders, builds tokenizer, sets model config, initializes optimizer/scheduler, and runs training loops
 - Batch training: training_utils.ft_batch_training handles AMP, gradient clipping, optimizer step, and multi-task loss combination
-- Loss computation: GraphGPTTaskModel.calculate_task_loss selects appropriate loss based on problem_type and loss_type
+- Loss computation: GraphGPTTaskModel.calculate_task_loss selects appropriate loss based on problem_type and includes automatic tensor cloning for torch.compile compatibility
 - Evaluation: metrics_utils provides AUROC, accuracy, MSE, MAE depending on problem_type
 
 ```mermaid
@@ -317,10 +342,40 @@ G --> H["Save checkpoints / logs"]
 - [training_utils.py:98-200](file://src/utils/training_utils.py#L98-L200)
 - [metrics_utils.py:16-200](file://src/utils/metrics_utils.py#L16-L200)
 
+### torch.compile Compatibility and Numerical Stability
+**New Section** The fine-tuning models now include enhanced compatibility with torch.compile for improved performance and numerical stability.
+
+- **Automatic Tensor Cloning**: The `calculate_task_loss` method automatically clones task_loss tensors to prevent CUDAGraph tensor overwrites during graph execution
+- **Dynamic Shape Support**: Enhanced support for dynamic shapes in sequence packing scenarios
+- **Inductor Configuration**: Automatic configuration of PyTorch Inductor settings for optimal compilation behavior
+- **DeepSpeed Compatibility**: Built-in compatibility checks and graceful fallback when DeepSpeed is enabled
+
+```mermaid
+flowchart TD
+A["torch.compile Enabled"] --> B{"DeepSpeed Active?"}
+B --> |Yes| C["Disable torch.compile"]
+B --> |No| D["Configure Inductor Settings"]
+D --> E["Apply CUDAGraph Skip for Dynamic Shapes"]
+E --> F["Enable TensorFloat32"]
+F --> G["Compile Model with Config"]
+G --> H["First Forward Pass Triggers Compilation"]
+H --> I["Automatic Tensor Cloning in Loss Calculation"]
+I --> J["Numerically Stable Training"]
+```
+
+**Diagram sources**
+- [pipeline.py:170-228](file://src/training/pipeline.py#L170-L228)
+- [modeling_finetune.py:232-237](file://src/models/graphgpt/modeling_finetune.py#L232-L237)
+
+**Section sources**
+- [pipeline.py:170-228](file://src/training/pipeline.py#L170-L228)
+- [modeling_finetune.py:232-237](file://src/models/graphgpt/modeling_finetune.py#L232-L237)
+
 ## Dependency Analysis
 - Model dependencies: GraphGPTTaskModel depends on modeling_common (StackedFeatAggregation, DoubleHeadsModelOutput) and utils_graphgpt (dropout-enabled Llama layers)
 - Training dependencies: FinetuneMode orchestrates data preparation, model creation, optimizer initialization, and training loop
 - Configuration dependencies: Structured model_configs.py feeds into configuration_graphgpt.py, which is consumed by modeling_finetune.py
+- **Enhanced**: torch.compile configuration integrated into pipeline for automatic optimization
 
 ```mermaid
 graph TB
@@ -331,6 +386,8 @@ MCfg["model_configs.py"] --> CG
 FM["finetune_mode.py"] --> MF
 FM --> TU["training_utils.py"]
 FM --> MET["metrics_utils.py"]
+PIPE["pipeline.py"] --> MF
+PIPE --> TC["base_configs.py"]
 ```
 
 **Diagram sources**
@@ -342,10 +399,13 @@ FM --> MET["metrics_utils.py"]
 - [finetune_mode.py:1-459](file://src/training/finetune_mode.py#L1-L459)
 - [training_utils.py:1-200](file://src/utils/training_utils.py#L1-L200)
 - [metrics_utils.py:1-349](file://src/utils/metrics_utils.py#L1-L349)
+- [pipeline.py:167-228](file://src/training/pipeline.py#L167-L228)
+- [base_configs.py:165-186](file://src/conf/base_configs.py#L165-L186)
 
 **Section sources**
 - [modeling_finetune.py:1-904](file://src/models/graphgpt/modeling_finetune.py#L1-L904)
 - [finetune_mode.py:1-459](file://src/training/finetune_mode.py#L1-L459)
+- [pipeline.py:167-228](file://src/training/pipeline.py#L167-L228)
 
 ## Performance Considerations
 - Use autocast with AMP for reduced memory and improved throughput during training
@@ -353,8 +413,9 @@ FM --> MET["metrics_utils.py"]
 - Layer freezing to reduce trainable parameters and accelerate fine-tuning
 - Efficient pooling (last) and optional MLP heads to balance capacity and speed
 - Optional dropout and path-drop in the backbone for regularization
-
-[No sources needed since this section provides general guidance]
+- **Enhanced**: Automatic tensor cloning prevents numerical instability during torch.compile execution
+- **Enhanced**: Dynamic shape support reduces kernel fragmentation and improves compilation efficiency
+- **Enhanced**: Automatic inductor configuration optimizes compilation for different training modes
 
 ## Troubleshooting Guide
 Common issues and remedies:
@@ -362,16 +423,18 @@ Common issues and remedies:
 - Attention mask issues: when causal_attention is disabled, attention_mask is updated accordingly; verify masks align with input_ids lengths
 - Loss computation errors: confirm problem_type and loss_type are compatible; for multi-label classification, ensure labels are properly shaped for BCEWithLogitsLoss
 - Evaluation metric mismatches: ensure num_labels and problem_type match the model configuration and task labels
+- **Enhanced**: torch.compile compatibility issues: check for automatic tensor cloning warnings and ensure proper inductor configuration
+- **Enhanced**: Dynamic shape problems: verify that sequence packing is properly configured for torch.compile compatibility
+- **Enhanced**: DeepSpeed conflicts: torch.compile is automatically disabled when DeepSpeed is enabled unless explicitly configured otherwise
 
 **Section sources**
 - [modeling_common.py:105-143](file://src/models/graphgpt/modeling_common.py#L105-L143)
 - [modeling_finetune.py:167-234](file://src/models/graphgpt/modeling_finetune.py#L167-L234)
 - [metrics_utils.py:16-200](file://src/utils/metrics_utils.py#L16-L200)
+- [pipeline.py:170-228](file://src/training/pipeline.py#L170-L228)
 
 ## Conclusion
-GraphGPT provides flexible fine-tuning through task-specific heads and auxiliary objectives. The modular design allows seamless adaptation across graph, edge, and node levels, with robust configuration and training utilities. Proper configuration of pooling, loss types, and auxiliary heads enables strong performance on diverse graph downstream tasks.
-
-[No sources needed since this section summarizes without analyzing specific files]
+GraphGPT provides flexible fine-tuning through task-specific heads and auxiliary objectives. The modular design allows seamless adaptation across graph, edge, and node levels, with robust configuration and training utilities. Recent enhancements in torch.compile compatibility and numerical stability make the system more reliable for production training scenarios with dynamic shapes and complex graph structures.
 
 ## Appendices
 
@@ -411,11 +474,14 @@ GraphGPT provides flexible fine-tuning through task-specific heads and auxiliary
   - pooling_method, mlp, dropout, loss_type, num_labels, problem_type
 - Position pretraining/denoising:
   - smtp_*, denoise_*, inputs_transform, pos_bins
+- **Enhanced**: torch.compile configuration:
+  - enabled, mode, backend, fullgraph, dynamic, disable_on_deepspeed
 
 **Section sources**
 - [base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
 - [model_configs.py:37-109](file://src/conf/model/model_configs.py#L37-L109)
 - [configuration_graphgpt.py:26-206](file://src/models/graphgpt/configuration_graphgpt.py#L26-L206)
+- [base_configs.py:165-186](file://src/conf/base_configs.py#L165-L186)
 
 ### C. Tokenization and Task Types
 
@@ -426,3 +492,21 @@ GraphGPT provides flexible fine-tuning through task-specific heads and auxiliary
 **Section sources**
 - [ogbg_molhiv.yaml:1-116](file://configs/tokenization/graph_lvl/ogbg_molhiv.yaml#L1-L116)
 - [ogbl_ppa.yaml:1-123](file://configs/tokenization/edge_lvl/ogbl_ppa.yaml#L1-L123)
+
+### D. torch.compile Configuration Guide
+
+**New Section** Configuration parameters for enabling and optimizing torch.compile:
+
+- **enabled**: Enable or disable torch.compile (default: False)
+- **mode**: Compilation mode - 'default', 'reduce-overhead', 'max-autotune'
+  - 'default': Balanced option, works with dynamic shapes (recommended)
+  - 'reduce-overhead': Uses CUDAGraphs, NOT recommended for dynamic shapes
+  - 'max-autotune': Best performance but slower compilation
+- **backend**: Compilation backend - 'inductor' (default), 'cudagraphs', etc.
+- **fullgraph**: Whether to require full graph compilation (default: False)
+- **dynamic**: Whether to use dynamic shapes (default: True for variable seq lengths)
+- **disable_on_deepspeed**: Disable torch.compile when using DeepSpeed (default: True)
+
+**Section sources**
+- [base_configs.py:165-186](file://src/conf/base_configs.py#L165-L186)
+- [pipeline.py:170-228](file://src/training/pipeline.py#L170-L228)

@@ -14,6 +14,8 @@
 - [src/conf/model/model_configs.py](file://src/conf/model/model_configs.py)
 - [src/conf/tokenization/token_configs.py](file://src/conf/tokenization/token_configs.py)
 - [src/conf/generation/generation_configs.py](file://src/conf/generation/generation_configs.py)
+- [src/models/graphgpt/configuration_graphgpt.py](file://src/models/graphgpt/configuration_graphgpt.py)
+- [src/utils/attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
 - [examples/train_pretrain.py](file://examples/train_pretrain.py)
 - [src/utils/conf_utils.py](file://src/utils/conf_utils.py)
 - [src/utils/loader_utils.py](file://src/utils/loader_utils.py)
@@ -30,14 +32,12 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced documentation of the `sync_config()` function and its role in parameter synchronization across training modes
-- Updated training configuration to reflect the evolution of `max_length` from a primarily finetuning parameter to a general training parameter
-- Documented the new `pad_to_multiple_of` parameter and its integration with sequence length constraints
-- Added comprehensive coverage of the enhanced parameter synchronization logic in `base_configs.py`
-- Updated practical examples to demonstrate the broader application of sequence length constraints across all training modes
-- Enhanced test configuration management documentation with OmegaConf integration improvements
-- **New** Added documentation for the torch.compile configuration system including TorchCompileConfig dataclass, compilation modes, backend selection, and dynamic shape support
-- **New** Documented the integration of torch.compile in the training pipeline and model-level optimizations
+- Removed all references to bi_causal parameter from configuration system documentation
+- Updated model configuration section to reflect architectural simplification
+- Removed bi_causal-related explanations from attention mask utilities documentation
+- Updated practical examples to remove bi_causal configuration references
+- Clarified that the configuration system now uses simplified attention patterns
+- Updated troubleshooting section to remove bi_causal-related issues
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -56,7 +56,7 @@
 ## Introduction
 This document explains the Graph-GPT configuration system built on Hydra and OmegaConf. It covers the hierarchical configuration structure, modular sub-configurations for model, training, tokenization, and generation parameters, base configuration files and their relationships, how YAML integrates with dataclass-based validation, configuration loading and precedence, runtime updates, practical examples for datasets and tasks, validation and error handling, extension patterns for custom datasets and experiments, and best practices for parameter tuning.
 
-**Updated** The configuration system now features enhanced parameter synchronization through the `sync_config()` function, which establishes `max_length` as a fundamental training parameter applicable across all training modes, not just finetuning contexts. This enhancement improves consistency and simplifies configuration management across different task types. Additionally, the system now includes comprehensive torch.compile configuration support for GPU kernel optimization and performance improvements.
+**Updated** The configuration system has undergone architectural simplification by removing the bi_causal parameter, resulting in a cleaner attention pattern system. The model now uses simplified attention mechanisms that are easier to configure and maintain, while still providing the flexibility needed for various graph learning tasks.
 
 ## Project Structure
 The configuration system is organized into:
@@ -65,17 +65,17 @@ The configuration system is organized into:
 - Dataclass-backed configuration modules that define typed, validated configuration objects.
 - Example scripts that bootstrap the configuration via Hydra.
 - Enhanced test infrastructure using OmegaConf for structured configuration management.
-- **Updated** Torch compile configuration for GPU kernel optimization and performance improvements.
+- **Updated** Simplified attention pattern system without bi_causal complexity.
 
 ```mermaid
 graph TB
 A["configs/config.yaml<br/>Defaults and overrides"] --> B["configs/tokenization/base.yaml"]
-A --> C["configs/model/base.yaml"]
+A --> C["configs/model/base.yaml<br/>+ simplified attention patterns"]
 A --> D["configs/training/base.yaml<br/>+ torch_compile config"]
 A --> E["configs/generation/base.yaml"]
 F["src/conf/__init__.py<br/>Exports Config and sub-configs"] --> G["src/conf/base_configs.py<br/>Config, TrainingConfig, ScheduleConfig, TorchCompileConfig, helpers"]
 H["src/conf/tokenization/token_configs.py<br/>TokenizationConfig, DataConfig, SemanticsConfig, StructureConfig"] --> G
-I["src/conf/model/model_configs.py<br/>GraphGPTModelConfig, sub-configs"] --> G
+I["src/conf/model/model_configs.py<br/>GraphGPTModelConfig, sub-configs<br/>+ simplified attention settings"] --> G
 J["src/conf/generation/generation_configs.py<br/>GenerationConfig"] --> G
 K["examples/train_pretrain.py<br/>@hydra.main(config_path, config_name)"] --> A
 L["tests/test_forward_simple.py<br/>OmegaConf structured config"] --> G
@@ -83,12 +83,13 @@ M["tests/test_model_forward_inputs.py<br/>Compose + OmegaConf.to_object"] --> A
 N["tests/test_forward_minimal.py<br/>Nested structure examples"] --> G
 O["src/training/pipeline.py<br/>_init_data_configs() calls sync_config()<br/>_apply_torch_compile()"] --> G
 P["src/models/graphgpt/modeling_helpers.py<br/>torch.compile for flex_attention"] --> G
+Q["src/utils/attn_mask_utils.py<br/>Attention mask utilities<br/>+ simplified bi_causal references"] --> G
 ```
 
 **Diagram sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
 - [configs/tokenization/base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
-- [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
+- [configs/model/base.yaml:1-220](file://configs/model/base.yaml#L1-L220)
 - [configs/training/base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [src/conf/__init__.py:1-20](file://src/conf/__init__.py#L1-L20)
@@ -103,6 +104,7 @@ P["src/models/graphgpt/modeling_helpers.py<br/>torch.compile for flex_attention"
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)
 - [src/training/pipeline.py:147-148](file://src/training/pipeline.py#L147-L148)
 - [src/models/graphgpt/modeling_helpers.py:122-125](file://src/models/graphgpt/modeling_helpers.py#L122-L125)
+- [src/utils/attn_mask_utils.py:35-41](file://src/utils/attn_mask_utils.py#L35-L41)
 
 **Section sources**
 - [configs/README.md:1-18](file://configs/README.md#L1-L18)
@@ -115,16 +117,15 @@ P["src/models/graphgpt/modeling_helpers.py<br/>torch.compile for flex_attention"
 - Dataclass-backed configuration: Typed configuration classes define validation and default values, enabling structured, safe configuration objects.
 - Example entry point: A script demonstrates how Hydra loads the configuration and passes it to the training pipeline.
 - Enhanced test configuration: OmegaConf integration for robust nested structure handling in test scenarios.
-- **Updated** Parameter synchronization: The `sync_config()` function establishes `max_length` as a fundamental training parameter applicable across all training modes, not just finetuning contexts.
-- **New** Torch compile configuration: Comprehensive configuration for GPU kernel optimization through torch.compile with support for different compilation modes, backends, and dynamic shape handling.
+- **Updated** Simplified attention patterns: The model configuration now uses streamlined attention settings without bi_causal complexity, making configuration more straightforward.
 
 Key relationships:
 - The central orchestrator references sub-config names to merge into a unified configuration object.
 - The unified configuration object is a dataclass that aggregates sub-configs and exposes helpers for initialization and synchronization.
 - The training entry point uses Hydra to instantiate the unified configuration object.
 - Test scripts utilize OmegaConf for structured configuration creation and manipulation.
-- **Updated** The `sync_config()` function ensures `max_length` cascades from training configuration to model configuration when not explicitly set, and synchronizes task types across components.
-- **New** The training pipeline applies torch.compile optimization when enabled, with configurable compilation modes and backend selection.
+- **Updated** The simplified attention pattern system reduces configuration complexity while maintaining model flexibility.
+- **New** Torch compile configuration for GPU kernel optimization and performance improvements.
 
 **Section sources**
 - [configs/config.yaml:1-20](file://configs/config.yaml#L1-L20)
@@ -141,7 +142,7 @@ The configuration architecture follows a layered pattern:
 - Hydra merges defaults and overrides, then instantiates dataclass-backed configuration objects.
 - Runtime helpers synchronize and validate configuration across domains.
 - Enhanced test infrastructure uses OmegaConf for structured configuration management.
-- **Updated** The synchronization logic now establishes `max_length` as a fundamental training parameter that cascades from training configuration to downstream components, ensuring consistent sequence length constraints across all training modes.
+- **Updated** The simplified attention pattern system eliminates bi_causal complexity while maintaining model expressiveness.
 - **New** Torch compile configuration provides GPU kernel optimization through configurable compilation modes and backend selection.
 
 ```mermaid
@@ -334,7 +335,7 @@ DataConfig --> OdpsConfig
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
 
 ### Model Configuration
-Defines model architecture, GraphGPT-specific parameters, and modular sub-configs for heads and inputs.
+Defines model architecture, GraphGPT-specific parameters, and modular sub-configs for heads and inputs. **Updated** Now uses simplified attention patterns without bi_causal complexity.
 
 ```mermaid
 classDiagram
@@ -380,7 +381,7 @@ GraphGPTModelConfig --> DropoutConfig
 - [src/conf/model/model_configs.py:26-34](file://src/conf/model/model_configs.py#L26-L34)
 
 **Section sources**
-- [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
+- [configs/model/base.yaml:1-220](file://configs/model/base.yaml#L1-L220)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
 
 ### Training Configuration
@@ -823,7 +824,7 @@ The configuration system exhibits clear separation of concerns:
 ```mermaid
 graph TB
 Y1["configs/tokenization/base.yaml"] --> DC1["src/conf/tokenization/token_configs.py"]
-Y2["configs/model/base.yaml"] --> DC2["src/conf/model/model_configs.py"]
+Y2["configs/model/base.yaml<br/>+ simplified attention"] --> DC2["src/conf/model/model_configs.py"]
 Y3["configs/training/base.yaml<br/>+ torch_compile"] --> DC3["src/conf/base_configs.py"]
 Y4["configs/generation/base.yaml"] --> DC4["src/conf/generation/generation_configs.py"]
 DC1 --> U["src/utils/conf_utils.py"]
@@ -846,7 +847,7 @@ Pipeline --> Compile
 
 **Diagram sources**
 - [configs/tokenization/base.yaml:1-117](file://configs/tokenization/base.yaml#L1-L117)
-- [configs/model/base.yaml:1-222](file://configs/model/base.yaml#L1-L222)
+- [configs/model/base.yaml:1-220](file://configs/model/base.yaml#L1-L220)
 - [configs/training/base.yaml:1-118](file://configs/training/base.yaml#L1-L118)
 - [configs/generation/base.yaml:1-40](file://configs/generation/base.yaml#L1-L40)
 - [src/conf/tokenization/token_configs.py:115-127](file://src/conf/tokenization/token_configs.py#L115-L127)
@@ -896,7 +897,7 @@ Pipeline --> Compile
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 
 ## Conclusion
-Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. **New** The addition of torch.compile configuration support provides powerful GPU optimization capabilities through configurable compilation modes, backend selection, and dynamic shape support. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, utilizing OmegaConf for structured configuration management, and configuring torch.compile optimization—you can efficiently tune and extend configurations for diverse graph learning scenarios.
+Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. **Updated** The removal of bi_causal parameter represents a significant architectural simplification that makes the configuration system more accessible while maintaining model flexibility. **New** The addition of torch.compile configuration support provides powerful GPU optimization capabilities through configurable compilation modes, backend selection, and dynamic shape support. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, utilizing OmegaConf for structured configuration management, and configuring torch.compile optimization—you can efficiently tune and extend configurations for diverse graph learning scenarios.
 
 ## Appendices
 
@@ -960,3 +961,9 @@ torch_compile_enabled = OmegaConf.select(cfg, "training.torch_compile.enabled")
 - [tests/test_model_forward_inputs.py:164-165](file://tests/test_model_forward_inputs.py#L164-L165)
 - [tests/test_model_forward_inputs.py:276-277](file://tests/test_model_forward_inputs.py#L276-L277)
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)
+
+### Attention Mask Utilities Context
+**Updated** The attention mask utilities maintain references to bi_causal in comments for historical context, but the actual implementation now uses simplified attention patterns. The bi_causal parameter was removed from the configuration system, so these references serve as documentation of past architectural decisions rather than active configuration options.
+
+**Section sources**
+- [src/utils/attn_mask_utils.py:35-41](file://src/utils/attn_mask_utils.py#L35-L41)
