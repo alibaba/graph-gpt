@@ -229,7 +229,12 @@ class GraphGPTTaskModel(LlamaPreTrainedModel):
             # remove `.float()` to avoid force-converting fp16 to fp32
             # labels[is_labeled] will convert tensor `labels` from 2D to 1D
         task_loss = loss
-        return task_loss, logits, pooled_logits
+        # Clone loss to prevent CUDAGraph tensor overwrite when using torch.compile
+        return (
+            task_loss.clone() if task_loss is not None else None,
+            logits,
+            pooled_logits,
+        )
 
     def forward(
         self,

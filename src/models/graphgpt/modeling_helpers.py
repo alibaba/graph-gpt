@@ -264,7 +264,8 @@ def _get_ce_loss(
         loss = (loss * wgt1).float().sum() / (wgt1.float().sum() + _EPSILON)
     # convert logits to float before cross-entropy for molecule datasets like PCQM4M-v2, MOLPCBA and etc.
     # because when batch-size too large, ce with fp16 leads to no decrease of loss
-    return loss
+    # Clone loss to prevent CUDAGraph tensor overwrite when using torch.compile
+    return loss.clone()
 
 
 def _get_dlm_ce_loss(
@@ -285,7 +286,8 @@ def _get_dlm_ce_loss(
     loss = (loss * wgt1).float().sum()
     # convert logits to float before cross-entropy for molecule datasets like PCQM4M-v2, MOLPCBA and etc.
     # because when batch-size too large, ce with fp16 leads to no decrease of loss
-    return loss
+    # Clone loss to prevent CUDAGraph tensor overwrite when using torch.compile
+    return loss.clone()
 
 
 def _get_cl_logits_loss(
@@ -314,7 +316,8 @@ def _get_cl_logits_loss(
     right_embeds = embeds[right_idx].contiguous()
 
     loss = _dist_infonce(left_embeds, right_embeds, world_size=world_size)
-    return loss, logits
+    # Clone loss to prevent CUDAGraph tensor overwrite when using torch.compile
+    return loss.clone(), logits
 
 
 # ===========================================================================

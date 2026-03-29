@@ -179,6 +179,15 @@ class TrainingPipeline:
             )
             return
 
+        # Configure inductor to skip CUDAGraphs for dynamic shapes
+        # This avoids the overhead of recording many graphs for variable sequence lengths
+        try:
+            torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
+            torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit = None
+            print("Configured CUDAGraph to skip dynamic shapes (sequence packing)")
+        except AttributeError:
+            pass  # Older PyTorch versions may not have this config
+
         print(
             f"Applying torch.compile with mode='{compile_cfg.mode}', "
             f"backend='{compile_cfg.backend}', dynamic={compile_cfg.dynamic}"
