@@ -183,9 +183,6 @@ class DenoisingRegressionConfig:
     denoise_schedule_pow: float = 0.0
     """Power for denoising schedule (0 = no schedule)."""
 
-    bi_causal: bool = False
-    """Whether to use bi-directional causal attention."""
-
     r_2d: float = 4.0
     """Ratio component for 2D mask sampling."""
 

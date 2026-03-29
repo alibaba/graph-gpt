@@ -45,7 +45,6 @@ from .modeling_helpers import (
     _get_pos_type_embeds,
     _get_ce_loss,
     _get_labels_for_line_token,
-    _prepare_for_logits_labels_per_seq_lvl,
     _prepare_for_stacked_feat_labels_per_feat_lvl,
     _add_pos_noise_and_get_masks,
     _mask_pos_in_node_lvl_on_schedule,
@@ -58,7 +57,6 @@ from .modeling_helpers import (
 from src.utils.modules_utils import MLP
 from src.utils.loss_utils import auc_loss
 from src.utils.mol_utils import DICT_range
-from src.utils.tokenizer_utils import MOL_ENERGY_BIN_LEN, MOL_ENERGY_SCALE
 
 
 class GraphGPTTaskModel(LlamaPreTrainedModel):
@@ -461,35 +459,10 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         self.noise_scale = config.noise_scale
         self.denoise_wgt = config.denoise_wgt
         self.denoise_schedule_pow = config.denoise_schedule_pow
-        self.bi_causal = config.bi_causal
         r_2d, r_3d, r_both = config.r_2d, config.r_3d, config.r_both
         self.mask_3d_ratio = r_2d / (r_2d + r_3d + r_both)
         self.mask_2d_ratio = r_3d / (r_3d + r_both)
         self.add_pos_type = config.add_pos_type
-        if self.bi_causal:
-            self.model.bi_causal = self.bi_causal
-            self.scale = MOL_ENERGY_SCALE
-            bin_label_unit = (
-                torch.tensor(
-                    (2 ** torch.arange(MOL_ENERGY_BIN_LEN) / self.scale).tolist()[::-1]
-                )
-                .view((1, -1))
-                .float()
-            )
-            self.register_buffer("bin_label_unit", bin_label_unit, persistent=False)
-            # bin_label_wgt = torch.tensor([[1]], dtype=torch.float32)
-            bin_label_wgt = (
-                torch.tensor(
-                    (
-                        (torch.arange(MOL_ENERGY_BIN_LEN) + 1)
-                        * 2
-                        / (MOL_ENERGY_BIN_LEN + 1)
-                    ).tolist()[::-1]
-                )
-                .view((1, -1))
-                .float()
-            )
-            self.register_buffer("bin_label_wgt", bin_label_wgt, persistent=False)
         if self.add_pos_type:
             # embed 3D position type, 0~4: 0->pad, 1->(0,0,0), 2->(0,0,z), 3->(0,y,z), 4->(x,y,z)
             self.embed_pos_type = nn.Embedding(5, config.hidden_size, padding_idx=0)
@@ -722,19 +695,6 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
             self, output_attentions, output_hidden_states, return_dict
         )
 
-        # --- bi_causal on-the-fly fallback ---
-        if self.bi_causal and split_lens is None:
-            # Compute split_lens from attention_mask for backward compat:
-            # prefix = full-attention (valid non-causal tokens),
-            # suffix = causal-attention (remaining valid tokens)
-            valid_lens = attention_mask.sum(dim=-1).tolist()  # [bz]
-            causal_len = self.config.stacked_feat  # num causal suffix tokens
-            split_lens = [
-                [max(int(vl) - causal_len, 0), min(causal_len, int(vl))]
-                for vl in valid_lens
-            ]
-            attn_modes = [["full", "causal"]] * len(split_lens)
-
         # 0. pre-process
         # 0.1 pre-process input_ids
         pos_deco = input_ids[:, :, self.config.stacked_feat :]  # [bz, seq, 3 or 4]
@@ -859,42 +819,25 @@ class GraphGPTDenoisingRegressionDoubleHeadsModel(GraphGPTTaskModel):
         raw_hidden_states = outputs[0]  # [N, seq, dim]
 
         # 1. Calculate loss for supervised regression task, refer to `LlamaForSequenceClassification`
-        if self.bi_causal:
-            logits, labels, _ = _prepare_for_logits_labels_per_seq_lvl(
-                raw_hidden_states, pretrain_labels, proj=self.score
-            )
-            logits = logits.view((-1, MOL_ENERGY_BIN_LEN))
-            labels = labels.view((-1, MOL_ENERGY_BIN_LEN))
-            # convert binary repr to decimal repr
-            bin2decimal = (logits > 0).float() * self.bin_label_unit.float()
-            pooled_logits = bin2decimal.sum(dim=-1)
-        else:
-            logits = self.score(raw_hidden_states)  # [bsz, seq, num_labels]
-            batch_size = _get_batch_size(input_ids, inputs_embeds)
-            assert self.config.pad_token_id is not None
-            sequence_lengths = _get_sequence_len(
-                self.config.pad_token_id, in_, logits.device
-            )
-            assert self.pooling_method == "last", f"{self.pooling_method}!='last'"
-            # [N, seq, num_labels] -> [N, num_labels]
-            bz_idx = torch.arange(batch_size, device=logits.device)
-            pooled_logits = logits[bz_idx, sequence_lengths]
+        logits = self.score(raw_hidden_states)  # [bsz, seq, num_labels]
+        batch_size = _get_batch_size(input_ids, inputs_embeds)
+        assert self.config.pad_token_id is not None
+        sequence_lengths = _get_sequence_len(
+            self.config.pad_token_id, in_, logits.device
+        )
+        assert self.pooling_method == "last", f"{self.pooling_method}!='last'"
+        # [N, seq, num_labels] -> [N, num_labels]
+        bz_idx = torch.arange(batch_size, device=logits.device)
+        pooled_logits = logits[bz_idx, sequence_lengths]
 
         task_loss = None
         if task_labels is not None:
-            if self.bi_causal:
-                loss_fct = nn.BCEWithLogitsLoss(reduction="none")
-
-                task_loss = loss_fct(logits.float(), labels.float())
-                task_loss = task_loss * self.bin_label_wgt.float()
-                task_loss = task_loss.mean()
-            else:
-                loss_fct = L1Loss(reduction="none")
-                task_labels = task_labels.to(pooled_logits)
-                task_loss = loss_fct(pooled_logits.squeeze(), task_labels.squeeze())
-                if sample_wgt is not None:
-                    task_loss = task_loss * sample_wgt  # [bsz]
-                task_loss = task_loss.mean()
+            loss_fct = L1Loss(reduction="none")
+            task_labels = task_labels.to(pooled_logits)
+            task_loss = loss_fct(pooled_logits.squeeze(), task_labels.squeeze())
+            if sample_wgt is not None:
+                task_loss = task_loss * sample_wgt  # [bsz]
+            task_loss = task_loss.mean()
 
         aux_loss = None
         if task_labels is not None and self.smtp_3d:

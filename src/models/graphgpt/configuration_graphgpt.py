@@ -89,7 +89,6 @@ class GraphGPTConfig(LlamaConfig):
         noise_scale: float = 0.35,
         denoise_wgt: float = 1.0,
         denoise_schedule_pow: float = 0.0,
-        bi_causal: bool = False,
         r_2d: float = 4.0,
         r_3d: float = 0.0,
         r_both: float = 6.0,
@@ -162,7 +161,6 @@ class GraphGPTConfig(LlamaConfig):
         self.noise_scale = noise_scale
         self.denoise_wgt = denoise_wgt
         self.denoise_schedule_pow = denoise_schedule_pow
-        self.bi_causal = bi_causal
         self.r_2d = r_2d
         self.r_3d = r_3d
         self.r_both = r_both
@@ -302,7 +300,6 @@ def convert_to_legacy_config(model_config: GraphGPTModelConfig) -> GraphGPTConfi
         "noise_scale": model_config.denoise_head.noise_scale,
         "denoise_wgt": model_config.denoise_head.denoise_wgt,
         "denoise_schedule_pow": model_config.denoise_head.denoise_schedule_pow,
-        "bi_causal": model_config.denoise_head.bi_causal,
         "r_2d": model_config.denoise_head.r_2d,
         "r_3d": model_config.denoise_head.r_3d,
         "r_both": model_config.denoise_head.r_both,

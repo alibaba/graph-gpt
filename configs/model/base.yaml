@@ -133,8 +133,6 @@ model:
     denoise_wgt: 1.0
     # Power for denoising schedule (0 = no schedule)
     denoise_schedule_pow: 0.0
-    # Whether to use bi-directional causal attention
-    bi_causal: false
     # Ratio components for 2D/3D/both mask sampling (used to derive mask_3d_ratio, mask_2d_ratio)
     r_2d: 4.0
     r_3d: 0.0
