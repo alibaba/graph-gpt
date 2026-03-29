@@ -18,6 +18,7 @@
 - [src/utils/spice2graph_full_utils.py](file://src/utils/spice2graph_full_utils.py)
 - [src/utils/control_flow.py](file://src/utils/control_flow.py)
 - [src/utils/profiler_utils.py](file://src/utils/profiler_utils.py)
+- [src/utils/loader_utils.py](file://src/utils/loader_utils.py)
 - [analyze_trace.py](file://analyze_trace.py)
 - [src/data/tokenizer/__init__.py](file://src/data/tokenizer/__init__.py)
 - [src/data/tokenizer/_legacy.py](file://src/data/tokenizer/_legacy.py)
@@ -26,10 +27,10 @@
 
 ## Update Summary
 **Changes Made**
-- Added comprehensive documentation for the new PyTorch Profiler Trace Analyzer tool (analyze_trace.py)
-- Updated profiler utilities section to highlight the complementary relationship between TrainingProfiler and analyze_trace.py
-- Enhanced performance analysis section to cover both in-training profiling and post-training trace analysis
-- Added new section on GPU performance analysis tools and their integration workflow
+- Updated loader utilities section to reflect simplified data loading process without explicit attribute masking configuration for validation tokenizers
+- Removed documentation about commented-out attribute masking code that has been removed from loader_utils.py
+- Enhanced data loading workflow documentation to reflect streamlined tokenizer initialization
+- Updated troubleshooting guide to address the simplified validation tokenizer configuration
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -67,6 +68,7 @@ U12["visualize.py"]
 U13["spice2graph_full_utils.py"]
 U14["control_flow.py"]
 U15["profiler_utils.py"]
+U16["loader_utils.py"]
 end
 subgraph "Standalone Tools"
 T1["analyze_trace.py"]
@@ -91,6 +93,7 @@ INIT --> U12
 INIT --> U13
 INIT --> U14
 INIT --> U15
+INIT --> U16
 U8 --> T2
 U8 --> T3
 U8 --> T4
@@ -102,6 +105,7 @@ T1 --> U15
 - [src/utils/__init__.py:1-56](file://src/utils/__init__.py#L1-L56)
 - [src/utils/tokenizer_utils.py:1-26](file://src/utils/tokenizer_utils.py#L1-L26)
 - [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [src/utils/loader_utils.py:1-750](file://src/utils/loader_utils.py#L1-L750)
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 - [src/data/tokenizer/__init__.py:1-124](file://src/data/tokenizer/__init__.py#L1-L124)
 - [src/data/tokenizer/_legacy.py:1-41](file://src/data/tokenizer/_legacy.py#L1-L41)
@@ -125,8 +129,9 @@ This section highlights the primary utility modules and their responsibilities:
 - **Spice2graph utilities**: Netlist parsing and SPICE circuit-to-graph conversion.
 - **Profiler utilities**: Comprehensive training-time GPU performance profiling with TrainingProfiler and memory monitoring.
 - **Trace analyzer**: Standalone GPU kernel analysis and bottleneck identification from Chrome trace files.
+- **Loader utilities**: Streamlined data loading with simplified validation tokenizer configuration.
 
-**Updated** Added new PyTorch Profiler Trace Analyzer tool for standalone GPU performance analysis.
+**Updated** Simplified validation tokenizer configuration in loader utilities to streamline the data loading process.
 
 **Section sources**
 - [src/utils/attn_mask_utils.py:1-156](file://src/utils/attn_mask_utils.py#L1-L156)
@@ -142,6 +147,7 @@ This section highlights the primary utility modules and their responsibilities:
 - [src/utils/visualize.py:1-233](file://src/utils/visualize.py#L1-L233)
 - [src/utils/spice2graph_full_utils.py:1-564](file://src/utils/spice2graph_full_utils.py#L1-L564)
 - [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [src/utils/loader_utils.py:1-750](file://src/utils/loader_utils.py#L1-L750)
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 ## Architecture Overview
@@ -178,6 +184,9 @@ end
 subgraph "Performance Analysis"
 TA["analyze_trace.py<br/>GPU Trace Analyzer"]
 end
+subgraph "Data Loading"
+LU["loader_utils.initialize_pt_valid_loader<br/>initialize_pt_test_loader"]
+end
 CF --> TU
 TU --> T1
 TU --> T2
@@ -191,6 +200,7 @@ GU --> TR
 AMU --> TR
 VI --> VL
 PR --> TA
+LU --> TU
 ```
 
 **Diagram sources**
@@ -207,6 +217,7 @@ PR --> TA
 - [src/utils/vis_utils.py:1-31](file://src/utils/vis_utils.py#L1-L31)
 - [src/utils/visualize.py:1-233](file://src/utils/visualize.py#L1-L233)
 - [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [src/utils/loader_utils.py:1-750](file://src/utils/loader_utils.py#L1-L750)
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 ## Detailed Component Analysis
@@ -395,6 +406,40 @@ Usage patterns:
 **Section sources**
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
+### Loader Utilities - Simplified Data Loading Process
+**Updated** The data loading process has been streamlined by removing explicit attribute masking configuration for validation tokenizers.
+
+#### Simplified Validation Tokenizer Configuration
+The loader utilities now use a streamlined approach for validation and test data loaders:
+
+```python
+# Simplified validation loader initialization
+valid_tokenizer_config = copy.deepcopy(tokenizer_config)
+gtokenizer_valid = tokenizer_cls(
+    valid_tokenizer_config,
+    add_eos=token_cfg.add_eos,
+    stack_method=model_cfg.graph_input.stack_method,
+    train_cfg=train_cfg,
+)
+inspect_tokenization_results(train_dataset, gtokenizer_valid)
+```
+
+The previous commented-out code that would have configured attribute masking for validation tokenizers has been removed, simplifying the data loading process. The validation tokenizer now uses the standard configuration without explicit attribute masking setup.
+
+#### Key Improvements
+- **Reduced Complexity**: Eliminated commented-out code and redundant configuration steps
+- **Streamlined Process**: Direct tokenizer initialization without attribute masking overrides
+- **Maintained Functionality**: All validation and test functionality preserved
+- **Cleaner Codebase**: Removed unused commented-out sections
+
+#### Integration Points
+- Validation and test loaders use the same tokenizer configuration as training
+- Simplified initialization reduces potential configuration errors
+- Maintains backward compatibility with existing tokenizer utilities
+
+**Section sources**
+- [src/utils/loader_utils.py:675-715](file://src/utils/loader_utils.py#L675-L715)
+
 ### Tokenizer Utilities - Refactored Architecture
 **Updated** The tokenizer utilities have been completely refactored and moved to a modular architecture under `src/data/tokenizer/`.
 
@@ -512,6 +557,7 @@ Utilities leverage a small set of shared patterns and modules:
 - **Trace analyzer**: Complements profiler utilities by providing standalone analysis capabilities.
 - **Visualization**: Independent module used for debugging and presentation.
 - **Legacy Migration**: Tokenizer utilities now depend on the new modular structure while maintaining backward compatibility.
+- **Loader Utilities**: Simplified integration with tokenizer utilities without explicit attribute masking configuration.
 
 ```mermaid
 graph TB
@@ -529,6 +575,7 @@ OU --> TR
 VI["vis_utils"] --> VL["visualize"]
 SU["spice2graph_full_utils"] --> DU
 PR --> TA["analyze_trace.py"]
+LU["loader_utils"] --> TU
 ```
 
 **Diagram sources**
@@ -544,6 +591,7 @@ PR --> TA["analyze_trace.py"]
 - [src/utils/vis_utils.py:1-31](file://src/utils/vis_utils.py#L1-L31)
 - [src/utils/visualize.py:1-233](file://src/utils/visualize.py#L1-L233)
 - [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [src/utils/loader_utils.py:1-750](file://src/utils/loader_utils.py#L1-L750)
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 **Section sources**
@@ -569,8 +617,12 @@ PR --> TA["analyze_trace.py"]
   - **Complementary Analysis**: Combine both approaches for comprehensive performance understanding.
 - **Visualization**:
   - Limit node/edge counts for interactive plots; consider subsampling for large graphs.
+- **Data Loading**:
+  - **Simplified Process**: The streamlined loader utilities reduce configuration complexity and potential errors.
+  - **Faster Initialization**: Direct tokenizer initialization without attribute masking setup improves startup performance.
+  - **Consistent Behavior**: Validation and test loaders now use the same configuration approach as training.
 
-**Updated** Enhanced performance considerations to include the new profiling workflow combining integrated and standalone analysis.
+**Updated** Enhanced performance considerations to include the simplified data loading process and improved initialization performance.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -596,8 +648,12 @@ Common issues and resolutions:
   - **File Access**: Ensure trace files have proper read permissions.
   - **JSON Format**: Verify trace files are valid JSON format generated by PyTorch Profiler.
   - **Analysis Timeout**: Large trace files may take time to process; consider splitting analysis.
+- **Data Loading Issues**:
+  - **Validation Tokenizer**: If validation fails, ensure tokenizer configuration is properly passed to loader utilities.
+  - **Simplified Configuration**: The streamlined loader utilities should resolve most configuration-related issues.
+  - **Initialization Errors**: Check that tokenizer classes are properly initialized without attribute masking conflicts.
 
-**Updated** Added troubleshooting guidance for the new profiler utilities and trace analyzer.
+**Updated** Added troubleshooting guidance for the simplified data loading process and loader utilities improvements.
 
 **Section sources**
 - [src/utils/conf_utils.py:1-232](file://src/utils/conf_utils.py#L1-L232)
@@ -606,10 +662,11 @@ Common issues and resolutions:
 - [src/utils/dataset_utils.py:1-1810](file://src/utils/dataset_utils.py#L1-L1810)
 - [src/utils/tokenizer_utils.py:1-26](file://src/utils/tokenizer_utils.py#L1-L26)
 - [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [src/utils/loader_utils.py:1-750](file://src/utils/loader_utils.py#L1-L750)
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)
 
 ## Conclusion
-The Graph-GPT utility suite provides robust, modular helpers spanning attention masking, configuration management, dataset processing, generation, molecular and graph transformations, evaluation, training orchestration, visualization, and comprehensive performance analysis. The recent refactoring has streamlined the tokenizer utilities while maintaining backward compatibility, resulting in a cleaner, more maintainable architecture. The addition of the PyTorch Profiler Trace Analyzer tool completes the performance analysis toolkit by providing standalone GPU kernel analysis capabilities that complement the existing integrated profiling approach. By leveraging shared control-flow patterns, consistent integration points, and the complementary profiling workflow, these utilities enable scalable and maintainable extensions to the framework.
+The Graph-GPT utility suite provides robust, modular helpers spanning attention masking, configuration management, dataset processing, generation, molecular and graph transformations, evaluation, training orchestration, visualization, and comprehensive performance analysis. The recent refactoring has streamlined the tokenizer utilities while maintaining backward compatibility, resulting in a cleaner, more maintainable architecture. The addition of the PyTorch Profiler Trace Analyzer tool completes the performance analysis toolkit by providing standalone GPU kernel analysis capabilities that complement the existing integrated profiling approach. The recent simplification of the loader utilities removes unnecessary complexity while preserving functionality, making the data loading process more reliable and easier to debug. By leveraging shared control-flow patterns, consistent integration points, and the complementary profiling workflow, these utilities enable scalable and maintainable extensions to the framework.
 
 ## Appendices
 
@@ -631,6 +688,10 @@ The Graph-GPT utility suite provides robust, modular helpers spanning attention 
   - **Integrated Analysis**: Use TrainingProfiler during training for real-time monitoring.
   - **Standalone Analysis**: Use analyze_trace.py for post-mortem performance analysis.
   - **Combined Approach**: Use both tools for comprehensive performance understanding.
+- **Data Loading Process**:
+  - **Simplified Validation**: The streamlined loader utilities automatically handle validation tokenizer configuration.
+  - **Direct Initialization**: Validation and test loaders use the same configuration approach as training.
+  - **Improved Reliability**: Reduced configuration complexity minimizes potential errors.
 
 ### Migration Guide for Deprecated Functions
 **Deprecated Functions Removed**:
@@ -664,8 +725,23 @@ for step, batch in enumerate(train_loader):
 # python analyze_trace.py path/to/trace.json
 ```
 
+**Updated** Simplified Data Loading Process**:
+```python
+# Simplified validation loader initialization
+# No more explicit attribute masking configuration needed
+valid_loader, valgen_loader = loader_utils.initialize_pt_valid_loader(
+    train_dataset,
+    cfg,
+    pt_sampler,
+    tokenizer_config,
+    tokenizer_cls,
+    collator_cls
+)
+```
+
 **Section sources**
 - [src/data/tokenizer/strategies/task_prep/__init__.py:29-33](file://src/data/tokenizer/strategies/task_prep/__init__.py#L29-L33)
 - [src/utils/tokenizer_utils.py:1-26](file://src/utils/tokenizer_utils.py#L1-L26)
 - [src/utils/profiler_utils.py:1-503](file://src/utils/profiler_utils.py#L1-L503)
+- [src/utils/loader_utils.py:675-715](file://src/utils/loader_utils.py#L675-L715)
 - [analyze_trace.py:1-593](file://analyze_trace.py#L1-L593)

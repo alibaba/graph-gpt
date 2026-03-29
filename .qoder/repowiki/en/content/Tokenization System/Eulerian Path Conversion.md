@@ -8,15 +8,16 @@
 - [base_configs.py](file://src/conf/base_configs.py)
 - [structure.yaml](file://configs/tokenization/graph_lvl/structure.yaml)
 - [dataset_iterable.py](file://src/data/dataset_iterable.py)
+- [mol_utils.py](file://src/utils/mol_utils.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Added comprehensive documentation for the new `_optimal_fast_eulerize` function that provides significantly improved performance for Chinese Postman problem solving
-- Documented the optimal Chinese Postman algorithm implementation with up to 10.02x speedup compared to original nx.eulerize
-- Enhanced benchmarking data showing performance improvements across different graph types and sizes
-- Updated algorithmic implementation details with the new optimal eulerization approach
-- Added new function references and API documentation for the enhanced eulerization capabilities
+- Updated documentation to reflect that Eulerian path-based positional encodings have been discontinued
+- Removed references to the `eulerian_position` configuration variable which was part of experimental features
+- Clarified that Eulerian path encoding is no longer supported and should not be referenced in current implementations
+- Updated troubleshooting guidance to remove references to positional encoding features
+- Maintained all other documented functionality while marking the removed feature as discontinued
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -33,6 +34,8 @@
 
 ## Introduction
 This document explains the Eulerian path conversion system that transforms graphs into sequential representations. It covers the mathematical foundations of Eulerian paths and circuits, algorithmic strategies for constructing paths across different graph types, and the handling of semi-Eulerian and non-Eulerian graphs. The system now features significantly optimized algorithms with 7.83x to 72.08x performance improvements while maintaining functional equivalence with NetworkX implementations. It also documents path construction, node traversal, edge inclusion, and configuration options that influence path selection, cycle handling, and optimization. Practical examples are drawn from the codebase to illustrate transformations for trees, cycles, and complex networks. Finally, it addresses connectivity, multigraphs, self-loops, and computational complexity considerations.
+
+**Important Note**: Eulerian path-based positional encodings were part of experimental features that have been discontinued. The `eulerian_position` configuration variable is no longer supported and should not be referenced in current implementations.
 
 ## Project Structure
 The Eulerian path conversion pipeline spans utility functions for graph manipulation and path construction, tokenizer integration for sequence generation, and configuration files that define structure and semantics.
@@ -87,8 +90,10 @@ D1 --> T1
   - Optional removal of default bidirectional edge tokens
 - **Advanced configuration**:
   - Structure and semantics definitions for tokenization
-  - Flags influencing Eulerian path usage and position encoding
+  - Flags influencing Eulerian path usage
   - Performance optimization settings
+
+**Important Note**: The `eulerian_position` configuration variable has been removed as part of discontinued experimental features.
 
 Key functions and responsibilities:
 - **Fast algorithms**: [_fast_is_eulerian:174-192](file://src/utils/nx_utils.py#L174-L192), [_fast_eulerize:195-284](file://src/utils/nx_utils.py#L195-L284), [_optimal_fast_eulerize:287-388](file://src/utils/nx_utils.py#L287-L388), [_fast_eulerian_circuit:421-492](file://src/utils/nx_utils.py#L421-L492), [_fast_customized_eulerian_path:494-508](file://src/utils/nx_utils.py#L494-L508)
@@ -273,6 +278,9 @@ Tok-->>Tok : Final token sequence + labels
   - Attribute shuffling and semantic decoration: [core.py:472-488](file://src/data/tokenizer/core.py#L472-L488)
 - **Training flags**:
   - Sampling proportionally to number of Eulerian paths: [with_prob:194-196](file://src/conf/base_configs.py#L194-L196)
+  - **Removed**: Eulerian position encoding flag (discontinued experimental feature)
+
+**Important Note**: The `eulerian_position` configuration variable has been removed as part of discontinued experimental features and should not be referenced in current implementations.
 
 **Section sources**
 - [structure.yaml:77-121](file://configs/tokenization/graph_lvl/structure.yaml#L77-L121)
@@ -457,6 +465,10 @@ Common issues and remedies:
 - **Performance degradation**:
   - Cause: Using legacy NetworkX algorithms instead of optimized versions.
   - Solution: Ensure optimized algorithms (_fast_* and _optimal_fast_*) are being used for production workloads.
+- **Deprecated features**:
+  - **Removed**: Eulerian path-based positional encodings are no longer supported and should not be referenced in current implementations.
+
+**Important Note**: The `eulerian_position` configuration variable and related positional encoding features have been discontinued and should not be referenced in current implementations.
 
 **Section sources**
 - [nx_utils.py:584-597](file://src/utils/nx_utils.py#L584-L597)
@@ -468,6 +480,8 @@ Common issues and remedies:
 
 ## Conclusion
 The Eulerian path conversion system provides a robust framework for turning graphs into sequential representations suitable for tokenization and downstream modeling. The newly optimized algorithms deliver significant performance improvements (7.83x to 72.08x speedup) while maintaining functional equivalence with NetworkX implementations. The addition of the `_optimal_fast_eulerize` function provides the optimal Chinese Postman solution with up to 10.02x speedup, making it suitable for scenarios where minimal edge additions are required. By leveraging fast Eulerian graph checking, efficient greedy Eulerization, optimal Chinese Postman solution, and optimized Hierholzer's algorithm, the system supports large-scale graph processing. The integration with NetworkX for graph algorithms, applying fast Eulerization and connectivity adjustments, and carefully managing edge types and node mappings enables diverse graph topologies. Configuration options allow fine-tuning of tokenization behavior, while path shortening and randomization improve generalization. The documented optimized components and examples offer a clear blueprint for extending or customizing the path conversion strategy with substantial performance benefits.
+
+**Important Note**: Eulerian path-based positional encodings were part of experimental features that have been discontinued. The `eulerian_position` configuration variable is no longer supported and should not be referenced in current implementations.
 
 ## Appendices
 

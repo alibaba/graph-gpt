@@ -3,12 +3,9 @@
 <cite>
 **Referenced Files in This Document**
 - [collator.py](file://src/data/collator.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
-- [dataset_iterable.py](file://src/data/dataset_iterable.py)
-- [vocab_builder.py](file://src/data/vocab_builder.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [masking.py](file://src/data/tokenizer/masking.py)
+- [base_configs.py](file://src/conf/base_configs.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 - [pretrain_mode.py](file://src/training/pretrain_mode.py)
 - [train_pretrain.py](file://examples/train_pretrain.py)
@@ -18,10 +15,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated position_ids computation section to reflect simplified logic without cyclic encoding system
-- Revised padding logic documentation to clarify conditional position_ids handling
+- Removed documentation of dynamic attribute masking ratio calculation system from DataCollatorForGST
+- Updated collator section to reflect simplified collation process without dynamic masking
+- Revised position_ids computation section to reflect simplified logic without cyclic encoding system
+- Updated architecture diagrams to show streamlined collation flow
 - Enhanced troubleshooting guide with position_ids-related debugging guidance
-- Updated architecture diagrams to show simplified position_ids flow
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -38,14 +36,13 @@
 ## Introduction
 This document explains the collation and batch processing system in Graph-GPT. It focuses on how individual graph samples are transformed into model-ready batches, including tokenization, sequence padding, attention mask generation, and integration with PyTorch DataLoader and distributed training. It also covers memory optimization techniques, custom collation strategies for different graph tasks, and performance profiling approaches.
 
-**Updated** The collation process now uses simplified position_ids computation that conditionally handles positional encoding without the complex cyclic encoding system, making the pipeline more robust and easier to maintain.
+**Updated** The collation process now uses a simplified approach without dynamic attribute masking ratio calculation. The complex system that calculated attr_mask_ratio based on training progress has been eliminated, making the pipeline more straightforward and maintainable.
 
 ## Project Structure
 The collation pipeline spans several modules:
 - Tokenization and packing of graph samples into token sequences
 - Collation to batched tensors with padding and attention masks
 - DataLoader integration and distributed sampling
-- Attention mask utilities for causal/bidirectional and boundary-aware masking
 - Example training scripts and configurations
 
 ```mermaid
@@ -54,54 +51,44 @@ subgraph "Data Pipeline"
 DS["IterableDataset / MapDataset"]
 TOK["GSTTokenizer / StackedGSTTokenizer"]
 PAD["Padding & Packing"]
-MASK["Attention Masks"]
 POS["Position IDs Computation"]
 end
 subgraph "PyTorch DataLoader"
 DL["DataLoader"]
-WIF["worker_init_fn_seed"]
 CF["collate_fn (DataCollatorForGST)"]
 end
 subgraph "Training"
 TU["training_utils.batch_training"]
-CFG["TrainingConfig / Distributed"]
 end
 DS --> TOK
 TOK --> PAD
 PAD --> POS
-POS --> MASK
-MASK --> CF
+POS --> CF
 CF --> DL
 DL --> TU
-CFG --> DL
 ```
 
 **Diagram sources**
-- [dataset_iterable.py](file://src/data/dataset_iterable.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
 - [collator.py](file://src/data/collator.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 
 **Section sources**
-- [dataset_iterable.py](file://src/data/dataset_iterable.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
 - [collator.py](file://src/data/collator.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 
 ## Core Components
-- DataCollatorForGST: Applies tokenization and dynamic padding to a batch of graph samples, returning a dictionary of tensors ready for the model.
+- DataCollatorForGST: Applies tokenization and padding to a batch of graph samples, returning a dictionary of tensors ready for the model.
 - GSTTokenizer: Converts a graph into a tokenized sequence, generates labels and attention masks, and supports task-specific augmentation.
-- Attention mask utilities: Build 4D attention masks for causal/bidirectional and boundary-aware scenarios.
+- Position IDs computation: Simplified system that conditionally generates position_ids without complex cyclic encoding.
 - DataLoader integration: Handles sharding, worker initialization, and collation for both Map-style and Iterable datasets.
 - Distributed training: Manages sampler distribution across ranks and worker splits for Iterable datasets.
 
 **Section sources**
 - [collator.py](file://src/data/collator.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 ## Architecture Overview
 The collation pipeline transforms raw graphs into tokenized sequences, pads them to a uniform length, and constructs attention masks. The resulting batch is fed into the model via DataLoader with a custom collate function.
@@ -126,9 +113,8 @@ TU-->>TU : forward/backward/update
 ```
 
 **Diagram sources**
-- [tokenizer.py](file://src/data/tokenizer.py)
 - [collator.py](file://src/data/collator.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 
 ## Detailed Component Analysis
@@ -137,8 +123,8 @@ TU-->>TU : forward/backward/update
 - Purpose: Tokenize a batch of graphs and pad to a common length, returning tensors for model consumption.
 - Key behaviors:
   - Delegates tokenization to the tokenizer and adds an index field.
-  - Calls tokenizer.pad to handle padding, attention mask creation, and optional boundary masking.
-  - Supports dynamic scheduling of attribute masking ratio during training.
+  - Calls tokenizer.pad to handle padding and attention mask creation.
+  - **Updated** No longer implements dynamic attribute masking ratio calculation system.
 - Inputs: List of graphs (or tuples of index and graph).
 - Output: Dictionary containing tensors such as input_ids, labels, attention_mask, position_ids, and others depending on the task.
 
@@ -153,10 +139,6 @@ class DataCollatorForGST {
 +pad_to_multiple_of
 +label_pad_token_id
 +return_tensors
-+mask_boundary
-+global_steps
-+total_num_steps
-+num_workers
 +__call__(graphs, return_tensors) Dict
 }
 ```
@@ -173,7 +155,7 @@ class DataCollatorForGST {
   - Tokenizes nodes/edges/graphs into tokens and decorates with structure and semantics.
   - Generates labels for various tasks (MLM, denoising, classification).
   - Builds position ids and attention masks; supports packed sequences for multi-graph training.
-  - Task-specific augmentation and masking strategies (e.g., scheduled masking).
+  - **Updated** No longer uses complex dynamic masking ratio calculation system.
 - Padding:
   - Determines batch sequence length based on the longest sequence in the batch and configured multiples.
   - Pads input_ids, labels, position_ids, attention_mask, and optional embeddings.
@@ -196,14 +178,12 @@ Pad --> Out(["Batched tensors"])
 ```
 
 **Diagram sources**
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [masking.py](file://src/data/tokenizer/masking.py)
 
 **Section sources**
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [masking.py](file://src/data/tokenizer/masking.py)
 
 ### Attention Mask Utilities
 - Purpose: Construct 4D attention masks for causal/bidirectional and boundary-aware masking.
@@ -225,10 +205,10 @@ F --> G
 ```
 
 **Diagram sources**
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 **Section sources**
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 ### Dataset Iterables and Streaming
 - ShaDowKHopSeqIterDataset: Streams localized subgraphs around randomly selected nodes, yielding ego-k-hop sampled subgraphs.
@@ -254,12 +234,12 @@ CF-->>DL : batched tensors
 ```
 
 **Diagram sources**
-- [dataset_iterable.py](file://src/data/dataset_iterable.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [pretrain_mode.py](file://src/training/pretrain_mode.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 **Section sources**
-- [dataset_iterable.py](file://src/data/dataset_iterable.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [pretrain_mode.py](file://src/training/pretrain_mode.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 ### DataLoader Integration and Distributed Training
 - DataLoader configuration:
@@ -289,11 +269,11 @@ DLn --> CF
 ```
 
 **Diagram sources**
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 - [pretrain_mode.py](file://src/training/pretrain_mode.py)
 
 **Section sources**
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 - [pretrain_mode.py](file://src/training/pretrain_mode.py)
 
 ### Memory Optimization Techniques
@@ -307,13 +287,13 @@ DLn --> CF
   - Prefetch factor and pin_memory improve CPU-to-GPU transfer latency.
 
 **Section sources**
-- [tokenizer.py](file://src/data/tokenizer.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [training_utils.py](file://src/utils/training_utils.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 ### Custom Collation Strategies for Different Graph Tasks
 - Pretraining (MLM):
-  - Scheduled masking ratio (SMTP) varies over time; boundary masking disabled for packed sequences.
+  - **Updated** Uses fixed masking ratio configuration instead of dynamic scheduling; boundary masking disabled for packed sequences.
 - Contrastive Learning (CL):
   - Extends sequences with a summary token to avoid repeated EOS usage.
 - Node-level tasks:
@@ -332,8 +312,8 @@ Examples of task-specific preparation functions:
 **Updated** Position IDs handling is now simplified across all task types. The system conditionally computes position_ids only when needed, eliminating the complex cyclic encoding system that was previously used for certain graph traversal patterns.
 
 **Section sources**
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [base_configs.py](file://src/conf/base_configs.py)
 
 ### Relationship Between Collation and Tokenization
 - Tokenization produces token sequences and labels; collation ensures they are padded and shaped for the model.
@@ -343,40 +323,33 @@ Examples of task-specific preparation functions:
 **Updated** The position_ids computation has been simplified to use a straightforward sequential approach rather than complex cyclic encoding. This makes the system more robust and easier to debug while maintaining compatibility with RoPE-based positional encodings.
 
 **Section sources**
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [training_utils.py](file://src/utils/training_utils.py)
 
 ## Dependency Analysis
-- DataCollatorForGST depends on GSTTokenizer for tokenization and on attn_mask_utils for boundary masking.
-- GSTTokenizer depends on tokenizer_utils for task-specific input preparation and masking strategies.
-- DataLoader integration depends on loader_utils for sampler distribution and worker initialization.
+- DataCollatorForGST depends on GSTTokenizer for tokenization.
+- GSTTokenizer depends on masking strategies for task-specific input preparation.
+- DataLoader integration depends on training_utils for sampler distribution and worker initialization.
 - Training integration depends on training_utils for moving tensors to device and performing forward/backward/update.
 
 ```mermaid
 graph TB
 DC["DataCollatorForGST"] --> TK["GSTTokenizer"]
-TK --> TU["tokenizer_utils"]
-TK --> AMU["attn_mask_utils"]
+TK --> MSK["masking.py"]
 DC --> DL["DataLoader"]
-DL --> LU["loader_utils"]
-DL --> TR["training_utils"]
+DL --> TU["training_utils"]
 ```
 
 **Diagram sources**
 - [collator.py](file://src/data/collator.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [masking.py](file://src/data/tokenizer/masking.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 
 **Section sources**
 - [collator.py](file://src/data/collator.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
-- [attn_mask_utils.py](file://src/utils/attn_mask_utils.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [masking.py](file://src/data/tokenizer/masking.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 
 ## Performance Considerations
@@ -413,14 +386,13 @@ DL --> TR["training_utils"]
 **Updated** Added troubleshooting guidance for position_ids computation issues. The simplified system should resolve most position-related problems, but these checks help identify edge cases in packed sequence handling.
 
 **Section sources**
-- [tokenizer.py](file://src/data/tokenizer.py)
-- [loader_utils.py](file://src/utils/loader_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 
 ## Conclusion
 The Graph-GPT collation and batch processing system integrates tokenization, padding, and attention mask generation into a robust pipeline suitable for diverse graph tasks. It supports streaming datasets, distributed training, and memory-efficient batching strategies. By leveraging task-specific input preparation and attention mask utilities, it enables scalable pretraining and fine-tuning across node, edge, and graph-level objectives.
 
-**Updated** The recent simplification of position_ids computation and padding logic has made the system more robust and maintainable while preserving all essential functionality for RoPE-based positional encoding and packed sequence handling.
+**Updated** The recent simplification of the collation process has made the system more robust and maintainable while preserving all essential functionality for RoPE-based positional encoding and packed sequence handling.
 
 ## Appendices
 
@@ -439,6 +411,6 @@ The position_ids computation follows a simplified approach:
 4. **Memory Efficient**: Eliminates complex cyclic encoding calculations
 
 **Section sources**
-- [tokenizer_utils.py](file://src/utils/tokenizer_utils.py)
+- [core.py](file://src/data/tokenizer/core.py)
 - [modeling_common.py](file://src/models/graphgpt/modeling_common.py)
 - [utils_graphgpt.py](file://src/models/graphgpt/utils_graphgpt.py)
