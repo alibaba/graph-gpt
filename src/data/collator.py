@@ -62,9 +62,6 @@ class DataCollatorForGST:
     pad_to_multiple_of: Optional[int] = None
     label_pad_token_id: int = -100
     return_tensors: str = "pt"
-    global_steps: Optional[int] = None
-    total_num_steps: Optional[int] = None
-    num_workers: Optional[int] = None
 
     def __call__(
         self, graphs: List[Union[Tuple[int, Data], Dict]], return_tensors=None
@@ -75,16 +72,6 @@ class DataCollatorForGST:
         def _add_idx_to_dict(dict_: Dict, index: int):
             dict_.update({"idx": index})
             return dict_
-
-        if (self.global_steps is not None) and (self.total_num_steps is not None):
-            worker_id = torch.utils.data.get_worker_info().id
-            self.tokenizer.attr_mask_ratio = (
-                1 - (self.global_steps + worker_id) / self.total_num_steps
-            )
-            print(
-                f"[worker_id {worker_id}] attr_mask_ratio: {self.tokenizer.attr_mask_ratio}, global_steps: {self.global_steps + worker_id}"
-            ) if (self.global_steps + worker_id) % 100 == 0 else None
-            self.global_steps += self.num_workers
 
         features = (
             [
@@ -104,7 +91,6 @@ class DataCollatorForGST:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=return_tensors,
         )
-        # print(f"[worker_id {worker_id}] attr_mask_ratio: {self.tokenizer.attr_mask_ratio}, global_steps: {self.global_steps+worker_id}, features ele shape: {features['input_ids'].shape}")
         # TODO: implement decoding input_ids
         return features
 

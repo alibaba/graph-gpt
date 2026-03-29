@@ -283,7 +283,6 @@ class Config:
 
     # Additional parameters not categorized; historical params for experimental ONLY, NOT used ANYMORE
     with_prob: int = 0  # sample graphs for training proportional to their number of eulerian paths/num_nodes
-    attr_mask_ratio: int = 0
     do_test: int = 0
     tot_samples: int = 10000  # num of samples for estimating tokens-per-sample
 

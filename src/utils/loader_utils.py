@@ -680,8 +680,6 @@ def initialize_pt_valid_loader(
         #     {"name": "shortest_path_length", "valid": 1}
         # ]
         # gtokenizer_valid = tokenizer_cls(valid_tokenizer_config, add_eos=False)
-        # if valid_tokenizer_config["structure"]["nx"]["enable"]:
-        #     gtokenizer_valid.attr_mask_ratio = 1  # mask all attr
         # inspect_tokenization_results(train_dataset, gtokenizer_valid)
         # gtokenizer_valid = gtokenizer
         gtokenizer_valid = tokenizer_cls(
