@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 
 
 # ===================================================================
-# 1. 独立的 Dataclass 子配置
+# 1. Independent Dataclass Sub-configurations
 # ===================================================================
 
 
@@ -236,7 +236,7 @@ class DenoisingRegressionConfig:
 
 
 # ===================================================================
-# 2. 更新主 Dataclass 以使用所有子配置
+# 2. Update Main Dataclass to Use All Sub-configurations
 # ===================================================================
 
 
@@ -248,7 +248,7 @@ class GraphGPTModelConfig:
 
     model_type: str = "graphgpt"
     # -------------------------------------------------------------------
-    # 核心模型架构 (Core Model Architecture)
+    # Core Model Architecture
     # -------------------------------------------------------------------
     vocab_size: int = 32000
     hidden_size: int = 4096
@@ -273,14 +273,14 @@ class GraphGPTModelConfig:
     attn_implementation: str = "sdpa"
 
     # -------------------------------------------------------------------
-    # GraphGPT 特有参数 (General & Graph-Specific Parameters)
+    # General & Graph-Specific Parameters
     # -------------------------------------------------------------------
     causal_attention: bool = False
     rope_range: int = 0
     layer_scale_init_value: float = 0.0
 
     # -------------------------------------------------------------------
-    # 模块化子配置 (Modular Sub-configs)
+    # Modular Sub-configs
     # -------------------------------------------------------------------
     dropout_settings: DropoutConfig = field(default_factory=DropoutConfig)
     graph_input: GraphInputConfig = field(default_factory=GraphInputConfig)
@@ -295,7 +295,7 @@ class GraphGPTModelConfig:
     ft_head: FinetuningHeadConfig = field(default_factory=FinetuningHeadConfig)
 
     # -------------------------------------------------------------------
-    # Tokenizer 和元数据 (Tokenizer and Metadata)
+    # Tokenizer and Metadata
     # -------------------------------------------------------------------
     pad_token_id: int = 0
     bos_token_id: int = 1
@@ -327,7 +327,7 @@ class GraphGPTModelConfig:
 
 
 # ===================================================================
-# 3. 示例：如何使用最终的配置
+# 3. Example: How to Use the Final Configuration
 # ===================================================================
 if __name__ == "__main__":
     from omegaconf import OmegaConf
@@ -337,11 +337,11 @@ if __name__ == "__main__":
     print("--- Fully Modular Configuration ---")
     print(OmegaConf.to_yaml(conf))
 
-    # 访问更深层次的嵌套配置
+    # Access deeper nested configurations
     print(f"\nDownstream Pooling Method: {conf.ft_head.pooling_method}")
     print(f"3D Position Bins: {conf.molecular_input.pos_bins}")
 
-    # 模拟从命令行覆盖
+    # Simulate command-line overrides
     cli_overrides = [
         "downstream_task.mlp=[1024, 512]",
         "downstream_task.loss_type=cross_entropy",

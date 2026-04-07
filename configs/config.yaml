@@ -7,10 +7,10 @@ defaults:
   - generation: base
   - override hydra/launcher: basic
 
-# 主要配置分组
+# Main configuration groups
 project_name: "graph-gpt"
 
-# 可以通过命令行覆盖的参数
+# Parameters that can be overridden via command line
 hydra:
   run:
     dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

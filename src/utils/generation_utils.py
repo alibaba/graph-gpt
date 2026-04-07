@@ -156,15 +156,15 @@ def _batch_unmask_without_for_loop(
     if alg == "origin":
         t, s = timesteps[i], timesteps[i + 1]
         p_transfer = 1 - s / t if i < steps - 1 else 1.0
-        # 为所有位置采样，而不仅仅是 mask 位置
+        # Sample for all positions, not just mask positions
         _, x0_candidates = sample_tokens(
             logits, temperature=temperature, top_p=top_p, top_k=top_k
         )  # x0_candidates shape: [bz, total_tokens]
-        # 创建一个随机掩码来决定哪些 token 被更新
+        # Create a random mask to decide which tokens get updated
         transfer_mask = torch.rand(x.shape, device=x.device) < p_transfer
-        # 只有在当前是 [MASK] 并且随机掩码为 True 的位置才更新
+        # Only update positions that are currently [MASK] and where random mask is True
         update_positions = mask_index & transfer_mask
-        # 使用 torch.where 高效地进行批处理更新
+        # Use torch.where for efficient batched updates
         x = torch.where(update_positions, x0_candidates, x)
         i += 1
     else:  # maskgit_plus, topk_margin, entropy
@@ -176,7 +176,7 @@ def _batch_unmask_without_for_loop(
             # if no tokens to unmask, move to the next step, i.e., i += 1
             t, s = timesteps[i], timesteps[i + 1]
             p_transfer = 1 - s / t if i < steps - 1 else 1.0
-            # 每个样本需要 unmask 的数量，向下取整; num_transfer_per_sample -> shape: [bz]
+            # Number of tokens to unmask per sample, rounded down; num_transfer_per_sample -> shape: [bz]
             num_transfer_per_sample = torch.floor(
                 num_masked_per_sample * p_transfer
             ).int()  # shape: [bz]
@@ -184,7 +184,7 @@ def _batch_unmask_without_for_loop(
             i += 1
 
         # 2. Get confidence scores and candidate tokens
-        # `sample_tokens` 内部的 softmax 和 top_k/p 都是在最后一个维度上操作，天然支持批处理
+        # `sample_tokens` internal softmax and top_k/p operate on the last dimension, naturally supporting batch processing
         confidence, x0_candidates = sample_tokens(
             logits,  # [bz, seq*next_n, vocab]
             temperature=temperature,
@@ -212,18 +212,18 @@ def _batch_unmask_without_for_loop(
         # which results in a deterministic top-k selection.
 
         # 3. Get the indices to unmask using our (potentially perturbed) confidence
-        # `torch.topk` 需要一个固定的 k。一个常见的策略是使用批次中最大的 k 值，
-        # 然后对不足 k 的样本进行处理。一个更简单的近似是使用一个平均的 k。
-        # 这里我们采用更精确但略复杂的方法：对每个样本选择其对应的 top-k。
-        # 这通常需要循环，但我们可以用一个技巧来向量化它。
-        # 然而，最直接的批处理方法是使用一个固定的k。
-        # 我们选择批次中最大的 num_transfer 作为 k。
+        # `torch.topk` requires a fixed k. A common strategy is to use the largest k value in the batch,
+        # then handle samples with fewer tokens. A simpler approximation is to use an average k.
+        # Here we use a more precise but slightly complex method: select top-k for each sample.
+        # This usually requires a loop, but we can vectorize it with a trick.
+        # However, the most straightforward batched method is to use a fixed k.
+        # We choose the largest num_transfer in the batch as k.
         _, transfer_indices = torch.topk(confidence, k=k, dim=1)  # shape: [bz, k]
 
-        # 4. 执行更新
-        # 4.1. 首先，获取所有k个候选更新值: shape: [bz, k]
+        # 4. Perform update
+        # 4.1. First, get all k candidate update values: shape: [bz, k]
         updates = torch.gather(x0_candidates, 1, transfer_indices)
-        # 4.2. 确定哪些位置是“多余”的更新，需要被变回 MASK
+        # 4.2. Determine which positions are "excess" updates that need to be changed back to MASK
         # arange shape: [1, k], num_transfer_per_sample[:, None] shape: [bz, 1]
         # mask_out_mask shape: [bz, k]
         arange = torch.arange(k, device=device)[None, :]

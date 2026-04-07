@@ -6,18 +6,21 @@
 - [flex_attn_utils.py](file://src/utils/flex_attn_utils.py)
 - [modeling_helpers.py](file://src/models/graphgpt/modeling_helpers.py)
 - [utils_graphgpt.py](file://src/models/graphgpt/utils_graphgpt.py)
-- [tokenizer.py](file://src/data/tokenizer.py)
+- [core.py](file://src/data/tokenizer/core.py)
+- [collator.py](file://src/data/collator.py)
 - [training_utils.py](file://src/utils/training_utils.py)
 - [configuration_graphgpt.py](file://src/models/graphgpt/configuration_graphgpt.py)
 - [modeling_finetune.py](file://src/models/graphgpt/modeling_finetune.py)
+- [pretrain.py](file://src/data/tokenizer/strategies/task_prep/pretrain.py)
+- [packing.py](file://src/data/tokenizer/strategies/packing.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Updated to reflect Applied Changes: changed _compile parameter in build_flex_block_mask function from False to True, enabling PyTorch compilation optimizations for attention mask generation
-- Enhanced documentation to reflect performance improvements and compilation settings
-- Updated troubleshooting guide to address compilation optimization benefits
-- Revised performance considerations to highlight PyTorch compilation benefits
+- Updated to reflect Applied Changes: v0.8.0 introduces major performance optimizations including Flex Attention with sequence packing for efficient multi-sample training, AI-optimized Eulerian path algorithms, and SDPA support with automatic validation fallback
+- Enhanced documentation to cover new sequence packing capabilities, AI-optimized path algorithms, and PyTorch compilation optimizations
+- Updated performance considerations to highlight new compilation settings and memory efficiency improvements
+- Revised troubleshooting guide to address new sequence packing scenarios and attention mode configurations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -33,6 +36,12 @@
 ## Introduction
 This document provides comprehensive technical documentation for Graph-GPT attention masking utilities designed for graph sequence processing. The system features enhanced tokenizer-collator integration with simplified attention mask construction, sophisticated sample_lens parameter support for memory-efficient processing of variable-length sequences, and improved unified attention system. The recent updates address critical parameter signature issues, fix flex attention conditional logic bugs, implement PyTorch version compatibility checking, and enhance flex attention functionality to work correctly in both training and evaluation modes. The system explains the implementation of causal and bidirectional attention masks, padding handling, and sequence length management, with particular emphasis on the new sample_lens parameter that enables sophisticated attention mechanisms and memory management for variable-length sequences.
 
+**Key v0.8.0 Enhancements:**
+- Flex Attention with sequence packing for efficient multi-sample training
+- AI-optimized Eulerian path algorithms for graph traversal
+- SDPA support with automatic validation fallback
+- PyTorch compilation optimizations for attention mask generation
+
 ## Project Structure
 The attention masking functionality spans several modules with unified sample_lens parameter support, custom flex attention implementation, and simplified attention processing:
 - Enhanced tokenizer-collator integration with simplified attention mask construction using sample_lens parameter
@@ -47,8 +56,9 @@ The attention masking functionality spans several modules with unified sample_le
 ```mermaid
 graph TB
 subgraph "Enhanced Tokenizer-Collator Integration"
-TC1["src/data/tokenizer.py<br/>Simplified attention mask construction<br/>sample_lens parameter support"]
+TC1["src/data/tokenizer/core.py<br/>AI-optimized Eulerian path algorithms<br/>Sequence packing support"]
 CC1["src/data/collator.py<br/>Batch processing with masks<br/>sample_lens parameter passing"]
+PP1["src/data/tokenizer/strategies/packing.py<br/>SequencePacker for multi-sample training<br/>Efficient memory utilization"]
 end
 subgraph "Custom Flex Attention"
 CF1["src/models/graphgpt/modeling_helpers.py<br/>graphgpt_flex_attention_forward<br/>ALL_ATTENTION_FUNCTIONS.register"]
@@ -61,10 +71,11 @@ U2["src/utils/flex_attn_utils.py<br/>Consolidated create_sparse_mask<br/>build_f
 U3["src/models/graphgpt/utils_graphgpt.py<br/>Unified Attention Support<br/>sample_lens integration"]
 end
 subgraph "Training Integration"
-TU1["src/utils/training_utils.py<br/>sample_lens parameter passing"]
+TU1["src/utils/training_utils.py<br/>sample_lens parameter passing<br/>Multi-sample training support"]
 end
-T1["src/data/tokenizer.py"] --> TC1
+T1["src/data/tokenizer/core.py"] --> TC1
 TC1 --> CC1
+CC1 --> PP1
 CC1 --> TU1
 U2 --> CF1
 U3 --> CF1
@@ -72,15 +83,19 @@ TU1 --> CF1
 ```
 
 **Diagram sources**
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 - [modeling_helpers.py:49-152](file://src/models/graphgpt/modeling_helpers.py#L49-L152)
 - [flex_attn_utils.py:20-288](file://src/utils/flex_attn_utils.py#L20-L288)
 - [utils_graphgpt.py:65-292](file://src/models/graphgpt/utils_graphgpt.py#L65-L292)
 
 **Section sources**
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 - [modeling_helpers.py:49-152](file://src/models/graphgpt/modeling_helpers.py#L49-L152)
 - [flex_attn_utils.py:20-288](file://src/utils/flex_attn_utils.py#L20-L288)
 - [utils_graphgpt.py:65-292](file://src/models/graphgpt/utils_graphgpt.py#L65-L292)
@@ -90,6 +105,19 @@ This section outlines the primary mask-related components and their roles, focus
 
 ### Enhanced Tokenizer-Collator Integration with Simplified Attention Mask Construction
 **Updated** The tokenizer-collator integration now provides simplified attention mask construction with enhanced sample_lens parameter support:
+
+- **AI-Optimized Eulerian Path Algorithms**
+  - Purpose: Efficient graph traversal using Eulerian path construction for optimal token ordering
+  - Key function: [graph2path function in core.py:120](file://src/data/tokenizer/core.py#L120)
+  - Features: Optimized path construction for large graphs with configurable node scope limits
+  - Benefits: Reduced computational overhead and improved memory efficiency for graph tokenization
+
+- **Sequence Packing Support**
+  - Purpose: Enable efficient multi-sample training through sequence packing
+  - Key function: [setup_sequence_packing in core.py:91-107](file://src/data/tokenizer/core.py#L91-L107)
+  - Features: SequencePacker class with configurable maximum position embeddings (mpe)
+  - Input: mpe (maximum packed length), dataset, sampler, random_ratio
+  - Output: Packed sequences with proper separation tokens
 
 - **Simplified Attention Mask Construction**
   - Purpose: Streamlined mask generation process with reduced complexity
@@ -266,7 +294,10 @@ This section outlines the primary mask-related components and their roles, focus
   - Benefits: Enables molecular dynamics force prediction through attention mechanisms
 
 **Section sources**
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
+- [pretrain.py:206-231](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L206-L231)
 - [flex_attn_utils.py:20-288](file://src/utils/flex_attn_utils.py#L20-L288)
 - [utils_graphgpt.py:65-292](file://src/models/graphgpt/utils_graphgpt.py#L65-L292)
 - [attn_mask_utils.py:12-124](file://src/utils/attn_mask_utils.py#L12-L124)
@@ -280,14 +311,17 @@ The enhanced mask pipeline integrates tokenizer-collator outputs with model-leve
 sequenceDiagram
 participant Tok as "Enhanced Tokenizer"
 participant Coll as "DataCollator"
+participant Pack as "SequencePacker"
 participant Task as "Task Preparation"
 participant Model as "GraphGPT Model"
 participant CustomFlex as "Custom Flex Attention"
 participant FlexUtils as "Flex Attention Utils"
 participant FlexHelpers as "Flex Helpers"
-Tok->>Tok : "tokenize(graph)<br/>produce input_ids, labels, attention_mask, sample_lens"
+Tok->>Tok : "tokenize(graph)<br/>AI-optimized Eulerian path<br/>produce input_ids, labels, attention_mask, sample_lens"
 Tok->>Task : "prepare_inputs_for_task()<br/>add sample_lens for unified sequences"
 Task-->>Tok : "modified in_dict with sample_lens"
+Tok->>Pack : "setup_sequence_packing(mpe)<br/>configure sequence packing"
+Pack-->>Tok : "packed sequences with split_lens, attn_modes"
 Tok->>Coll : "pad(features)<br/>maintain sample_lens as list"
 Coll-->>Tok : "batched tensors incl. attention_mask, sample_lens"
 Coll->>Model : "batched tensors + sample_lens"
@@ -304,18 +338,20 @@ Model->>Model : "forward(...) with attention_mask"
 ```
 
 **Diagram sources**
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [task_prep.py:155-179](file://src/data/tokenizer/task_prep.py#L155-L179)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [pretrain.py:206-231](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L206-L231)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
 - [modeling_helpers.py:156-169](file://src/models/graphgpt/modeling_helpers.py#L156-L169)
 - [modeling_helpers.py:66-144](file://src/models/graphgpt/modeling_helpers.py#L66-L144)
 - [flex_attn_utils.py:161-208](file://src/utils/flex_attn_utils.py#L161-L208)
 - [attn_mask_utils.py:12-84](file://src/utils/attn_mask_utils.py#L12-L84)
 
 **Section sources**
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [task_prep.py:155-179](file://src/data/tokenizer/task_prep.py#L155-L179)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [pretrain.py:206-231](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L206-L231)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
 - [modeling_helpers.py:156-169](file://src/models/graphgpt/modeling_helpers.py#L156-L169)
 - [modeling_helpers.py:66-144](file://src/models/graphgpt/modeling_helpers.py#L66-L144)
 - [flex_attn_utils.py:161-208](file://src/utils/flex_attn_utils.py#L161-L208)
@@ -328,10 +364,11 @@ Model->>Model : "forward(...) with attention_mask"
 
 ```mermaid
 flowchart TD
-Start(["Start Enhanced Tokenizer-Collator Integration"]) --> Tokenize["GSTTokenizer.tokenize()<br/>Generate raw sequences"]
+Start(["Start Enhanced Tokenizer-Collator Integration"]) --> Tokenize["GSTTokenizer.tokenize()<br/>AI-optimized Eulerian path<br/>Generate raw sequences"]
 Tokenize --> TaskPrep["prepare_inputs_for_task()<br/>Add task-specific tokens"]
 TaskPrep --> CheckPacked{"Packed/unified sequence?"}
-CheckPacked --> |Yes| AddSampleLens["Add sample_lens for unified sequences<br/>sample_lens, split_lens, attn_modes"]
+CheckPacked --> |Yes| SetupPacking["setup_sequence_packing(mpe)<br/>Configure sequence packing"]
+SetupPacking --> AddSampleLens["Add sample_lens for unified sequences<br/>sample_lens, split_lens, attn_modes"]
 CheckPacked --> |No| AddBasicLens["Add basic sample_lens and attn_modes"]
 AddSampleLens --> Pad["GSTTokenizer.pad()<br/>Maintain sample_lens as Python list"]
 AddBasicLens --> Pad
@@ -341,16 +378,16 @@ TrainUtils --> Return["Return processed batch"]
 ```
 
 **Diagram sources**
-- [tokenizer.py:400-578](file://src/data/tokenizer.py#L400-L578)
-- [task_prep.py:155-179](file://src/data/tokenizer/task_prep.py#L155-L179)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [pretrain.py:206-231](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L206-L231)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 
 **Section sources**
-- [tokenizer.py:400-578](file://src/data/tokenizer.py#L400-L578)
-- [task_prep.py:155-179](file://src/data/tokenizer/task_prep.py#L155-L179)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [pretrain.py:206-231](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L206-L231)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 
 ### Unified Attention System with sample_lens
 **Updated** The unified attention system provides sophisticated sequence processing capabilities through the new sample_lens parameter:
@@ -560,6 +597,7 @@ Model->>Model : "forward(...) with attention_mask"
   - Computes boundary indices when requested
   - Handles padding by appending causal splits to maintain attention structure
   - Integrates sample_lens for memory-efficient sequence processing
+  - **AI-Optimized**: Uses Eulerian path algorithms for efficient graph traversal
 
 - **Collator**
   - Calls tokenizer.pad with mask_boundary to compute boundary indices
@@ -567,10 +605,17 @@ Model->>Model : "forward(...) with attention_mask"
   - Maintains backward compatibility with existing mask systems
   - Passes sample_lens parameter through to training utilities
 
+- **Sequence Packing**
+  - **New**: Implements SequencePacker for multi-sample training efficiency
+  - Configurable maximum position embeddings (mpe) for memory optimization
+  - Supports random sampling ratios for diverse training batches
+  - Generates proper separation tokens between packed sequences
+
 **Section sources**
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [task_prep.py:155-179](file://src/data/tokenizer/task_prep.py#L155-L179)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [pretrain.py:206-231](file://src/data/tokenizer/strategies/task_prep/pretrain.py#L206-L231)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
 
 ### Training Utilities Integration
 **Updated** Training utilities now support the new sample_lens parameter for enhanced sequence processing:
@@ -580,9 +625,10 @@ Model->>Model : "forward(...) with attention_mask"
   - Passes sample_lens parameter to model forward methods for unified sequence processing
   - Supports both batched and unified sequence training modes
   - Integrates with DeepSpeed and standard PyTorch training pipelines
+  - **Multi-sample Training**: Enhanced support for sequence packing scenarios
 
 **Section sources**
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 
 ### Attention Interface Registration System
 **New** The attention interface registration system provides seamless switching between SDPA and flex_attention implementations:
@@ -633,7 +679,8 @@ M2 --> H
 H --> U1["attn_mask_utils.py<br/>_prepare_4d_*_attention_mask<br/>PyTorch version compatibility"]
 H --> U2["flex_attn_utils.py<br/>build_*_from_splits, build_flex_block_mask<br/>_compile=True optimization"]
 H --> CF["Custom Flex Attention<br/>graphgpt_flex_attention_forward"]
-T["tokenizer.py"] --> C["collator.py"]
+T["tokenizer/core.py"] --> C["collator.py"]
+C --> P["packing.py"]
 C --> H
 CF --> AF["ALL_ATTENTION_FUNCTIONS.register"]
 U3["utils_graphgpt.py<br/>Unified Attention<br/>sample_lens integration"] --> H
@@ -649,10 +696,11 @@ TU --> M2
 - [modeling_helpers.py:66-144](file://src/models/graphgpt/modeling_helpers.py#L66-L144)
 - [attn_mask_utils.py:12-124](file://src/utils/attn_mask_utils.py#L12-L124)
 - [flex_attn_utils.py:161-208](file://src/utils/flex_attn_utils.py#L161-L208)
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
 - [utils_graphgpt.py:65-122](file://src/models/graphgpt/utils_graphgpt.py#L65-L122)
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 
 **Section sources**
 - [configuration_graphgpt.py:111-111](file://src/models/graphgpt/configuration_graphgpt.py#L111-L111)
@@ -660,10 +708,11 @@ TU --> M2
 - [modeling_helpers.py:66-144](file://src/models/graphgpt/modeling_helpers.py#L66-L144)
 - [attn_mask_utils.py:12-124](file://src/utils/attn_mask_utils.py#L12-L124)
 - [flex_attn_utils.py:161-208](file://src/utils/flex_attn_utils.py#L161-L208)
-- [tokenizer.py:224-270](file://src/data/tokenizer.py#L224-L270)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
+- [core.py:109-210](file://src/data/tokenizer/core.py#L109-L210)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
 - [utils_graphgpt.py:65-122](file://src/models/graphgpt/utils_graphgpt.py#L65-L122)
-- [training_utils.py:30-71](file://src/utils/training_utils.py#L30-L71)
+- [training_utils.py:32-50](file://src/utils/training_utils.py#L32-L50)
 
 ## Performance Considerations
 **Updated** Performance considerations now include the completely rewritten custom flex attention optimizations and the new sample_lens parameter system:
@@ -739,14 +788,21 @@ TU --> M2
   - **Fixed Bug**: The _compile parameter in build_flex_block_mask was corrected from True to False to avoid nested closure compilation issues with and_masks/or_masks functions
   - **Impact**: Resolves torch._dynamo compilation errors when using flex_attention with complex mask combinations
   - **Benefit**: Ensures stable operation of unified attention patterns with nested mask functions
-  - **Compatibility**: Maintains backward compatibility while fixing critical compilation issues
   - **Updated**: The _compile parameter has been changed back to True to enable PyTorch compilation optimizations for attention mask generation, providing performance improvements for complex mask patterns
+
+- **v0.8.0 Performance Enhancements**
+  - **AI-Optimized Eulerian Path Algorithms**: Improved graph traversal efficiency with reduced computational overhead
+  - **Sequence Packing for Multi-Sample Training**: Enhanced memory utilization through efficient sequence packing
+  - **SDPA with Automatic Validation Fallback**: Improved compatibility and reliability across different hardware configurations
+  - **PyTorch Compilation Optimizations**: Significant performance improvements for attention mask generation and processing
 
 **Updated Performance Optimization Details**:
 - **PyTorch Compilation Optimization**: The _compile=True setting in build_flex_block_mask enables PyTorch's compilation engine to optimize attention mask generation, particularly beneficial for complex mask patterns created by and_masks/or_masks functions
 - **Compilation Benefits**: PyTorch compilation can significantly improve performance for repeated mask operations, especially in training scenarios with complex attention patterns
 - **Memory Efficiency**: Combined with the unified attention approach, compilation optimization helps reduce memory overhead for complex mask computations
 - **Runtime Performance**: The compilation optimization is particularly effective for scenarios involving nested mask functions and complex attention patterns
+- **Multi-Sample Training Efficiency**: Sequence packing reduces memory overhead and improves throughput for multi-sample training scenarios
+- **AI-Optimized Path Algorithms**: Eulerian path construction provides optimal token ordering for graph sequences, reducing computational complexity
 
 ## Troubleshooting Guide
 **Updated** Troubleshooting guide now includes custom flex attention specific issues and sample_lens parameter problems:
@@ -821,6 +877,12 @@ TU --> M2
   - Attention configuration: Ensure AtomTaskHead is properly initialized with correct attention settings
   - Memory usage: Check that AtomTaskHead doesn't consume excessive memory for force prediction tasks
 
+- **v0.8.0 Specific Issues**
+  - **Sequence Packing Errors**: Ensure mpe (maximum position embeddings) is properly configured and sequence packing is enabled when using packed sequences
+  - **AI-Optimized Path Algorithm Failures**: Verify graph node count doesn't exceed node_scope limits in tokenizer configuration
+  - **Multi-Sample Training Issues**: Check that sample_lens, split_lens, and attn_modes are properly aligned for packed sequence scenarios
+  - **SDPA Validation Fallback Problems**: Ensure proper fallback occurs when flex_attention is not available or fails
+
 - **Critical PyTorch Compatibility Issues**
   - **Fixed Bug**: Nested closure compilation errors: The _compile parameter in build_flex_block_mask was corrected from True to False to resolve torch._dynamo issues with nested closures from and_masks/or_masks functions
   - **Symptoms**: torch._dynamo compilation failures when using complex mask combinations in flex_attention
@@ -832,18 +894,27 @@ TU --> M2
 - **Compilation Optimization Troubleshooting**: If experiencing issues with the new _compile=True setting, verify that your PyTorch installation includes proper attention extension support and that the environment meets the requirements for torch.compile
 - **Performance Monitoring**: Monitor compilation cache growth and consider clearing caches if experiencing performance degradation over time
 - **Compatibility Testing**: Test the compilation optimization with your specific mask patterns to ensure compatibility with complex attention scenarios
+- **v0.8.0 Migration Issues**: For users upgrading to v0.8.0, verify that sequence packing is properly configured and that AI-optimized path algorithms are functioning correctly
 
 **Section sources**
 - [attn_mask_utils.py:36-38](file://src/utils/attn_mask_utils.py#L36-L38)
 - [modeling_helpers.py:46-48](file://src/models/graphgpt/modeling_helpers.py#L46-L48)
 - [modeling_helpers.py:66-144](file://src/models/graphgpt/modeling_helpers.py#L66-L144)
-- [collator.py:70-111](file://src/data/collator.py#L70-L111)
+- [collator.py:66-95](file://src/data/collator.py#L66-L95)
 - [flex_attn_utils.py:161-208](file://src/utils/flex_attn_utils.py#L161-L208)
 - [utils_graphgpt.py:65-122](file://src/models/graphgpt/utils_graphgpt.py#L65-L122)
 - [utils_graphgpt.py:328-388](file://src/models/graphgpt/utils_graphgpt.py#L328-L388)
+- [core.py:91-107](file://src/data/tokenizer/core.py#L91-L107)
+- [packing.py:34-97](file://src/data/tokenizer/strategies/packing.py#L34-L97)
 
 ## Conclusion
 **Updated** Graph-GPT's attention masking utilities now provide comprehensive support for both traditional and custom flex attention systems, offering flexible attention patterns tailored to graph sequence processing with enhanced sample_lens parameter integration. The enhanced tokenizer-collator integration delivers simplified attention mask construction with sophisticated sample_lens parameter support, enabling memory-efficient processing of variable-length sequences. The completely rewritten custom flex attention implementation fixes critical bugs present in the Transformers-based solution, adds attention dropout via score_modification with hash-based pseudo-random dropout, implements Grouped Query Attention (GQA) support with automatic KV head expansion, and uses optimized torch.compile settings with dynamic=False for improved performance. The system integrates tokenizer/collator outputs with model-level mask application, enabling robust pre-training and fine-tuning workflows with automatic implementation selection between SDPA and custom flex attention paths. The new graphgpt_flex_attention_forward function with ALL_ATTENTION_FUNCTIONS.register() API integration provides seamless attention implementation switching while maintaining backward compatibility.
+
+**v0.8.0 Major Enhancements:**
+- **Flex Attention with Sequence Packing**: Significantly improves multi-sample training efficiency through intelligent sequence packing and memory optimization
+- **AI-Optimized Eulerian Path Algorithms**: Provides superior graph traversal performance with reduced computational overhead
+- **SDPA Support with Automatic Validation Fallback**: Ensures compatibility and reliability across diverse hardware configurations
+- **PyTorch Compilation Optimizations**: Leverages advanced compilation techniques for enhanced performance in attention mask generation
 
 The new sample_lens parameter system enables sophisticated attention mechanisms and memory management for variable-length sequences, complementing existing split_lens and attn_modes systems to provide more efficient computation and reduced memory usage for large-scale graph processing. The addition of unified attention support with sample_lens integration further enhances efficiency for variable-length sequences, making the system suitable for large-scale graph processing applications. Proper configuration of causal_attention, bi_causal flags, the new _attn_implementation flag, and the new sample_lens parameter, combined with careful handling of padding, boundary indices, and the new sample_lens parameter system, ensures efficient and accurate training on large graphs and varied batching strategies. The simplified approach eliminates the bidirectional causal mask preparation system and packed sequence attention system, streamlining the mask generation process while maintaining backward compatibility guarantees for existing code and providing access to advanced custom flex attention capabilities for improved performance and flexibility. The integration of sample_lens with the existing attention infrastructure provides a unified approach to handling variable-length sequences, enabling both memory-efficient unified processing and flexible attention pattern management for diverse graph processing scenarios.
 
@@ -851,4 +922,4 @@ The recent enhancements to tensor construction patterns and type safety improvem
 
 The recent updates to the attention mechanism optimization with conditional SDPA/flex_attention override for training/validation phases, improved AtomTaskHead initialization, and attention interface registration system represent significant advances in attention mechanism design and implementation. These improvements collectively enhance the system's flexibility, performance, and ease of use while maintaining backward compatibility and extending support for advanced attention patterns in graph processing applications.
 
-**Critical Update**: The recent fix to the build_flex_block_mask function addresses a critical compatibility issue with PyTorch's torch.compile by changing the _compile parameter from False to True. This change enables PyTorch compilation optimizations for attention mask generation, providing performance improvements for complex mask patterns. The optimization leverages PyTorch's compilation engine to optimize attention mask generation, particularly beneficial for complex mask patterns created by and_masks/or_masks functions. While this change resolves nested closure compilation issues, it also enables significant performance improvements for attention mask generation in unified attention scenarios. The fix maintains backward compatibility while providing enhanced compilation support for complex attention patterns, ensuring stable operation of unified attention patterns with nested mask functions while delivering improved performance characteristics.
+**Critical Update**: The recent fix to the build_flex_block_mask function addresses a critical compatibility issue with PyTorch's torch.compile by changing the _compile parameter from False to True. This change enables PyTorch compilation optimizations for attention mask generation, providing performance improvements for complex mask patterns. The optimization leverages PyTorch's compilation engine to optimize attention mask generation, particularly beneficial for complex mask patterns created by and_masks/or_masks functions. While this change resolves nested closure compilation issues, it also enables significant performance improvements for attention mask generation in unified attention scenarios. The fix maintains backward compatibility while providing enhanced compilation support for complex attention patterns, ensuring stable operation of unified attention patterns with nested mask functions while delivering improved performance characteristics. The v0.8.0 release represents a major milestone in Graph-GPT's attention system evolution, combining multiple performance optimizations into a cohesive framework for efficient graph sequence processing.

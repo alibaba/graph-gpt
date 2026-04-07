@@ -485,8 +485,10 @@ class PretrainMode(TrainingMode):
                     loader_stats.train_loader, train_stats.i_local
                 ):
                     train_stats.i = i
-                    # ========== 添加打印代码 ===========
-                    if i == 0 and epoch == 0:  # 只在第一个 epoch 的第一个 batch 打印
+                    # ========== Added print code ===========
+                    if (
+                        i == 0 and epoch == 0
+                    ):  # Only print on the first batch of the first epoch
                         print("\n" + "=" * 80)
                         print("DATALOADER OUTPUT INSPECTION")
                         print("=" * 80)

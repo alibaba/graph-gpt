@@ -39,7 +39,6 @@ Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.co
 2. **Major performance optimizations**:
    - **Flex Attention**: Implemented `flex_attention` with sequence packing for efficient multi-sample training, achieving significant speedup
    - **Speed improvements**: AI-optimized Eulerian path algorithms, reduced CUDA sync overhead, tokenization pipeline optimizations
-   - **SDPA support**: Added scaled dot-product attention with automatic validation fallback
 3. **Monitoring & profiling**: Integrated WandB experiment tracking and Torch Profiler for performance analysis
 4. **Code quality**: Major tokenizer refactoring (modular design), removed redundant parameters, added pre-commit enforcement
 

@@ -16,15 +16,17 @@
 - [mode.py](file://src/training/mode.py)
 - [pipeline.py](file://src/training/pipeline.py)
 - [flex_attn_utils.py](file://src/utils/flex_attn_utils.py)
+- [base_configs.py](file://src/conf/base_configs.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
 - Updated attention implementation abstraction section to reflect the new conditional SDPA/flex_attention registration system
-- Enhanced PackedAttention implementation documentation with improved performance optimization and dropout handling
+- Enhanced PackedAttention implementation documentation with improved performance optimization, dropout handling, compiled flex attention, and integrated dropout
 - Added new section on AttentionInterface registration and flex-attention compilation
 - Updated architecture diagrams to show the conditional attention implementation selection
 - Revised integration points to highlight the enhanced attention abstraction layer
+- Added documentation for the new compiled flex attention system and integrated dropout handling
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -39,7 +41,7 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the shared infrastructure that supports both pre-training and fine-tuning GraphGPT models. It focuses on the common transformer backbone, attention mechanisms, positional encoding systems, normalization layers, and supporting utilities for gradient computation, memory optimization, and distributed training. The infrastructure now features streamlined backbone initialization and a unified attention interface that abstracts away implementation differences between SDPA and flex attention modes. Recent enhancements include a conditional SDPA/flex_attention registration system and an improved PackedAttention implementation with enhanced performance optimization and dropout handling.
+This document describes the shared infrastructure that supports both pre-training and fine-tuning GraphGPT models. It focuses on the common transformer backbone, attention mechanisms, positional encoding systems, normalization layers, and supporting utilities for gradient computation, memory optimization, and distributed training. The infrastructure now features streamlined backbone initialization and a unified attention interface that abstracts away implementation differences between SDPA and flex attention modes. Recent enhancements include a conditional SDPA/flex_attention registration system and an improved PackedAttention implementation with enhanced performance optimization, compiled flex attention, and integrated dropout handling.
 
 ## Project Structure
 The shared infrastructure spans several modules:
@@ -90,14 +92,14 @@ MODE --> PIPE
 **Diagram sources**
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
 - [modeling_helpers.py:1-800](file://src/models/graphgpt/modeling_helpers.py#L1-L800)
-- [utils_graphgpt.py:1-626](file://src/models/graphgpt/utils_graphgpt.py#L1-L626)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
 - [modeling_pretrain.py:1-200](file://src/models/graphgpt/modeling_pretrain.py#L1-L200)
 - [modeling_finetune.py:1-200](file://src/models/graphgpt/modeling_finetune.py#L1-L200)
 - [modules_utils.py:1-93](file://src/utils/modules_utils.py#L1-L93)
 - [misc_utils.py:1-540](file://src/utils/misc_utils.py#L1-L540)
 - [attn_mask_utils.py:1-128](file://src/utils/attn_mask_utils.py#L1-L128)
-- [flex_attn_utils.py:1-111](file://src/utils/flex_attn_utils.py#L1-L111)
-- [training_utils.py:1-206](file://src/utils/training_utils.py#L1-L206)
+- [flex_attn_utils.py:1-128](file://src/utils/flex_attn_utils.py#L1-L128)
+- [training_utils.py:1-262](file://src/utils/training_utils.py#L1-L262)
 - [inspection_utils.py:1-167](file://src/utils/inspection_utils.py#L1-L167)
 - [loader_utils.py:1-200](file://src/utils/loader_utils.py#L1-L200)
 - [mode.py:1-48](file://src/training/mode.py#L1-L48)
@@ -106,14 +108,14 @@ MODE --> PIPE
 **Section sources**
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
 - [modeling_helpers.py:1-800](file://src/models/graphgpt/modeling_helpers.py#L1-L800)
-- [utils_graphgpt.py:1-626](file://src/models/graphgpt/utils_graphgpt.py#L1-L626)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
 - [modeling_pretrain.py:1-200](file://src/models/graphgpt/modeling_pretrain.py#L1-L200)
 - [modeling_finetune.py:1-200](file://src/models/graphgpt/modeling_finetune.py#L1-L200)
 - [modules_utils.py:1-93](file://src/utils/modules_utils.py#L1-L93)
 - [misc_utils.py:1-540](file://src/utils/misc_utils.py#L1-L540)
 - [attn_mask_utils.py:1-128](file://src/utils/attn_mask_utils.py#L1-L128)
-- [flex_attn_utils.py:1-111](file://src/utils/flex_attn_utils.py#L1-L111)
-- [training_utils.py:1-206](file://src/utils/training_utils.py#L1-L206)
+- [flex_attn_utils.py:1-128](file://src/utils/flex_attn_utils.py#L1-L128)
+- [training_utils.py:1-262](file://src/utils/training_utils.py#L1-L262)
 - [inspection_utils.py:1-167](file://src/utils/inspection_utils.py#L1-L167)
 - [loader_utils.py:1-200](file://src/utils/loader_utils.py#L1-L200)
 - [mode.py:1-48](file://src/training/mode.py#L1-L48)
@@ -123,7 +125,7 @@ MODE --> PIPE
 - **Streamlined backbone initialization**: Common initialization helpers that select and instantiate the LlamaModel backbone with consistent dropout behavior across pretrain and finetune models
 - **Unified attention interface**: Abstraction layer that provides consistent attention behavior regardless of underlying implementation (SDPA vs flex attention)
 - **Conditional attention implementation selection**: Automatic switching between SDPA and flex_attention based on configuration with enhanced performance optimization
-- **Enhanced PackedAttention implementation**: Improved packed sequence handling with better memory optimization and dropout integration
+- **Enhanced PackedAttention implementation**: Improved packed sequence handling with better memory optimization, compiled flex attention, and integrated dropout integration
 - **Transformer backbone**: Llama-based model with optional dropout in MLP, attention, and embedding layers; supports both packed sequence processing and standard batched sequences
 - **Attention mask utilities**: Causal/bidirectional mask construction and 4D mask expansion for both SDPA and flex attention modes with enhanced parameter validation
 - **Flex-attention mask preparation**: Improved handling of packed sequences with corrected parameter signatures and enhanced mask validation
@@ -139,7 +141,7 @@ MODE --> PIPE
 - [utils_graphgpt.py:133-186](file://src/models/graphgpt/utils_graphgpt.py#L133-L186)
 - [modeling_helpers.py:35-65](file://src/models/graphgpt/modeling_helpers.py#L35-L65)
 - [modeling_helpers.py:396-795](file://src/models/graphgpt/modeling_helpers.py#L396-L795)
-- [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
+- [training_utils.py:7-262](file://src/utils/training_utils.py#L7-L262)
 - [misc_utils.py:472-540](file://src/utils/misc_utils.py#L472-L540)
 - [inspection_utils.py:13-167](file://src/utils/inspection_utils.py#L13-L167)
 
@@ -277,13 +279,15 @@ Layer->>Layer : Execute forward pass
 - [utils_graphgpt.py:161-185](file://src/models/graphgpt/utils_graphgpt.py#L161-L185)
 
 ### Enhanced PackedAttention Implementation
-The PackedAttention implementation has been significantly enhanced with improved performance optimization and dropout handling:
+The PackedAttention implementation has been significantly enhanced with improved performance optimization, compiled flex attention, and integrated dropout handling:
 
 - **Enhanced padding handling**: Better memory optimization by padding to block-aligned length before flex attention computation
 - **Compiled flex attention**: Uses `_compiled_flex_attention` with `dynamic=False` for improved performance and consistency
 - **Integrated dropout**: Enhanced dropout integration through `get_flex_dropout_mod` with proper random seed handling
 - **Memory-efficient processing**: Pads query, key, and value tensors separately and trims results to original sequence length
 - **Consistent output format**: Returns attention output and None for attention weights to maintain compatibility with LlamaAttention
+
+**Updated** Enhanced with compiled flex attention and integrated dropout handling for improved performance and training stability
 
 ```mermaid
 flowchart TD
@@ -315,6 +319,8 @@ Recent enhancements include improved attention mask utilities with conditional S
 - **Compiled flex attention**: `_compiled_flex_attention` with `dynamic=False` for improved performance and reliability
 - **Flex-attention dropout integration**: `get_flex_dropout_mod` provides efficient dropout handling during flex attention computation
 
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
+
 ```mermaid
 flowchart TD
 Start(["Attention Mask Preparation"]) --> CheckImpl{"Attention Implementation?"}
@@ -342,6 +348,8 @@ The flex-attention implementation now includes improved mask preparation specifi
 - **Robust error handling**: Clear validation errors when flex-attention parameters are missing
 - **Optimized mask generation**: Efficient creation of BlockMask objects for flex-attention with proper device placement
 - **Conditional compilation**: Flex attention compiled with `dynamic=False` for improved performance and consistency
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 ```mermaid
 sequenceDiagram
@@ -424,6 +432,8 @@ Loss --> Out["Loss Value"]
 - Gradient checkpointing and cache disabling in training pipeline
 - Memory-efficient loss computation for large batches
 
+**Updated** Enhanced with compiled flex attention system and improved dropout handling
+
 ```mermaid
 sequenceDiagram
 participant TU as "training_utils.py"
@@ -438,10 +448,10 @@ AMP-->>TU : update()
 ```
 
 **Diagram sources**
-- [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
+- [training_utils.py:7-262](file://src/utils/training_utils.py#L7-L262)
 
 **Section sources**
-- [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
+- [training_utils.py:7-262](file://src/utils/training_utils.py#L7-L262)
 - [pipeline.py:149-177](file://src/training/pipeline.py#L149-L177)
 
 ### Distributed Training Support
@@ -506,6 +516,8 @@ InitAgg --> Model
 - Training pipeline enables gradient checkpointing and cache disabling for memory efficiency
 - **Enhanced abstraction layer**: Improved attention implementation selection with automatic registration system
 
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
+
 **Section sources**
 - [modeling_pretrain.py:57-118](file://src/models/graphgpt/modeling_pretrain.py#L57-L118)
 - [modeling_finetune.py:64-106](file://src/models/graphgpt/modeling_finetune.py#L64-L106)
@@ -519,6 +531,8 @@ InitAgg --> Model
 - **Unified interface**: Attention implementations are decoupled from model logic through consistent parameter interfaces
 - **Enhanced flex-attention integration**: Improved coupling between modeling helpers and flex-attention utilities
 - **Conditional registration system**: AttentionInterface provides consistent behavior across SDPA and flex_attention modes
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 ```mermaid
 graph LR
@@ -541,14 +555,14 @@ LU["loader_utils.py"] --> PIPE
 **Diagram sources**
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
 - [modeling_helpers.py:1-800](file://src/models/graphgpt/modeling_helpers.py#L1-L800)
-- [utils_graphgpt.py:1-626](file://src/models/graphgpt/utils_graphgpt.py#L1-L626)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
 - [modeling_pretrain.py:1-200](file://src/models/graphgpt/modeling_pretrain.py#L1-L200)
 - [modeling_finetune.py:1-200](file://src/models/graphgpt/modeling_finetune.py#L1-L200)
 - [modules_utils.py:1-93](file://src/utils/modules_utils.py#L1-L93)
 - [misc_utils.py:1-540](file://src/utils/misc_utils.py#L1-L540)
 - [attn_mask_utils.py:1-128](file://src/utils/attn_mask_utils.py#L1-L128)
-- [flex_attn_utils.py:1-111](file://src/utils/flex_attn_utils.py#L1-L111)
-- [training_utils.py:1-206](file://src/utils/training_utils.py#L1-L206)
+- [flex_attn_utils.py:1-128](file://src/utils/flex_attn_utils.py#L1-L128)
+- [training_utils.py:1-262](file://src/utils/training_utils.py#L1-L262)
 - [loader_utils.py:1-200](file://src/utils/loader_utils.py#L1-L200)
 - [mode.py:1-48](file://src/training/mode.py#L1-L48)
 - [pipeline.py:149-177](file://src/training/pipeline.py#L149-L177)
@@ -556,14 +570,14 @@ LU["loader_utils.py"] --> PIPE
 **Section sources**
 - [modeling_common.py:1-204](file://src/models/graphgpt/modeling_common.py#L1-L204)
 - [modeling_helpers.py:1-800](file://src/models/graphgpt/modeling_helpers.py#L1-L800)
-- [utils_graphgpt.py:1-626](file://src/models/graphgpt/utils_graphgpt.py#L1-L626)
+- [utils_graphgpt.py:1-665](file://src/models/graphgpt/utils_graphgpt.py#L1-L665)
 - [modeling_pretrain.py:1-200](file://src/models/graphgpt/modeling_pretrain.py#L1-L200)
 - [modeling_finetune.py:1-200](file://src/models/graphgpt/modeling_finetune.py#L1-L200)
 - [modules_utils.py:1-93](file://src/utils/modules_utils.py#L1-L93)
 - [misc_utils.py:1-540](file://src/utils/misc_utils.py#L1-L540)
 - [attn_mask_utils.py:1-128](file://src/utils/attn_mask_utils.py#L1-L128)
-- [flex_attn_utils.py:1-111](file://src/utils/flex_attn_utils.py#L1-L111)
-- [training_utils.py:1-206](file://src/utils/training_utils.py#L1-L206)
+- [flex_attn_utils.py:1-128](file://src/utils/flex_attn_utils.py#L1-L128)
+- [training_utils.py:1-262](file://src/utils/training_utils.py#L1-L262)
 - [loader_utils.py:1-200](file://src/utils/loader_utils.py#L1-L200)
 - [mode.py:1-48](file://src/training/mode.py#L1-L48)
 - [pipeline.py:149-177](file://src/training/pipeline.py#L149-L177)
@@ -578,6 +592,9 @@ LU["loader_utils.py"] --> PIPE
 - **Conditional attention selection**: Automatic switching between SDPA and flex_attention based on configuration reduces runtime overhead
 - **Integrated dropout optimization**: Enhanced dropout handling in PackedAttention improves training stability
 - **Streamlined initialization**: Reduced initialization overhead and consistent memory usage patterns
+- **Block size compatibility**: Padding to 128 for flex_attention block size compatibility
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 ## Troubleshooting Guide
 - Parameter inspection: Use trainable parameter counting to diagnose freezing/unfreezing issues
@@ -589,6 +606,9 @@ LU["loader_utils.py"] --> PIPE
 - **Flex-attention debugging**: Ensure all required parameters (`sample_lens`, `split_lens`, `attn_modes`) are provided when using flex-attention mode
 - **Conditional registration**: Verify that AttentionInterface is properly registered for SDPA mode
 - **Initialization consistency**: Ensure streamlined initialization produces expected dropout behavior
+- **Compiled flex attention debugging**: Verify that `_compiled_flex_attention` is properly configured with `dynamic=False`
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 **Section sources**
 - [inspection_utils.py:13-33](file://src/utils/inspection_utils.py#L13-L33)
@@ -597,7 +617,9 @@ LU["loader_utils.py"] --> PIPE
 - [misc_utils.py:231-252](file://src/utils/misc_utils.py#L231-L252)
 
 ## Conclusion
-The shared infrastructure provides a robust, modular foundation for both pre-training and fine-tuning GraphGPT models. The streamlined backbone initialization and unified attention interface ensure architectural consistency, simplify extension, and enable efficient memory and performance optimization across diverse molecular modeling tasks. Recent enhancements include a conditional SDPA/flex_attention registration system and an improved PackedAttention implementation with enhanced performance optimization and dropout handling. The abstraction layer successfully decouples implementation details from model logic, making the system more maintainable, extensible, and performant.
+The shared infrastructure provides a robust, modular foundation for both pre-training and fine-tuning GraphGPT models. The streamlined backbone initialization and unified attention interface ensure architectural consistency, simplify extension, and enable efficient memory and performance optimization across diverse molecular modeling tasks. Recent enhancements include a conditional SDPA/flex_attention registration system and an improved PackedAttention implementation with enhanced performance optimization, compiled flex attention, and integrated dropout handling. The abstraction layer successfully decouples implementation details from model logic, making the system more maintainable, extensible, and performant.
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 ## Appendices
 
@@ -607,11 +629,14 @@ The shared infrastructure provides a robust, modular foundation for both pre-tra
 - Train with AMP and gradient clipping; save/load checkpoints with DDDP/DeepSpeed support
 - **Enhanced attention interface**: Transparently handle both SDPA and flex attention modes with improved parameter handling and conditional selection
 - **Flex-attention with packed sequences**: Properly configure `sample_lens`, `split_lens`, and `attn_modes` for optimal performance with enhanced padding and dropout handling
+- **Compiled flex attention**: Leverage the compiled flex attention system with `dynamic=False` for improved performance and consistency
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 **Section sources**
 - [modeling_common.py:148-184](file://src/models/graphgpt/modeling_common.py#L148-L184)
 - [modeling_helpers.py:35-65](file://src/models/graphgpt/modeling_helpers.py#L35-L65)
-- [training_utils.py:7-206](file://src/utils/training_utils.py#L7-L206)
+- [training_utils.py:7-262](file://src/utils/training_utils.py#L7-L262)
 - [misc_utils.py:69-122](file://src/utils/misc_utils.py#L69-L122)
 
 ### Extension Points
@@ -621,6 +646,9 @@ The shared infrastructure provides a robust, modular foundation for both pre-tra
 - **Enhanced attention interface extensions**: Add new attention implementations that follow the unified interface pattern with proper parameter validation and conditional registration
 - **Flex-attention improvements**: Extend mask preparation utilities for new attention modes and sequence types
 - **Conditional registration system**: Leverage AttentionInterface for consistent behavior across different attention implementations
+- **Compiled flex attention extensions**: Extend the compiled flex attention system for new performance optimizations and dropout handling patterns
+
+**Updated** Enhanced with compiled flex attention system and integrated dropout handling
 
 **Section sources**
 - [modeling_helpers.py:396-795](file://src/models/graphgpt/modeling_helpers.py#L396-L795)

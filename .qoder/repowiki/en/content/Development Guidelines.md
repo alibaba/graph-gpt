@@ -17,15 +17,26 @@
 - [examples/train_pretrain.py](file://examples/train_pretrain.py)
 - [examples/train_supervised.py](file://examples/train_supervised.py)
 - [examples/README.md](file://examples/README.md)
+- [src/data/tokenizer/README.md](file://src/data/tokenizer/README.md)
+- [src/data/tokenizer/base.py](file://src/data/tokenizer/base.py)
+- [src/data/tokenizer/core.py](file://src/data/tokenizer/core.py)
+- [src/data/tokenizer/strategies/padding.py](file://src/data/tokenizer/strategies/padding.py)
+- [src/data/tokenizer/strategies/packing.py](file://src/data/tokenizer/strategies/packing.py)
+- [src/data/tokenizer/strategies/task_prep/base.py](file://src/data/tokenizer/strategies/task_prep/base.py)
+- [src/data/tokenizer/types.py](file://src/data/tokenizer/types.py)
+- [src/data/tokenizer/__init__.py](file://src/data/tokenizer/__init__.py)
+- [tests/test_refactoring_syntax.py](file://tests/test_refactoring_syntax.py)
+- [tests/test_tokenizer_smoke.py](file://tests/test_tokenizer_smoke.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced pre-commit configuration section with detailed setup instructions
-- Updated formatting requirements to include Black code formatter
-- Added comprehensive pre-commit hook documentation
-- Expanded development workflow practices section
-- Updated troubleshooting guide with pre-commit specific issues
+- Enhanced tokenizer architecture section to reflect the major refactoring to modular design principles
+- Updated coding conventions to include strategy pattern implementation guidelines
+- Added comprehensive documentation for the new composition-based tokenizer architecture
+- Expanded testing and quality assurance section with tokenizer-specific testing strategies
+- Updated templates and extension playbooks to include strategy pattern examples
+- Added migration guide for transitioning from legacy monolithic tokenizer to modular design
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -43,7 +54,7 @@
 13. [Conclusion](#conclusion)
 
 ## Introduction
-This document establishes development guidelines for Graph-GPT, focusing on code quality, contribution workflows, and best practices. It explains pre-commit configuration, formatting requirements, quality assurance processes, coding conventions, architectural patterns, and design principles. It also provides guidance for adding new features, extending functionality, maintaining backward compatibility, and templates for integrating new datasets, model extensions, and utilities. Testing strategies, debugging approaches, and performance profiling techniques are included, along with version control practices, pull request workflows, and documentation maintenance procedures.
+This document establishes development guidelines for Graph-GPT, focusing on code quality, contribution workflows, and best practices. It explains pre-commit configuration, formatting requirements, quality assurance processes, coding conventions, architectural patterns, and design principles. The project has undergone a major tokenizer refactoring in v0.8.0, introducing modular design principles with composition-based architecture that eliminates redundant parameters and enhances maintainability. It provides guidance for adding new features, extending functionality, maintaining backward compatibility, and templates for integrating new datasets, model extensions, and utilities. Testing strategies, debugging approaches, and performance profiling techniques are included, along with version control practices, pull request workflows, and documentation maintenance procedures.
 
 ## Project Structure
 The repository is organized around a modular Python package layout with clear separation of concerns:
@@ -75,6 +86,7 @@ DATA["src/data/data_sources.py"]
 FACT["src/data/_graph_factory.py"]
 PIPE["src/training/pipeline.py"]
 MCFG["src/models/graphgpt/configuration_graphgpt.py"]
+TOK["src/data/tokenizer/README.md"]
 end
 CFG --> EP
 CFG --> ES
@@ -83,6 +95,7 @@ CT --> DATA
 DATA --> PIPE
 CONF --> PIPE
 MCFG --> PIPE
+TOK --> DATA
 ```
 
 **Diagram sources**
@@ -97,6 +110,7 @@ MCFG --> PIPE
 - [src/data/_graph_factory.py:1-160](file://src/data/_graph_factory.py#L1-L160)
 - [src/training/pipeline.py:1-258](file://src/training/pipeline.py#L1-L258)
 - [src/models/graphgpt/configuration_graphgpt.py:1-346](file://src/models/graphgpt/configuration_graphgpt.py#L1-L346)
+- [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307)
 
 **Section sources**
 - [README.md:248-286](file://README.md#L248-L286)
@@ -108,6 +122,7 @@ MCFG --> PIPE
 - Dataset Factory and Readers: Registry-driven DatasetSpec-based factory returning train/valid/test splits or raw datasets. See [src/data/_graph_factory.py:1-160](file://src/data/_graph_factory.py#L1-L160) and [src/data/data_sources.py:193-267](file://src/data/data_sources.py#L193-L267).
 - Model Configuration Bridge: Legacy GraphGPTConfig constructed from structured model configs for backward compatibility. See [src/models/graphgpt/configuration_graphgpt.py:212-346](file://src/models/graphgpt/configuration_graphgpt.py#L212-L346).
 - Entry Scripts: Thin wrappers using Hydra to construct Config and launch training. See [examples/train_pretrain.py:1-19](file://examples/train_pretrain.py#L1-L19) and [examples/train_supervised.py:1-19](file://examples/train_supervised.py#L1-L19).
+- **Tokenizer Module**: Refactored to use composition-based architecture with strategy pattern for enhanced modularity and maintainability. See [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307).
 
 **Section sources**
 - [src/training/pipeline.py:15-258](file://src/training/pipeline.py#L15-L258)
@@ -117,13 +132,15 @@ MCFG --> PIPE
 - [src/models/graphgpt/configuration_graphgpt.py:212-346](file://src/models/graphgpt/configuration_graphgpt.py#L212-L346)
 - [examples/train_pretrain.py:12-14](file://examples/train_pretrain.py#L12-L14)
 - [examples/train_supervised.py:12-14](file://examples/train_supervised.py#L12-L14)
+- [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307)
 
 ## Architecture Overview
-The system follows a layered architecture:
+The system follows a layered architecture with enhanced modularity:
 - Configuration Layer: YAML and dataclass configs define model/tokenization/training/generation parameters.
 - Data Layer: Registry-driven dataset readers and a generic factory abstract dataset differences.
 - Training Layer: Unified pipeline with mode strategies for pre-training and fine-tuning.
 - Model Layer: Transformer-based GraphGPT with configurable heads and pre-training objectives.
+- **Tokenizer Layer**: Composition-based architecture using strategy pattern for padding, packing, and task preparation.
 - Utilities Layer: Shared helpers for metrics, logging, and data processing.
 
 ```mermaid
@@ -133,6 +150,8 @@ CONF["Structured Configs<br/>src/conf/base_configs.py"] --> PIPE
 DATA["DatasetSpec + Readers<br/>src/data/data_sources.py"] --> PIPE
 PIPE --> MODEL["GraphGPT Model<br/>src/models/graphgpt/configuration_graphgpt.py"]
 PIPE --> UTILS["Utilities<br/>src/utils/*"]
+TOK["Composition-Based Tokenizer<br/>src/data/tokenizer/*"] --> PIPE
+STRAT["Strategy Pattern<br/>Padding/Packing/Task Prep"] --> TOK
 ```
 
 **Diagram sources**
@@ -141,6 +160,7 @@ PIPE --> UTILS["Utilities<br/>src/utils/*"]
 - [src/data/data_sources.py:1-413](file://src/data/data_sources.py#L1-L413)
 - [src/training/pipeline.py:15-258](file://src/training/pipeline.py#L15-L258)
 - [src/models/graphgpt/configuration_graphgpt.py:1-346](file://src/models/graphgpt/configuration_graphgpt.py#L1-L346)
+- [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307)
 
 ## Detailed Component Analysis
 
@@ -266,10 +286,92 @@ Pipeline->>Pipeline : run()
 - [examples/train_pretrain.py:1-19](file://examples/train_pretrain.py#L1-L19)
 - [examples/train_supervised.py:1-19](file://examples/train_supervised.py#L1-L19)
 
+### Tokenizer Module Architecture
+**Updated** The tokenizer module has been completely refactored to use a composition-based architecture with strategy pattern, eliminating the monolithic design and improving maintainability.
+
+The new architecture follows the strategy pattern with clear separation of concerns:
+
+```mermaid
+classDiagram
+class BaseTokenizer {
+<<Abstract>>
++padding_strategy : PaddingStrategy
++sequence_packer : SequencePacker
++task_preparer : TaskPreparationStrategy
++tokenize(graph) TokenizationOutput
++convert_tokens_to_ids() Dict
++__call__(graph) Dict
++pad(features) Dict
+}
+class GSTTokenizer {
++setup_sequence_packing()
++tokenize(graph) TokenizationOutput
++convert_tokens_to_ids() Dict
+}
+class StackedGSTTokenizer {
++setup_sequence_packing()
++tokenize(graph) TokenizationOutput
++convert_tokens_to_ids() Dict
+}
+class PaddingStrategy {
+<<Abstract>>
++pad_batch(features) Dict
++pad_single(feature, pad_to) Dict
+}
+class FlatPaddingStrategy {
++pad_batch() Dict
++pad_single() Dict
+}
+class StackedPaddingStrategy {
++pad_batch() Dict
++pad_single() Dict
+}
+class SequencePacker {
++pack(token_res, previous_idx, tokenize_fn) Tuple
++_sample_next(previous_idx) Tuple
+}
+class TaskPreparationStrategy {
+<<Abstract>>
++prepare(in_dict, token_res, graph, gtokenizer) Dict
+}
+BaseTokenizer <|-- GSTTokenizer
+BaseTokenizer <|-- StackedGSTTokenizer
+PaddingStrategy <|-- FlatPaddingStrategy
+PaddingStrategy <|-- StackedPaddingStrategy
+BaseTokenizer --> PaddingStrategy
+BaseTokenizer --> SequencePacker
+BaseTokenizer --> TaskPreparationStrategy
+```
+
+**Diagram sources**
+- [src/data/tokenizer/base.py:13-187](file://src/data/tokenizer/base.py#L13-L187)
+- [src/data/tokenizer/core.py:13-563](file://src/data/tokenizer/core.py#L13-L563)
+- [src/data/tokenizer/strategies/padding.py:9-248](file://src/data/tokenizer/strategies/padding.py#L9-L248)
+- [src/data/tokenizer/strategies/packing.py:12-144](file://src/data/tokenizer/strategies/packing.py#L12-L144)
+- [src/data/tokenizer/strategies/task_prep/base.py:11-83](file://src/data/tokenizer/strategies/task_prep/base.py#L11-L83)
+
+The tokenizer module now consists of several key components:
+
+1. **BaseTokenizer**: Abstract base class using composition pattern
+2. **GSTTokenizer**: 1D token sequences for pre-training and node/edge tasks
+3. **StackedGSTTokenizer**: 2D stacked sequences for graph-level tasks
+4. **Padding Strategies**: Separate strategies for different sequence types
+5. **SequencePacker**: Handles sequence packing for efficient training
+6. **Task Preparation Strategies**: Task-specific input preparation
+
+**Section sources**
+- [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307)
+- [src/data/tokenizer/base.py:13-187](file://src/data/tokenizer/base.py#L13-L187)
+- [src/data/tokenizer/core.py:13-563](file://src/data/tokenizer/core.py#L13-L563)
+- [src/data/tokenizer/strategies/padding.py:9-248](file://src/data/tokenizer/strategies/padding.py#L9-L248)
+- [src/data/tokenizer/strategies/packing.py:12-144](file://src/data/tokenizer/strategies/packing.py#L12-L144)
+- [src/data/tokenizer/strategies/task_prep/base.py:11-83](file://src/data/tokenizer/strategies/task_prep/base.py#L11-L83)
+
 ## Dependency Analysis
 - Configuration Dependencies: configs/config.yaml aggregates tokenization, model, training, and generation configs. Model and tokenization base YAMLs define parameters consumed by the training pipeline and model configuration bridge.
 - Runtime Dependencies: requirements.txt pins core libraries including deepspeed, transformers, torch_geometric, ogb, networkx, sentencepiece, and others.
 - Internal Coupling: TrainingPipeline depends on mode strategies, dataset readers, and configuration utilities. Model configuration bridge depends on structured model configs.
+- **Tokenizer Dependencies**: The refactored tokenizer module maintains loose coupling through strategy pattern, with lazy loading to prevent circular imports.
 
 ```mermaid
 graph LR
@@ -280,6 +382,8 @@ CM["configs/model/base.yaml"] --> MCFG
 CT["configs/tokenization/base.yaml"] --> PIPE
 CONF["src/conf/base_configs.py"] --> PIPE
 DATA["src/data/data_sources.py"] --> PIPE
+TOK["src/data/tokenizer/*"] --> PIPE
+STRAT["Strategy Pattern"] --> TOK
 ```
 
 **Diagram sources**
@@ -291,6 +395,7 @@ DATA["src/data/data_sources.py"] --> PIPE
 - [src/training/pipeline.py:15-258](file://src/training/pipeline.py#L15-L258)
 - [src/models/graphgpt/configuration_graphgpt.py:212-346](file://src/models/graphgpt/configuration_graphgpt.py#L212-L346)
 - [src/data/data_sources.py:1-413](file://src/data/data_sources.py#L1-L413)
+- [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307)
 
 **Section sources**
 - [requirements.txt:1-28](file://requirements.txt#L1-L28)
@@ -301,6 +406,7 @@ DATA["src/data/data_sources.py"] --> PIPE
 - Distributed training and DeepSpeed integration are handled centrally to optimize throughput and memory footprint. See [TrainingPipeline._setup_distributed:137-142](file://src/training/pipeline.py#L137-L142) and [TrainingPipeline._setup_deepspeed_flag:119-128](file://src/training/pipeline.py#L119-L128).
 - Attention implementation selection influences performance; see [configs/model/base.yaml:40-40](file://configs/model/base.yaml#L40-L40).
 - Tokenization stacking and embedding dimensions are initialized to align with model capacity; see [src/conf/base_configs.py:206-238](file://src/conf/base_configs.py#L206-L238).
+- **Tokenizer Performance**: The new composition-based architecture reduces memory overhead through lazy loading and eliminates redundant parameter passing between components.
 
 ## Troubleshooting Guide
 - Pre-commit failures: Ensure pre-commit hooks are installed and run against staged files. See [README.md:288-311](file://README.md#L288-L311).
@@ -308,6 +414,7 @@ DATA["src/data/data_sources.py"] --> PIPE
 - Training resume vs. pretrain checkpoint: The pipeline prioritizes resuming from existing logs in the output directory; confirm pretrain_cpt and output_dir behavior. See [TrainingPipeline._setup_deepspeed_flag:119-136](file://src/training/pipeline.py#L119-L136) and [TrainingPipeline._resume_checkpoint:179-202](file://src/training/pipeline.py#L179-L202).
 - Dataset split issues: Verify split methods and slices in DatasetSpec; see [src/data/_graph_factory.py:104-147](file://src/data/_graph_factory.py#L104-L147).
 - Evaluation-only mode: Configuration merging and eval-only flags are handled in configuration utilities; see [src/conf/base_configs.py:250-264](file://src/conf/base_configs.py#L250-L264).
+- **Tokenizer Migration Issues**: For legacy code, ensure proper import paths and use the new setup_sequence_packing() method instead of direct attribute assignment. See [src/data/tokenizer/README.md:241-278](file://src/data/tokenizer/README.md#L241-L278).
 
 **Section sources**
 - [README.md:288-311](file://README.md#L288-L311)
@@ -316,12 +423,14 @@ DATA["src/data/data_sources.py"] --> PIPE
 - [src/training/pipeline.py:179-202](file://src/training/pipeline.py#L179-L202)
 - [src/data/_graph_factory.py:104-147](file://src/data/_graph_factory.py#L104-L147)
 - [src/conf/base_configs.py:250-264](file://src/conf/base_configs.py#L250-L264)
+- [src/data/tokenizer/README.md:241-278](file://src/data/tokenizer/README.md#L241-L278)
 
 ## Version Control and Contribution Workflow
 - Branching and PRs: Use feature branches and open pull requests targeting develop/main. Keep commits focused and include rationale in the PR description.
 - Code Review: Expect feedback on adherence to conventions, test coverage, and performance implications.
 - Pre-commit: Enforce formatting and linting before committing. See [README.md:288-311](file://README.md#L288-L311) and [.pre-commit-config.yaml:1-12](file://.pre-commit-config.yaml#L1-L12).
 - Release Notes: Update CHANGELOG.md entries for new releases and major refactorings. See [README.md:36-53](file://README.md#L36-L53).
+- **Tokenizer Changes**: For v0.8.0, ensure backward compatibility is maintained through the legacy shim while encouraging adoption of new modular API.
 
 **Section sources**
 - [README.md:288-311](file://README.md#L288-L311)
@@ -331,19 +440,27 @@ DATA["src/data/data_sources.py"] --> PIPE
 - Test Procedure: The examples README outlines a test flow for validating new versions across datasets with mini architectures, followed by longer runs to reproduce best results. See [examples/README.md:7-18](file://examples/README.md#L7-L18).
 - Coverage: Ensure new features include unit or integration tests in src/utils or dedicated test suites as applicable.
 - Formatting: Black is configured via pre-commit; ensure code is formatted before submission. See [.pre-commit-config.yaml:8-12](file://.pre-commit-config.yaml#L8-L12).
+- **Tokenizer Testing**: The project includes comprehensive tests for the refactored tokenizer architecture:
+  - Syntax validation for all refactored files: [tests/test_refactoring_syntax.py:1-45](file://tests/test_refactoring_syntax.py#L1-L45)
+  - Smoke tests for public API surface: [tests/test_tokenizer_smoke.py:1-231](file://tests/test_tokenizer_smoke.py#L1-L231)
+  - Tests cover import resolution, class instantiation, and utility function accessibility.
 
 **Section sources**
 - [examples/README.md:7-18](file://examples/README.md#L7-L18)
 - [.pre-commit-config.yaml:8-12](file://.pre-commit-config.yaml#L8-L12)
+- [tests/test_refactoring_syntax.py:1-45](file://tests/test_refactoring_syntax.py#L1-L45)
+- [tests/test_tokenizer_smoke.py:1-231](file://tests/test_tokenizer_smoke.py#L1-L231)
 
 ## Documentation Maintenance
 - README updates: Keep installation, run, and project structure sections synchronized with code changes. See [README.md:203-286](file://README.md#L203-L286).
 - Config documentation: Maintain configs/README.md to reflect new YAML files and structure. See [configs/README.md:1-18](file://configs/README.md#L1-L18).
 - Inline docstrings: Add docstrings for new public APIs and clarify complex logic in data readers and training modes.
+- **Tokenizer Documentation**: The comprehensive README.md for the tokenizer module provides detailed usage examples, migration guides, and architecture explanations. See [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307).
 
 **Section sources**
 - [README.md:203-286](file://README.md#L203-L286)
 - [configs/README.md:1-18](file://configs/README.md#L1-L18)
+- [src/data/tokenizer/README.md:1-307](file://src/data/tokenizer/README.md#L1-L307)
 
 ## Templates and Extension Playbooks
 
@@ -376,12 +493,58 @@ DATA["src/data/data_sources.py"] --> PIPE
 **Section sources**
 - [src/conf/base_configs.py:187-302](file://src/conf/base_configs.py#L187-L302)
 
+### Template: Creating Custom Tokenizer Strategies
+**Updated** For v0.8.0, use the strategy pattern to extend tokenizer functionality:
+
+1. **Create a Custom Padding Strategy**:
+```python
+from src.data.tokenizer.strategies.padding import PaddingStrategy
+
+class CustomPaddingStrategy(PaddingStrategy):
+    def pad_batch(self, features, *, max_length=128, **kwargs):
+        # Custom padding logic
+        return super().pad_batch(features, max_length=max_length, **kwargs)
+
+    def pad_single(self, feature, pad_to):
+        # Custom single feature padding
+        return super().pad_single(feature, pad_to)
+```
+
+2. **Create a Custom Task Preparation Strategy**:
+```python
+from src.data.tokenizer.strategies.task_prep.base import TaskPreparationStrategy
+
+class CustomTaskStrategy(TaskPreparationStrategy):
+    def prepare(self, in_dict, token_res, graph, gtokenizer):
+        # Custom task-specific preparation
+        return in_dict
+```
+
+3. **Use Custom Strategies**:
+```python
+from src.data.tokenizer import BaseTokenizer
+from src.data.tokenizer.strategies import SequencePacker
+
+tokenizer = BaseTokenizer(
+    config,
+    padding_strategy=CustomPaddingStrategy(),
+    task_preparer=CustomTaskStrategy(),
+    sequence_packer=SequencePacker(mpe=512, dataset=train_dataset)
+)
+```
+
+**Section sources**
+- [src/data/tokenizer/strategies/padding.py:9-248](file://src/data/tokenizer/strategies/padding.py#L9-L248)
+- [src/data/tokenizer/strategies/task_prep/base.py:11-83](file://src/data/tokenizer/strategies/task_prep/base.py#L11-L83)
+- [src/data/tokenizer/README.md:46-63](file://src/data/tokenizer/README.md#L46-L63)
+
 ## Coding Conventions and Best Practices
 - Formatting: Use Black via pre-commit hooks. See [.pre-commit-config.yaml:8-12](file://.pre-commit-config.yaml#L8-L12).
 - Configuration: Prefer structured dataclass configs and YAML for modularity; keep legacy bridges for backward compatibility. See [src/conf/base_configs.py:187-302](file://src/conf/base_configs.py#L187-L302) and [src/models/graphgpt/configuration_graphgpt.py:212-346](file://src/models/graphgpt/configuration_graphgpt.py#L212-L346).
 - Data Abstraction: Encapsulate dataset differences with DatasetSpec and a single factory function. See [src/data/_graph_factory.py:50-101](file://src/data/_graph_factory.py#L50-L101).
 - Training Orchestration: Centralize shared setup in TrainingPipeline and delegate specifics to mode strategies. See [src/training/pipeline.py:60-96](file://src/training/pipeline.py#L60-L96).
 - Backward Compatibility: Preserve legacy imports and conversion utilities for older APIs. See [src/models/graphgpt/configuration_graphgpt.py:212-346](file://src/models/graphgpt/configuration_graphgpt.py#L212-L346).
+- **Tokenizer Architecture**: Use composition over inheritance; leverage strategy pattern for extensible functionality. See [src/data/tokenizer/base.py:13-21](file://src/data/tokenizer/base.py#L13-L21) and [src/data/tokenizer/README.md:7-26](file://src/data/tokenizer/README.md#L7-L26).
 
 **Section sources**
 - [.pre-commit-config.yaml:8-12](file://.pre-commit-config.yaml#L8-L12)
@@ -389,6 +552,8 @@ DATA["src/data/data_sources.py"] --> PIPE
 - [src/data/_graph_factory.py:50-101](file://src/data/_graph_factory.py#L50-L101)
 - [src/training/pipeline.py:60-96](file://src/training/pipeline.py#L60-L96)
 - [src/models/graphgpt/configuration_graphgpt.py:212-346](file://src/models/graphgpt/configuration_graphgpt.py#L212-L346)
+- [src/data/tokenizer/base.py:13-21](file://src/data/tokenizer/base.py#L13-L21)
+- [src/data/tokenizer/README.md:7-26](file://src/data/tokenizer/README.md#L7-L26)
 
 ## Development Workflow and Pre-commit Configuration
 
@@ -453,5 +618,18 @@ The pre-commit hooks provide multiple layers of quality assurance:
 **Section sources**
 - [.pre-commit-config.yaml:1-12](file://.pre-commit-config.yaml#L1-L12)
 
+### Tokenizer-Specific Quality Assurance
+**Updated** The v0.8.0 refactoring introduces comprehensive testing for the new architecture:
+
+- **Syntax Validation**: All refactored tokenizer files are validated for Python syntax correctness
+- **Import Resolution**: Tests ensure backward compatibility through legacy shim
+- **Strategy Pattern Compliance**: Tests verify proper implementation of strategy interfaces
+- **Migration Testing**: Examples demonstrate proper migration from legacy monolithic tokenizer
+
+**Section sources**
+- [tests/test_refactoring_syntax.py:1-45](file://tests/test_refactoring_syntax.py#L1-L45)
+- [tests/test_tokenizer_smoke.py:1-231](file://tests/test_tokenizer_smoke.py#L1-L231)
+- [src/data/tokenizer/README.md:241-278](file://src/data/tokenizer/README.md#L241-L278)
+
 ## Conclusion
-These guidelines establish a consistent development process for Graph-GPT, emphasizing modular configuration, registry-driven data abstraction, unified training orchestration, and backward compatibility. The pre-commit configuration ensures code quality through automated formatting and validation. Contributors should adhere to formatting standards, maintain documentation, and follow the provided templates when extending datasets, models, or utilities. The outlined testing and troubleshooting practices ensure reliable releases and smooth collaboration. The standardized development workflow practices, including pre-commit setup and code formatting, provide a foundation for consistent code quality across all contributions.
+These guidelines establish a consistent development process for Graph-GPT, emphasizing modular configuration, registry-driven data abstraction, unified training orchestration, and backward compatibility. The major tokenizer refactoring in v0.8.0 introduces a composition-based architecture with strategy pattern that eliminates redundant parameters and enhances maintainability. The pre-commit configuration ensures code quality through automated formatting and validation. Contributors should adhere to formatting standards, maintain documentation, and follow the provided templates when extending datasets, models, or utilities. The outlined testing and troubleshooting practices ensure reliable releases and smooth collaboration. The standardized development workflow practices, including pre-commit setup and code formatting, provide a foundation for consistent code quality across all contributions. The new modular tokenizer architecture facilitates easier testing, extension, and maintenance while preserving backward compatibility through comprehensive migration guides and legacy shims.

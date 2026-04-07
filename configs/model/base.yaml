@@ -3,7 +3,7 @@ model:
   # Hydra-compatible merged configuration for GraphGPT with a highly modular structure.
 
   # -------------------------------------------------------------------
-  # 核心模型架构 (Core Model Architecture)
+  # Core Model Architecture
   # -------------------------------------------------------------------
   model_type: graphgpt  # Model type identifier. Overridden from 'llama' to 'graphgpt'.
 
@@ -40,13 +40,13 @@ model:
   attn_implementation: sdpa  # Attention backend: sdpa (recommended) | eager | flash_attention_2
 
   # -------------------------------------------------------------------
-  # 通用和 GraphGPT 特有参数 (General & Graph-Specific Parameters)
+  # General & Graph-Specific Parameters
   # -------------------------------------------------------------------
   causal_attention: false  # true for causal, false for bi attention
   rope_range: 0
 
   # -------------------------------------------------------------------
-  # 模块化子配置 (Modular Sub-configs)
+  # Modular Sub-configs
   # -------------------------------------------------------------------
 
   # --- Dropout Settings ---
@@ -189,7 +189,7 @@ model:
     num_labels: null
 
   # -------------------------------------------------------------------
-  # Tokenizer 和特殊 Token 参数 (Tokenizer and Special Tokens)
+  # Tokenizer and Special Tokens
   # -------------------------------------------------------------------
   pad_token_id: 0 # Padding token ID. Default is 0, as overridden by GraphGPTConfig.
   bos_token_id: 1 # Beginning of stream token ID.
@@ -197,7 +197,7 @@ model:
   cls_token_id: null # Classification token ID, specific to GraphGPT for downstream tasks.
 
   # -------------------------------------------------------------------
-  # 其他和元数据 (Other and Metadata)
+  # Other and Metadata
   # -------------------------------------------------------------------
   pretraining_tp: 1 # Tensor parallelism rank used during pretraining for reproducibility.
 
