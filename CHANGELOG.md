@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-04-07
+
+### Performance Optimizations
+
+#### Flex Attention & Sequence Packing
+- Implemented `flex_attention` for packed sequence training, enabling multiple samples per sequence
+- Added block-sparse attention with proper masking for variable-length packed sequences
+- Optimized sequence packing algorithms with vectorized masking operations
+- Integrated dropout support for flex attention mechanism
+
+#### Speed Improvements
+- AI-optimized `nx.eulerize` and `nx.eulerian_path` implementations (fast and optimal versions)
+- Replaced list pop operations with `deque` for better performance
+- Reduced `cudaDeviceSynchronize` overhead by refactoring `.item()` and `.cpu()` calls
+- Multiple tokenization pipeline optimizations
+
+### New Features
+
+#### Monitoring & Profiling
+- Integrated **Weights & Biases (WandB)** for experiment tracking and visualization
+- Added **Torch Profiler** for detailed performance analysis
+- Enhanced logging for pre-train evaluation results
+- Improved checkpoint saving with `steps_per_saving` configuration
+
+#### Attention Mechanisms
+- Implemented automatic fallback to SDPA during validation for stability
+- Refactored attention masking for both batched and packed sequence modes
+
+### Code Refactoring
+
+#### Tokenizer Modularization
+- Decoupled tokenizer into focused modules: padding, packing, task preparation
+- Reorganized into modular structure (`src/data/tokenizer/`)
+- Removed redundant tokenizer files and `optimization_utils.py`
+- Fixed packed sequence masking bug (uniform mask_ratio across samples)
+
+#### Architecture Cleanup
+- Removed redundant parameters: `cyclic_mpe`, `cmpe`, `node_base`, `attr_mask_ratio`, `bi-causal`
+- Fixed parameter naming: `max_position_embedding` → `max_length`
+- Cleaned up experimental code and redundant variables
+- Refactored decoder layer loop and data routing logic
+
+### Code Quality
+- Added **pre-commit** configuration with automated code formatting
+- Reformatted entire codebase with pre-commit hooks
+- Updated configuration files for code quality enforcement
+
+### Documentation
+- Added **Qoder-generated Repo Wiki** for codebase navigation
+- Updated README with latest features and improvements
+- Updated example scripts for graph-level tasks
+
 ## [0.7.0] - 2026-03-18
 
 ### Code Refactoring

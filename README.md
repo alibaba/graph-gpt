@@ -25,7 +25,7 @@ This repository is the official implementation of “[GraphGPT: Generative Pre-t
 
 Campus Recruitng is [ongoing](https://campus-talent.alibaba.com/campus/position/199903540003) in fields such as Agent, LLM, MLLM, AIGC, AI4Sci, and more.
 
-We are also seeking Ali-Star (阿里星) candidates in these fields.
+We are also seeking [Ali-Star (阿里星)](https://campus-talent.alibaba.com/campus/position/199903240067) candidates in these fields.
 
 Work place: Hangzhou, China
 
@@ -33,6 +33,15 @@ Work place: Hangzhou, China
 Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.com) for more information.
 
 ## Update:
+
+***04/07/2026***
+1. v0.8.0 released. Check `CHANGELOG.md` for details.
+2. **Major performance optimizations**:
+   - **Flex Attention**: Implemented `flex_attention` with sequence packing for efficient multi-sample training, achieving significant speedup
+   - **Speed improvements**: AI-optimized Eulerian path algorithms, reduced CUDA sync overhead, tokenization pipeline optimizations
+   - **SDPA support**: Added scaled dot-product attention with automatic validation fallback
+3. **Monitoring & profiling**: Integrated WandB experiment tracking and Torch Profiler for performance analysis
+4. **Code quality**: Major tokenizer refactoring (modular design), removed redundant parameters, added pre-commit enforcement
 
 ***03/18/2026***
 1. v0.7.0 released. Check `CHANGELOG.md` for details.
