@@ -23,13 +23,12 @@ This repository is the official implementation of “[GraphGPT: Generative Pre-t
 
 ## Hiring
 
-We are hiring Research Interns in AI for Science.
+Campus Recruitng is [ongoing](https://campus-talent.alibaba.com/campus/position/199903540003) in fields such as Agent, LLM, MLLM, AIGC, AI4Sci, and more.
 
-We are also seeking Ali-Star (阿里星) candidates in fields such as LLM, MLLM, AI4Sci, and more.
+We are also seeking Ali-Star (阿里星) candidates in these fields.
 
 Work place: Hangzhou, China
 
-If you are attending AAAI 2026 in Singapore, we can have a meet up during the conference.
 
 Feel free to contact [james.zqf@alibaba-inc.com](mailto:james.zqf@alibaba-inc.com) for more information.
 

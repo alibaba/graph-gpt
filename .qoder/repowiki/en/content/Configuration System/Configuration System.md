@@ -32,7 +32,7 @@
 
 ## Update Summary
 **Changes Made**
-- Removed all references to deprecated configuration parameters (ignored_off, attr_mask_ratio, logit_adjust, eulerian_position, rope_scaling_factor) from documentation
+- Removed all references to deprecated configuration parameters (with_prob, do_test, tot_samples) from documentation
 - Updated model configuration section to reflect current parameter set without experimental features
 - Removed deprecated parameter explanations from attention mask utilities documentation
 - Updated practical examples to remove deprecated parameter references
@@ -266,8 +266,6 @@ GraphGPTModelConfig --> DropoutConfig
 - [src/conf/base_configs.py:164-184](file://src/conf/base_configs.py#L164-L184)
 - [src/conf/base_configs.py:186-204](file://src/conf/base_configs.py#L186-L204)
 - [src/conf/base_configs.py:132-164](file://src/conf/base_configs.py#L132-L164)
-- [src/conf/base_configs.py:35-51](file://src/conf/base_configs.py#L35-L51)
-- [src/conf/base_configs.py:76-88](file://src/conf/base_configs.py#L76-L88)
 - [src/conf/tokenization/token_configs.py:115-126](file://src/conf/tokenization/token_configs.py#L115-L126)
 - [src/conf/model/model_configs.py:246-326](file://src/conf/model/model_configs.py#L246-L326)
 - [src/conf/generation/generation_configs.py:26-97](file://src/conf/generation/generation_configs.py#L26-L97)
@@ -898,7 +896,7 @@ Pipeline --> Compile
 - [tests/test_forward_simple.py:46-101](file://tests/test_forward_simple.py#L46-L101)
 
 ## Conclusion
-Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. **Updated** The removal of deprecated experimental parameters (ignored_off, attr_mask_ratio, logit_adjust, eulerian_position, rope_scaling_factor) represents a significant architectural simplification that makes the configuration system more accessible while maintaining model flexibility. **New** The addition of torch.compile configuration support provides powerful GPU optimization capabilities through configurable compilation modes, backend selection, and dynamic shape support. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, utilizing OmegaConf for structured configuration management, and configuring torch.compile optimization—you can efficiently tune and extend configurations for diverse graph learning scenarios.
+Graph-GPT's configuration system combines the flexibility of YAML with the safety and structure of dataclass-based validation. The modular design enables easy dataset and task customization, while Hydra ensures robust merging and instantiation. **Updated** The enhanced test configuration management using OmegaConf provides robust nested structure handling, enabling reliable testing of complex configurations with proper validation and CLI override support. The evolution of `max_length` from a primarily finetuning parameter to a general training parameter reflects the system's maturation and improved consistency across different training modes. The introduction of the `sync_config()` function ensures parameter consistency and simplifies configuration management across all training scenarios. **Updated** The removal of deprecated experimental parameters (with_prob, do_test, tot_samples) represents a significant architectural simplification that makes the configuration system more accessible while maintaining model flexibility. **New** The addition of torch.compile configuration support provides powerful GPU optimization capabilities through configurable compilation modes, backend selection, and dynamic shape support. By following the patterns outlined here—layering base and dataset/task YAMLs, validating with dataclasses, leveraging runtime helpers including the enhanced synchronization logic, utilizing OmegaConf for structured configuration management, and configuring torch.compile optimization—you can efficiently tune and extend configurations for diverse graph learning scenarios.
 
 ## Appendices
 
@@ -964,7 +962,7 @@ torch_compile_enabled = OmegaConf.select(cfg, "training.torch_compile.enabled")
 - [tests/test_forward_minimal.py:32-526](file://tests/test_forward_minimal.py#L32-L526)
 
 ### Attention Mask Utilities Context
-**Updated** The attention mask utilities maintain references to streamlined attention patterns for historical context, but the actual implementation now uses a focused parameter set. The deprecated parameters (ignored_off, attr_mask_ratio, logit_adjust, eulerian_position, rope_scaling_factor) were removed from the configuration system, so these references serve as documentation of past architectural decisions rather than active configuration options.
+**Updated** The attention mask utilities maintain references to streamlined attention patterns for historical context, but the actual implementation now uses a focused parameter set. The deprecated parameters (with_prob, do_test, tot_samples) were removed from the configuration system, so these references serve as documentation of past architectural decisions rather than active configuration options.
 
 **Section sources**
 - [src/utils/attn_mask_utils.py:35-41](file://src/utils/attn_mask_utils.py#L35-L41)
